@@ -113,8 +113,11 @@ let passCount          = 0;
 let consecutiveErrors  = 0;
 
 // Discovery
-let lastDiscoveryMs   = 0;
-let discoveryInFlight = false;
+let lastDiscoveryMs    = 0;
+let discoveryInFlight  = false;
+
+// Cycle refresh reentrancy guard
+let cycleRefreshRunning = false;
 
 // Arb debounce
 let _arbQueued = false;
@@ -974,6 +977,16 @@ async function refreshCycles(force = false) {
   // Only rebuild topology (force=true) when new pools are discovered.
   if (!force && !topologyDirty && cachedCycles.length > 0) return;
 
+  // Prevent concurrent rebuilds: a second caller would clobber cachedCycles /
+  // hubGraph mid-iteration.  The forced flag is preserved so the next call
+  // after the in-flight one finishes will still do a full rebuild if needed.
+  if (cycleRefreshRunning) {
+    if (force) topologyDirty = true;
+    return;
+  }
+  cycleRefreshRunning = true;
+
+  try {
   log("Refreshing cycle enumeration...", "info", {
     event: "cycle_refresh_start",
     forced: force,
@@ -1060,6 +1073,9 @@ async function refreshCycles(force = false) {
     maxTotalPaths: MAX_TOTAL_PATHS,
     routeCacheSize: routeCache._routes?.length,
   });
+  } finally {
+    cycleRefreshRunning = false;
+  }
 }
 
 /**
@@ -1416,7 +1432,12 @@ async function runPass() {
         topologyDirty = true;
         await refreshCycles(true);
       }
-    }).catch(() => {});
+    }).catch((err) => {
+      log(`Background discovery error: ${err?.message ?? err}`, "warn", {
+        event: "discovery_bg_error",
+        err,
+      });
+    });
 
     // Refresh cycles if not yet built
     await refreshCycles();
@@ -1579,6 +1600,19 @@ async function main() {
   // Initial cycle enumeration
   await refreshCycles(true);
 
+  // Post-warmup sanity check: if no paths were found the hub-pair state is
+  // entirely missing (RPC failures or empty DB).  The watcher replay will
+  // still populate state incrementally, but warn so the operator knows.
+  if (cachedCycles.length === 0) {
+    log(
+      "Post-warmup: 0 arbitrage paths enumerated. " +
+      "Hub-pair pools may be unavailable or RPC failed. " +
+      "Watcher replay will populate state incrementally.",
+      "warn",
+      { event: "warmup_no_paths" }
+    );
+  }
+
   // ── Single-shot mode ─────────────────────────────────────────
   if (!LOOP_MODE) {
     if (!DISCOVERY_ONLY) await runPass();
@@ -1659,7 +1693,12 @@ async function main() {
         });
       }
       // Fast path: re-evaluate cached profitable routes touching changed pools
-      revalidateCachedRoutes(validChangedAddrs).catch(() => {});
+      revalidateCachedRoutes(validChangedAddrs).catch((err) => {
+        log(`Route revalidation error: ${err?.message ?? err}`, "warn", {
+          event: "revalidate_error",
+          err,
+        });
+      });
     }
 
     // Slow path: full debounced arb scan
