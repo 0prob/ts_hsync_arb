@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Text, Newline, useInput, useApp } from 'ink';
+import { Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
 import Table from 'ink-table';
 import Gradient from 'ink-gradient';
@@ -57,7 +57,7 @@ export const App = ({ initialState }: { initialState: TuiState }) => {
           <Box>
             <Text bold color="yellow">Passes: </Text>
             <Text>{state.passCount}</Text>
-            <Text bold color="yellow" marginLeft={2}>Errors: </Text>
+            <Box marginLeft={2}><Text bold color="yellow">Errors: </Text></Box>
             <Text color={state.consecutiveErrors > 0 ? 'red' : 'white'}>
               {state.consecutiveErrors}
             </Text>
@@ -65,7 +65,7 @@ export const App = ({ initialState }: { initialState: TuiState }) => {
           <Box>
             <Text bold color="yellow">Gas: </Text>
             <Text>{state.gasPrice} Gwei</Text>
-            <Text bold color="yellow" marginLeft={2}>MATIC: </Text>
+            <Box marginLeft={2}><Text bold color="yellow">MATIC: </Text></Box>
             <Text>${state.maticPrice}</Text>
           </Box>
         </Box>

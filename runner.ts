@@ -288,8 +288,8 @@ function assessRouteResult(path, routeResult, gasPriceWei, tokenToMaticRate) {
 async function getCurrentFeeSnapshot() {
   try {
     const fees = await fetchEIP1559Fees();
-    if (TUI_MODE && fees?.maxFeePerGas) {
-      updateTui({ gasPrice: (Number(fees.maxFeePerGas) / 1e9).toFixed(2) });
+    if (TUI_MODE && fees?.maxFee) {
+      updateTui({ gasPrice: (Number(fees.maxFee) / 1e9).toFixed(2) });
     }
     if (!fees?.updatedAt || Date.now() - fees.updatedAt > MAX_GAS_AGE_MS) {
       return null;
@@ -1471,7 +1471,7 @@ async function runPass() {
     consecutiveErrors++;
     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
       log(`${MAX_CONSECUTIVE_ERRORS} consecutive errors — backing off 30s`, "warn");
-      await sleep(30_000);
+      await runnerSleep(30_000);
       consecutiveErrors = 0;
     }
   }
