@@ -1,0 +1,181 @@
+// @ts-nocheck
+/**
+ * src/enrichment/rpc.js — Shared viem public client with multi-RPC switching
+ *
+ * Provides:
+ *   - publicClient: dynamic proxy that always routes to the best RPC endpoint
+ *   - executeWithRpcRetry(): generic wrapper with per-endpoint switching
+ *   - readContractWithRetry(): readContract wrapper with per-endpoint switching
+ *   - throttledMap(): concurrency-limited async mapper for batch enrichment
+ */
+
+import {
+  rpcManager,
+  dynamicPublicClient,
+  isEndpointCapabilityError,
+  isRateLimitError,
+  isRetryableError,
+} from "../utils/rpc_manager.ts";
+import {
+  RPC_MAX_RETRIES,
+  RPC_BASE_DELAY_MS,
+  RPC_MAX_DELAY_MS,
+  POLYGON_RPC,
+} from "../config/index.ts";
+
+// ─── Warn about demo endpoint ──────────────────────────────────
+
+if (POLYGON_RPC.includes("/v2/demo")) {
+  console.warn(
+    "WARNING: Using Alchemy demo RPC endpoint — rate limits are extremely low.\n" +
+      "         Set POLYGON_RPC in .env to a real endpoint for production use."
+  );
+}
+
+// ─── Public client ─────────────────────────────────────────────
+// Re-export the dynamic proxy so existing callers don't need changes.
+
+export const publicClient = dynamicPublicClient;
+
+// ─── Retry helpers ─────────────────────────────────────────────
+
+export async function executeWithRpcRetry(fn, options = {}) {
+  const {
+    retries = RPC_MAX_RETRIES,
+    onRateLimitMessage = null,
+    onRetryMessage = null,
+  } = options;
+
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const endpoint = rpcManager.checkoutBestEndpoint();
+    const client = endpoint.client;
+
+    try {
+      const result = await fn(client, endpoint, attempt);
+      rpcManager.markSuccess(endpoint.url);
+      return result;
+    } catch (error) {
+      lastError = error;
+
+      if (isRateLimitError(error) || isEndpointCapabilityError(error)) {
+        rpcManager.markRateLimited(endpoint.url, error);
+        if (attempt === 0 && onRateLimitMessage) {
+          const reason = isEndpointCapabilityError(error)
+            ? "unsupported for contract reads"
+            : "rate-limited";
+          console.warn(
+            onRateLimitMessage(_shortUrl(endpoint.url), endpoint, attempt, reason)
+          );
+        }
+        continue;
+      }
+
+      if (!isRetryableError(error) || attempt === retries) {
+        rpcManager.markError(endpoint.url);
+        throw error;
+      }
+
+      rpcManager.markError(endpoint.url);
+
+      const delay = Math.min(
+        RPC_BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 200,
+        RPC_MAX_DELAY_MS
+      );
+
+      if (attempt === 0 && onRetryMessage) {
+        console.warn(
+          onRetryMessage(_shortUrl(endpoint.url), Math.round(delay), endpoint, attempt)
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    } finally {
+      rpcManager.releaseEndpoint(endpoint.url);
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * Execute a viem readContract call with exponential backoff on retryable errors.
+ *
+ * On a 429 the current endpoint is marked as rate-limited and the next
+ * best endpoint is tried immediately (up to RPC_MAX_RETRIES total attempts).
+ *
+ * @param {object} params  Same params as publicClient.readContract()
+ * @returns {Promise<any>} The contract call result
+ * @throws After RPC_MAX_RETRIES exhausted across all endpoints
+ */
+export async function readContractWithRetry(params) {
+  return executeWithRpcRetry(
+    (client) => client.readContract(params),
+    {
+      onRateLimitMessage: (shortUrl, _endpoint, _attempt, reason = "rate-limited") =>
+        `    RPC ${reason} on ${shortUrl}, switching endpoint...`,
+      onRetryMessage: (shortUrl, delayMs) =>
+        `    RPC error on ${shortUrl}, retrying in ${delayMs}ms...`,
+    }
+  );
+}
+
+/**
+ * True for viem readContract failures where the address returned no calldata.
+ *
+ * This usually means one of:
+ *   - the address is not a contract
+ *   - the contract does not implement the requested selector
+ *   - the pool was misclassified for its protocol family
+ *
+ * These are permanent data-quality issues, not transient RPC transport errors.
+ *
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isNoDataReadContractError(error) {
+  const msg = String(error?.message ?? error ?? "").toLowerCase();
+  return msg.includes('returned no data ("0x")');
+}
+
+// ─── Concurrency limiter ───────────────────────────────────────
+
+/**
+ * Run an async function over an array with bounded concurrency.
+ *
+ * @param {T[]} items           Items to process
+ * @param {(item: T, index: number) => Promise<R>} fn  Async worker
+ * @param {number} concurrency  Max parallel workers (default 3)
+ * @returns {Promise<R[]>}      Results in original order
+ */
+export async function throttledMap(items, fn, concurrency = 3) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+
+  return results;
+}
+
+// ─── Helpers ───────────────────────────────────────────────────
+
+function rpcShortUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname;
+  } catch {
+    return url.slice(0, 40);
+  }
+}

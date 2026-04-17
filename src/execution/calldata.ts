@@ -1,0 +1,387 @@
+// @ts-nocheck
+/**
+ * src/execution/calldata.js — Multihop calldata encoder
+ *
+ * Converts a simulated arbitrage route (from src/routing/simulator.js)
+ * into a Call[] array suitable for ArbExecutor.executeArb().
+ *
+ * Encoding strategy per protocol:
+ *
+ *   V2 (QuickSwap, SushiSwap) — Direct pair.swap pattern:
+ *     Call 1: ERC20(tokenIn).transfer(pair, amountIn)
+ *     Call 2: pair.swap(amount0Out, amount1Out, recipient, "0x")
+ *
+ *   V3 (Uniswap V3) — Direct pool.swap pattern:
+ *     Call 1: pool.swap(recipient, zeroForOne, amountSpecified, sqrtPriceLimitX96, callbackData)
+ *     (ArbExecutor implements IUniswapV3SwapCallback to pay the pool)
+ *
+ * All amounts are BigInt. Addresses are checksummed via viem's getAddress().
+ */
+
+import { encodeFunctionData, getAddress, keccak256, encodeAbiParameters } from "viem";
+import {
+  ERC20_TRANSFER_ABI,
+  ERC20_APPROVE_ABI,
+  V2_PAIR_SWAP_ABI,
+  V3_POOL_SWAP_ABI,
+  CURVE_EXCHANGE_INT128_ABI,
+  CURVE_EXCHANGE_UINT256_ABI,
+  BALANCER_VAULT_SWAP_ABI,
+  EXECUTOR_ABI,
+} from "./abi_fragments.ts";
+import {
+  BALANCER_VAULT,
+  DIRECT_SWAP_PROTOCOLS,
+  CURVE_STABLE_PROTOCOLS,
+  CURVE_CRYPTO_PROTOCOLS,
+  BALANCER_PROTOCOLS,
+  V3_SWAP_PROTOCOLS,
+} from "./addresses.ts";
+import { MIN_SQRT_RATIO, MAX_SQRT_RATIO } from "../math/tick_math.ts";
+
+// ─── Per-hop encoders ─────────────────────────────────────────
+
+/**
+ * Encode a V2 direct pair swap (transfer-first pattern).
+ *
+ * @param {Object} hop
+ * @param {string} hop.poolAddress   Pair contract address
+ * @param {string} hop.tokenIn       Input token address
+ * @param {string} hop.tokenOut      Output token address
+ * @param {boolean} hop.zeroForOne   Swap direction
+ * @param {bigint} hop.amountIn      Input amount
+ * @param {bigint} hop.amountOut     Expected output amount
+ * @param {string} recipient         Address to receive output tokens
+ * @returns {Array<{target: string, value: bigint, data: string}>}  1-2 Call structs
+ */
+export function encodeV2Hop(hop, recipient) {
+  const pair = getAddress(hop.poolAddress);
+  const tokenIn = getAddress(hop.tokenIn);
+  const calls = [];
+
+  // Call 1: Transfer input tokens to the pair
+  const transferData = encodeFunctionData({
+    abi: ERC20_TRANSFER_ABI,
+    functionName: "transfer",
+    args: [pair, hop.amountIn],
+  });
+
+  calls.push({
+    target: tokenIn,
+    value: 0n,
+    data: transferData,
+  });
+
+  // Call 2: Execute the swap
+  // V2 swap: if zeroForOne, we want amount1Out; if !zeroForOne, we want amount0Out
+  const amount0Out = hop.zeroForOne ? 0n : hop.amountOut;
+  const amount1Out = hop.zeroForOne ? hop.amountOut : 0n;
+
+  const swapData = encodeFunctionData({
+    abi: V2_PAIR_SWAP_ABI,
+    functionName: "swap",
+    args: [amount0Out, amount1Out, getAddress(recipient), "0x"],
+  });
+
+  calls.push({
+    target: pair,
+    value: 0n,
+    data: swapData,
+  });
+
+  return calls;
+}
+
+/**
+ * Encode a V3 direct pool swap (callback-based payment).
+ *
+ * @param {Object} hop
+ * @param {string} hop.poolAddress   Pool contract address
+ * @param {string} hop.tokenIn       Input token address
+ * @param {string} hop.tokenOut      Output token address
+ * @param {boolean} hop.zeroForOne   Swap direction
+ * @param {bigint} hop.amountIn      Input amount
+ * @param {bigint} hop.amountOut     Expected output (used for slippage check if needed)
+ * @param {string} recipient         Address to receive output tokens
+ * @param {Object} [options]
+ * @returns {Array<{target: string, value: bigint, data: string}>}  1 Call struct
+ */
+export function encodeV3Hop(hop, recipient, options = {}) {
+  const pool = getAddress(hop.poolAddress);
+  const tokenIn = getAddress(hop.tokenIn);
+
+  // amountSpecified: positive for exact input
+  const amountSpecified = hop.amountIn;
+
+  // sqrtPriceLimitX96: the price limit for the swap
+  const sqrtPriceLimitX96 = hop.zeroForOne
+    ? MIN_SQRT_RATIO + 1n
+    : MAX_SQRT_RATIO - 1n;
+
+  // Callback data: the ArbExecutor needs to know which token to pay
+  // MUST MATCH ArbExecutor.sol: uniswapV3SwapCallback decodes abi.decode(data, (address))
+  const callbackData = encodeAbiParameters(
+    [{ type: "address" }],
+    [tokenIn]
+  );
+
+  const swapData = encodeFunctionData({
+    abi: V3_POOL_SWAP_ABI,
+    functionName: "swap",
+    args: [
+      getAddress(recipient),
+      hop.zeroForOne,
+      amountSpecified,
+      sqrtPriceLimitX96,
+      callbackData,
+    ],
+  });
+
+  return [
+    {
+      target: pool,
+      value: 0n,
+      data: swapData,
+    },
+  ];
+}
+
+/**
+ * Encode a Curve pool swap via exchange().
+ */
+export function encodeCurveHop(hop, options = {}) {
+  const { slippageBps = 50 } = options;
+  const pool     = getAddress(hop.poolAddress);
+  const tokenIn  = getAddress(hop.tokenIn);
+
+  // Apply slippage to minimum output
+  const minDy = (hop.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
+
+  const calls = [];
+
+  // Call 1: Approve pool to spend tokenIn (exact amount)
+  calls.push({
+    target: tokenIn,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: ERC20_APPROVE_ABI,
+      functionName: "approve",
+      args: [pool, hop.amountIn],
+    }),
+  });
+
+  // Call 2: Execute the exchange
+  const abi = hop.isCrypto ? CURVE_EXCHANGE_UINT256_ABI : CURVE_EXCHANGE_INT128_ABI;
+  const iIdx = hop.isCrypto ? BigInt(hop.tokenInIdx)  : hop.tokenInIdx;
+  const jIdx = hop.isCrypto ? BigInt(hop.tokenOutIdx) : hop.tokenOutIdx;
+
+  calls.push({
+    target: pool,
+    value: 0n,
+    data: encodeFunctionData({
+      abi,
+      functionName: "exchange",
+      args: [iIdx, jIdx, hop.amountIn, minDy],
+    }),
+  });
+
+  return calls;
+}
+
+/**
+ * Encode a Balancer V2 single-pool swap via Vault.swap().
+ */
+export function encodeBalancerHop(hop, executor, options = {}) {
+  const { slippageBps = 50, deadline } = options;
+
+  if (!hop.poolId) {
+    throw new Error(`encodeBalancerHop: poolId required for pool ${hop.poolAddress}`);
+  }
+
+  const vault    = getAddress(BALANCER_VAULT);
+  const tokenIn  = getAddress(hop.tokenIn);
+  const tokenOut = getAddress(hop.tokenOut);
+  const exec     = getAddress(executor);
+
+  // Minimum acceptable output with slippage
+  const limit = (hop.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
+
+  const calls = [];
+
+  // Call 1: Approve Balancer Vault to pull tokenIn
+  calls.push({
+    target: tokenIn,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: ERC20_APPROVE_ABI,
+      functionName: "approve",
+      args: [vault, hop.amountIn],
+    }),
+  });
+
+  // Call 2: Vault.swap
+  calls.push({
+    target: vault,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: BALANCER_VAULT_SWAP_ABI,
+      functionName: "swap",
+      args: [
+        // SingleSwap
+        {
+          poolId:   hop.poolId,
+          kind:     0,          // GIVEN_IN
+          assetIn:  tokenIn,
+          assetOut: tokenOut,
+          amount:   hop.amountIn,
+          userData: "0x",
+        },
+        // FundManagement
+        {
+          sender:              exec,
+          fromInternalBalance: false,
+          recipient:           exec,
+          toInternalBalance:   false,
+        },
+        limit,
+        deadline,
+      ],
+    }),
+  });
+
+  return calls;
+}
+
+// ─── Route encoder ────────────────────────────────────────────
+
+/**
+ * Encode a complete multi-hop route into a Call[] array.
+ */
+export function encodeRoute(route, executorAddress, options = {}) {
+  const { path, result } = route;
+  const executor = getAddress(executorAddress);
+  const calls = [];
+
+  for (let i = 0; i < path.edges.length; i++) {
+    const edge = path.edges[i];
+    const amountIn  = result.hopAmounts[i];
+    const amountOut = result.hopAmounts[i + 1];
+
+    const meta = edge.metadata || {};
+
+    const hop = {
+      poolAddress:  edge.poolAddress,
+      tokenIn:      edge.tokenIn,
+      tokenOut:     edge.tokenOut,
+      zeroForOne:   edge.zeroForOne,
+      amountIn,
+      amountOut,
+      fee:          meta.fee || 0,
+      tokenInIdx:   meta.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
+      tokenOutIdx:  meta.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0),
+      isCrypto:     CURVE_CRYPTO_PROTOCOLS.has(edge.protocol),
+      poolId:       meta.poolId || meta.pool_id || null,
+    };
+
+    const proto = edge.protocol;
+
+    if (DIRECT_SWAP_PROTOCOLS.has(proto)) {
+      calls.push(...encodeV2Hop(hop, executor));
+    } else if (V3_SWAP_PROTOCOLS.has(proto)) {
+      calls.push(...encodeV3Hop(hop, executor, options));
+    } else if (CURVE_STABLE_PROTOCOLS.has(proto) || CURVE_CRYPTO_PROTOCOLS.has(proto)) {
+      calls.push(...encodeCurveHop(hop, options));
+    } else if (BALANCER_PROTOCOLS.has(proto)) {
+      calls.push(...encodeBalancerHop(hop, executor, options));
+    } else {
+      throw new Error(`Unsupported protocol for execution: ${proto} at hop ${i}`);
+    }
+  }
+
+  return calls;
+}
+
+// ─── Route hash ───────────────────────────────────────────────
+
+/**
+ * Compute the routeHash for a Call[] array.
+ *
+ * Must match the Solidity: keccak256(abi.encode(calls))
+ */
+export function computeRouteHash(calls) {
+  const encoded = encodeAbiParameters(
+    [
+      {
+        type: "tuple[]",
+        components: [
+          { name: "target", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+    ],
+    [calls.map((c) => ({ target: c.target, value: c.value, data: c.data }))]
+  );
+
+  return keccak256(encoded);
+}
+
+// ─── FlashParams builder ──────────────────────────────────────
+
+/**
+ * Build the complete FlashParams struct.
+ */
+export function buildFlashParams({
+  profitToken,
+  minProfit,
+  deadline,
+  calls,
+}) {
+  const routeHash = computeRouteHash(calls);
+
+  return {
+    profitToken: getAddress(profitToken),
+    minProfit,
+    deadline,
+    routeHash,
+    calls,
+  };
+}
+
+// ─── Top-level transaction encoder ────────────────────────────
+
+/**
+ * Encode the complete executeArb transaction calldata.
+ */
+export function encodeExecuteArb({
+  executorAddress,
+  flashToken,
+  flashAmount,
+  profitToken,
+  minProfit,
+  deadline,
+  calls,
+}) {
+  const flashParams = buildFlashParams({
+    profitToken,
+    minProfit,
+    deadline,
+    calls,
+  });
+
+  const data = encodeFunctionData({
+    abi: EXECUTOR_ABI,
+    functionName: "executeArb",
+    args: [
+      getAddress(flashToken),
+      flashAmount,
+      flashParams,
+    ],
+  });
+
+  return {
+    to: getAddress(executorAddress),
+    data,
+    value: 0n,
+  };
+}

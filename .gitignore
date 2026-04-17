@@ -1,0 +1,43 @@
+# Node dependencies
+node_modules/
+/data/
+# TypeScript build output
+dist/
+lib/
+esm/
+build/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Compiled JavaScript (if not output to dist/)
+*.js
+*.js.map
+
+# Test & coverage output
+coverage/
+playwright-report/
+cypress/videos/
+cypress/screenshots/
+
+# Tool caches
+.eslintcache
+.parcel-cache/
+.rpt2_cache/
+.ts-node-cache/
+
+# Logs & temp
+*.log
+*.tmp
+
+# Environment files
+.env
+.env.*.local
+
+# OS / Editor junk
+.DS_Store
+.idea/
+.vscode/*
+!/.vscode/settings.json
+!/.vscode/tasks.json
+!/.vscode/launch.json

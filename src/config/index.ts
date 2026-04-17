@@ -1,0 +1,340 @@
+// @ts-nocheck
+/**
+ * src/config/index.js — Centralized configuration
+ *
+ * Single source of truth for all environment variables, constants,
+ * and tunable parameters. Every other module imports from here.
+ *
+ * Parameter resolution order (highest wins):
+ *   1. Environment variables (UPPERCASE names)
+ *   2. data/perf.json  (written by scripts/tune_performance.js)
+ *   3. Built-in defaults  (safe conservative values)
+ *
+ * Run `node scripts/tune_performance.js` once after deployment to
+ * generate data/perf.json with machine-optimal values.
+ */
+
+import "dotenv/config";
+import os from "os";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ─── Paths ─────────────────────────────────────────────────────
+
+/** Project root (two levels up from src/config/) */
+export const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
+
+/** Runtime data directory (SQLite DB, snapshots, perf.json) */
+export const DATA_DIR = path.join(PROJECT_ROOT, "data");
+
+/** SQLite database path */
+export const DB_PATH = path.join(DATA_DIR, "registry.db");
+
+/** ABI directory */
+export const ABI_DIR = path.join(PROJECT_ROOT, "abi");
+
+// ─── Auto-tuned parameter loader ──────────────────────────────
+//
+// Reads data/perf.json if it exists.  The file is produced by
+// `node scripts/tune_performance.js` and contains optimal values
+// for the current machine.  Env vars always override these values.
+
+function _loadPerfJson() {
+  try {
+    const p = path.join(DATA_DIR, "perf.json");
+    if (fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, "utf8")).params || {};
+    }
+  } catch { /* ignore parse errors */ }
+  return {};
+}
+
+const _perf = _loadPerfJson();
+
+/**
+ * Resolve a numeric parameter.
+ * Priority: env var → perf.json → built-in default.
+ *
+ * @param {string} envKey   Environment variable name
+ * @param {string} perfKey  Key inside perf.json params object
+ * @param {number} def      Built-in default
+ */
+function _num(envKey, perfKey, def) {
+  if (process.env[envKey] != null && process.env[envKey] !== "") {
+    const n = Number(process.env[envKey]);
+    if (!Number.isNaN(n)) return n;
+  }
+  if (_perf[perfKey] != null) return Number(_perf[perfKey]);
+  return def;
+}
+
+// ─── Local HyperRPC proxy ──────────────────────────────────────
+//
+// When set, LOCAL_HYPERRPC_URL is used as the primary JSON-RPC target for
+// read-only operations: HYPERRPC_URL (multicall) and FREE_RPC_URLS (head entry).
+// It is intentionally NOT used as POLYGON_RPC fallback because HyperRPC is
+// read-only and must not be relied on for transaction submission paths.
+//
+// Start the proxy: docker compose -f docker-compose.local-hyperrpc.yml up -d
+// Default: http://localhost:8545
+
+export const LOCAL_HYPERRPC_URL = process.env.LOCAL_HYPERRPC_URL || "";
+
+// ─── HyperSync ─────────────────────────────────────────────────
+
+// Direct HyperSync streaming endpoint — used by the StateWatcher native client.
+// This is distinct from LOCAL_HYPERRPC_URL; HyperSync uses its own binary
+// protocol, not standard JSON-RPC.
+export const HYPERSYNC_URL =
+  process.env.HYPERSYNC_URL || "https://polygon.hypersync.xyz";
+
+/**
+ * Envio HyperRPC — EVM-compatible JSON-RPC endpoint backed by HyperSync data.
+ * Used exclusively for multicall token metadata hydration (decimals/symbol/name).
+ * Kept separate from FREE_RPC_URLS so batch reads don't skew hot-path RPC scoring.
+ *
+ * Priority: LOCAL_HYPERRPC_URL → HYPERRPC_URL env → remote HyperRPC default.
+ * When local-hyperrpc is running it is always chosen: zero latency, no rate limits.
+ */
+export const HYPERRPC_URL =
+  LOCAL_HYPERRPC_URL ||
+  process.env.HYPERRPC_URL ||
+  "https://polygon.rpc.hypersync.xyz";
+
+export const ENVIO_API_TOKEN = process.env.ENVIO_API_TOKEN || "";
+
+if (!ENVIO_API_TOKEN) {
+  console.warn(
+    "WARNING: ENVIO_API_TOKEN not set. HyperSync streaming (StateWatcher) will reject requests.\n" +
+    "         Set ENVIO_API_TOKEN in .env. The token is also consumed by local-hyperrpc internally."
+  );
+}
+
+/** Max number of logs to fetch in a single HyperSync batch */
+export const HYPERSYNC_BATCH_SIZE = _num("HYPERSYNC_BATCH_SIZE", "HYPERSYNC_BATCH_SIZE", 5000);
+
+/** Max number of addresses to include in a HyperSync filter before falling back to topic-only */
+export const HYPERSYNC_MAX_ADDRESS_FILTER = _num("HYPERSYNC_MAX_ADDRESS_FILTER", "HYPERSYNC_MAX_ADDRESS_FILTER", 1000);
+
+// ─── Discovery ─────────────────────────────────────────────────
+
+/** Block number to start discovery from if no checkpoint exists */
+export const GENESIS_START_BLOCK = _num("GENESIS_START_BLOCK", "GENESIS_START_BLOCK", 44_000_000);
+
+/** Interval between background pool discovery runs (ms) */
+export const DISCOVERY_INTERVAL_MS = _num("DISCOVERY_INTERVAL_MS", "DISCOVERY_INTERVAL_MS", 30 * 60 * 1000);
+
+// ─── RPC ───────────────────────────────────────────────────────
+
+function _dedupeRpcUrls(urls) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of urls) {
+    const url = String(raw || "").trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+  }
+  return out;
+}
+
+// Parse POLYGON_RPC_URLS once; used both as POLYGON_RPC fallback and pool seed.
+const _envRpcUrls = _dedupeRpcUrls(
+  (process.env.POLYGON_RPC_URLS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
+
+/**
+ * Primary RPC used for execution (sendTx, nonce, gas estimates) and any call
+ * that needs a single authoritative endpoint.
+ *
+ * Priority: POLYGON_RPC env → first POLYGON_RPC_URLS entry → Alchemy demo
+ *           (rate-limited, for dev only).
+ *
+ * HyperRPC/local-hyperrpc are read-only; keep POLYGON_RPC pointed at a write-capable
+ * RPC or private mempool-compatible endpoint for live execution.
+ */
+export const POLYGON_RPC =
+  process.env.POLYGON_RPC ||
+  _envRpcUrls[0] ||
+  "https://polygon-mainnet.g.alchemy.com/v2/demo";
+
+/**
+ * Pool of Polygon RPC endpoints managed by the latency-based RPC manager.
+ *
+ * Priority order (highest first):
+ *   1. LOCAL_HYPERRPC_URL — local proxy, effectively 0 ms latency, no rate limits
+ *   2. POLYGON_RPC        — paid/private endpoint if explicitly configured
+ *   3. POLYGON_RPC_URLS   — comma-separated env override
+ *   4. Built-in free public endpoints (fallback)
+ *
+ * The manager probes all endpoints every 15 s and routes to the healthiest one.
+ */
+const _defaultFreeRpcs = [
+  "https://poly.api.pocket.network",        // Pocket Network
+  "https://polygon-bor-rpc.publicnode.com", // PublicNode
+  "https://polygon-rpc.com",                // Official Polygon public RPC
+  "https://rpc.ankr.com/polygon",           // Ankr public
+  "https://polygon.llamarpc.com",           // LlamaNodes public
+  "https://polygon-public.nodies.app",      // Nodies
+  "https://polygon.api.onfinality.io/public", // OnFinality
+  "https://tenderly.rpc.polygon.community", // Tenderly community RPC
+];
+
+const _paidRpc =
+  process.env.POLYGON_RPC && !process.env.POLYGON_RPC.includes("/v2/demo")
+    ? [process.env.POLYGON_RPC]
+    : [];
+
+const _publicRpcUrls = _envRpcUrls.length ? _envRpcUrls : _defaultFreeRpcs;
+
+const _allUrls = [
+  ...(LOCAL_HYPERRPC_URL ? [LOCAL_HYPERRPC_URL] : []),
+  ..._paidRpc,
+  ..._publicRpcUrls,
+];
+
+export const FREE_RPC_URLS = [...new Set(_allUrls)];
+
+// ─── Private Mempool ───────────────────────────────────────────
+
+/**
+ * URL of the private mempool endpoint.
+ *   Alchemy:  https://polygon-mainnet.g.alchemy.com/v2/<KEY>
+ *   BloXroute: set BLOXROUTE_AUTH; URL is hardcoded in private_tx.js
+ *   Custom:   any endpoint accepting eth_sendRawTransaction
+ */
+export const PRIVATE_MEMPOOL_URL = process.env.PRIVATE_MEMPOOL_URL || "";
+
+/**
+ * RPC method to use with PRIVATE_MEMPOOL_URL.
+ *   "eth_sendPrivateTransaction" — Alchemy / QuickNode private tx
+ *   "eth_sendRawTransaction"     — standard submission (default if unset)
+ */
+export const PRIVATE_MEMPOOL_METHOD =
+  process.env.PRIVATE_MEMPOOL_METHOD || "eth_sendRawTransaction";
+
+/**
+ * BloXroute Authorization bearer token.
+ * If set, BloXroute is tried first (strongest MEV protection on Polygon).
+ */
+export const BLOXROUTE_AUTH = process.env.BLOXROUTE_AUTH || "";
+
+// ─── RPC Retry / Rate-Limit ───────────────────────────────────
+
+/** Max retry attempts for a single RPC call on 429/5xx */
+export const RPC_MAX_RETRIES = 5;
+
+/** Base delay before first retry (ms); doubles each attempt */
+export const RPC_BASE_DELAY_MS = 500;
+
+/** Ceiling for backoff delay (ms) */
+export const RPC_MAX_DELAY_MS = 30_000;
+
+// ─── Concurrency (auto-tuned) ─────────────────────────────────
+
+/**
+ * Max concurrent RPC enrichment calls (Balancer getPoolTokens, Curve get_coins).
+ * Auto-tuned from RPC latency; higher = faster enrichment but more rate-limit risk.
+ */
+export const ENRICH_CONCURRENCY = _num("ENRICH_CONCURRENCY", "ENRICH_CONCURRENCY", 6);
+
+/**
+ * Max concurrent getReserves() calls during V2 state polling.
+ * Higher than ENRICH_CONCURRENCY because V2 calls are cheaper.
+ */
+export const V2_POLL_CONCURRENCY = _num("V2_POLL_CONCURRENCY", "V2_POLL_CONCURRENCY", 10);
+
+/**
+ * Max concurrent slot0 / liquidity calls during V3 state polling.
+ */
+export const V3_POLL_CONCURRENCY = _num("V3_POLL_CONCURRENCY", "V3_POLL_CONCURRENCY", 3);
+
+// ─── Worker threads (auto-tuned) ─────────────────────────────
+
+/**
+ * Number of persistent worker threads in the simulation pool.
+ * Default: (CPU cores − 1), leaving one core for the main thread.
+ */
+export const WORKER_COUNT = _num(
+  "WORKER_COUNT",
+  "WORKER_COUNT",
+  Math.max(1, os.cpus().length - 1)
+);
+
+/**
+ * Minimum path count before offloading to worker threads.
+ * Below this threshold, IPC serialisation overhead exceeds the benefit.
+ */
+export const EVAL_WORKER_THRESHOLD = _num("EVAL_WORKER_THRESHOLD", "EVAL_WORKER_THRESHOLD", 100);
+
+// ─── Routing / cycle enumeration (auto-tuned) ────────────────
+
+/**
+ * Hard cap on the number of candidate arbitrage paths kept in memory.
+ * Auto-tuned from available heap.
+ */
+export const MAX_TOTAL_PATHS = _num("MAX_TOTAL_PATHS", "MAX_TOTAL_PATHS", 20_000);
+
+/**
+ * How many of the top simulation candidates to run ternary-search optimisation on.
+ * Auto-tuned from math throughput to stay within ~100ms.
+ */
+export const MAX_PATHS_TO_OPTIMIZE = _num("MAX_PATHS_TO_OPTIMIZE", "MAX_PATHS_TO_OPTIMIZE", 15);
+
+/**
+ * Maximum number of hub-pair pools to fetch synchronously during startup warmup.
+ * Remaining pools are deferred to watcher-driven admission to bound cold-start latency.
+ */
+export const MAX_SYNC_WARMUP_POOLS = _num(
+  "MAX_SYNC_WARMUP_POOLS",
+  "MAX_SYNC_WARMUP_POOLS",
+  400
+);
+
+/** Max age of per-pool state allowed for execution-triggered route revalidation (ms). */
+export const ROUTE_STATE_MAX_AGE_MS = _num(
+  "ROUTE_STATE_MAX_AGE_MS",
+  "ROUTE_STATE_MAX_AGE_MS",
+  10_000
+);
+
+/** Max timestamp skew allowed across pools in one route before execution (ms). */
+export const ROUTE_STATE_MAX_SKEW_MS = _num(
+  "ROUTE_STATE_MAX_SKEW_MS",
+  "ROUTE_STATE_MAX_SKEW_MS",
+  3_000
+);
+
+/**
+ * How often to rebuild the full cycle cache (ms).
+ * The HyperSync watcher keeps state fresh; this only needs to run when
+ * new pools are discovered.  Default: 2 minutes (was 10 minutes).
+ */
+export const CYCLE_REFRESH_INTERVAL_MS = _num(
+  "CYCLE_REFRESH_INTERVAL_MS",
+  "CYCLE_REFRESH_INTERVAL_MS",
+  2 * 60 * 1000
+);
+
+// ─── Runtime ───────────────────────────────────────────────────
+
+/** Default poll interval for legacy polling (sec) */
+export const DEFAULT_POLL_INTERVAL_SEC = _num("DEFAULT_POLL_INTERVAL_SEC", "DEFAULT_POLL_INTERVAL_SEC", 30);
+
+/** Max consecutive errors before giving up on a run pass */
+export const MAX_CONSECUTIVE_ERRORS = _num("MAX_CONSECUTIVE_ERRORS", "MAX_CONSECUTIVE_ERRORS", 5);
+
+// ─── Gas oracle (auto-tuned) ─────────────────────────────────
+
+/**
+ * How often the background Gas Oracle polls for new fee data (ms).
+ * Auto-tuned from RPC latency.  Faster networks can afford more frequent polls.
+ */
+export const GAS_POLL_INTERVAL_MS = _num("GAS_POLL_INTERVAL_MS", "GAS_POLL_INTERVAL_MS", 5_000);

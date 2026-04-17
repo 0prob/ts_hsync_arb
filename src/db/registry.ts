@@ -1,0 +1,599 @@
+// @ts-nocheck
+/**
+ * src/db/registry.js — SQLite-backed pool registry
+ *
+ * Responsibilities:
+ *   - Pool CRUD (insert, update, remove, query)
+ *   - Per-protocol checkpoint tracking for resume-from-crash
+ *   - Rollback guard persistence for reorg detection
+ *   - Pool state storage for swap simulation
+ *   - Batch operations and snapshot I/O
+ *   - Token decimals tracking
+ *   - Fee tier detection and storage
+ *   - Disabled pool tracking
+ *   - Liquidity-change detection
+ *   - Pool metadata validation
+ */
+
+import fs from "fs";
+import path from "path";
+import { CompatDatabase } from "./sqlite.ts";
+import {
+  parseJson,
+} from "./registry_codec.ts";
+import { RegistryMetaCache } from "./registry_meta_cache.ts";
+import {
+  getCheckpoint as getCheckpointRecord,
+  getGlobalCheckpoint as getGlobalCheckpointRecord,
+  getRollbackGuard as getRollbackGuardRecord,
+  rollbackToBlock as rollbackRegistryToBlock,
+  setCheckpoint as setCheckpointRecord,
+  setRollbackGuard as setRollbackGuardRecord,
+} from "./registry_checkpoints.ts";
+import {
+  getArbHistory as getArbHistoryRecords,
+  getArbStats as getArbStatsRecord,
+  logArbResult as logArbResultRecord,
+} from "./registry_history.ts";
+import {
+  batchUpsertTokenMeta as batchUpsertTokenMetaRecords,
+  getPoolFee as getPoolFeeRecord,
+  getTokenDecimals as getTokenDecimalsRecord,
+  getTokenMeta as getTokenMetaRecord,
+  upsertPoolFee as upsertPoolFeeRecord,
+  upsertTokenMeta as upsertTokenMetaRecord,
+} from "./registry_assets.ts";
+import {
+  batchUpdateStates as batchUpdateStatesRecord,
+  batchUpsertPools as batchUpsertPoolsRecord,
+  detectLiquidityChange as detectLiquidityChangeRecord,
+  disablePool as disablePoolRecord,
+  enablePool as enablePoolRecord,
+  getActivePoolCount as getActivePoolCountRecord,
+  getPool as getPoolRecord,
+  getPoolCount as getPoolCountRecord,
+  getPoolCountByProtocol as getPoolCountByProtocolRecord,
+  getPools as getPoolsRecord,
+  getPoolsWithState as getPoolsWithStateRecord,
+  getStaleStatePools as getStaleStatePoolsRecord,
+  hasRecentLiquidityEvent as hasRecentLiquidityEventRecord,
+  loadSnapshot as loadSnapshotRecord,
+  recordLiquidityEvent as recordLiquidityEventRecord,
+  removePool as removePoolRecord,
+  saveSnapshot as saveSnapshotRecord,
+  updatePoolState as updatePoolStateRecord,
+  upsertPool as upsertPoolRecord,
+  validateAllPools as validateAllPoolsRecord,
+  validatePoolMetadata as validatePoolMetadataRecord,
+} from "./registry_pools.ts";
+
+export class RegistryService {
+  constructor(dbPath) {
+    const dbDir = path.dirname(dbPath);
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+    this.db = new CompatDatabase(dbPath);
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
+    this._initSchema();
+    this._stmtCache = new Map();
+    this._metaCache = new RegistryMetaCache(this._stmt.bind(this));
+  }
+
+  // ─── Schema ──────────────────────────────────────────────────
+
+  _initSchema() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pools (
+        address TEXT PRIMARY KEY,
+        protocol TEXT NOT NULL,
+        tokens TEXT NOT NULL,
+        created_block INTEGER NOT NULL,
+        created_tx TEXT NOT NULL,
+        metadata TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active'
+      );
+
+      CREATE TABLE IF NOT EXISTS pool_state (
+        address TEXT PRIMARY KEY,
+        last_updated_block INTEGER NOT NULL,
+        state_data TEXT NOT NULL,
+        FOREIGN KEY (address) REFERENCES pools(address)
+      );
+
+      CREATE TABLE IF NOT EXISTS checkpoints (
+        protocol TEXT PRIMARY KEY,
+        last_block INTEGER NOT NULL,
+        last_block_hash TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS rollback_guard (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        block_number INTEGER NOT NULL,
+        block_hash TEXT NOT NULL,
+        timestamp INTEGER,
+        first_block_number INTEGER,
+        first_parent_hash TEXT
+      );
+
+      -- Token metadata: decimals, symbol, name
+      CREATE TABLE IF NOT EXISTS token_meta (
+        address TEXT PRIMARY KEY,
+        decimals INTEGER NOT NULL,
+        symbol TEXT,
+        name TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Pool fee tiers: per-pool fee in basis points
+      CREATE TABLE IF NOT EXISTS pool_fees (
+        address TEXT PRIMARY KEY,
+        fee_bps INTEGER NOT NULL,
+        fee_raw TEXT,
+        protocol TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Liquidity change log: detect significant liquidity events
+      CREATE TABLE IF NOT EXISTS liquidity_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        address TEXT NOT NULL,
+        block_number INTEGER NOT NULL,
+        event_type TEXT NOT NULL,  -- 'large_change', 'near_empty', 'disabled'
+        old_value TEXT,
+        new_value TEXT,
+        recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Arbitrage execution history: one row per executed arb
+      CREATE TABLE IF NOT EXISTS arb_history (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        tx_hash          TEXT,
+        block_number     INTEGER,
+        start_token      TEXT NOT NULL,
+        hop_count        INTEGER NOT NULL,
+        amount_in        TEXT NOT NULL,   -- raw bigint as string
+        amount_out       TEXT NOT NULL,
+        gross_profit     TEXT NOT NULL,
+        net_profit       TEXT NOT NULL,
+        gas_used         INTEGER,
+        gas_price_wei    TEXT,
+        pools            TEXT NOT NULL,   -- JSON array of pool addresses
+        protocols        TEXT NOT NULL,   -- JSON array of protocol names
+        status           TEXT NOT NULL DEFAULT 'success', -- 'success' | 'reverted' | 'dropped'
+        recorded_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pools_protocol ON pools(protocol);
+      CREATE INDEX IF NOT EXISTS idx_pools_status ON pools(status);
+      CREATE INDEX IF NOT EXISTS idx_pool_state_block ON pool_state(last_updated_block);
+      CREATE INDEX IF NOT EXISTS idx_liquidity_events_addr ON liquidity_events(address);
+      CREATE INDEX IF NOT EXISTS idx_arb_history_recorded ON arb_history(recorded_at);
+      CREATE INDEX IF NOT EXISTS idx_arb_history_token ON arb_history(start_token);
+    `);
+
+    // Migrations for existing databases
+    const migrations = [
+      `ALTER TABLE pools ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+    ];
+
+    for (const migration of migrations) {
+      try {
+        this.db.exec(migration);
+      } catch (_) {
+        // Column already exists — expected on non-fresh databases
+      }
+    }
+  }
+
+  // ─── Pool CRUD ───────────────────────────────────────────────
+
+  _stmt(key, sql) {
+    if (!this._stmtCache.has(key)) {
+      this._stmtCache.set(key, this.db.prepare(sql));
+    }
+    return this._stmtCache.get(key);
+  }
+
+  _invalidatePoolMetaCache() {
+    this._metaCache.invalidate();
+  }
+
+  _getPoolMetaCache() {
+    return this._metaCache.getAll();
+  }
+
+  upsertPool(metadata) {
+    return upsertPoolRecord(
+      this.db,
+      this._stmt.bind(this),
+      this._invalidatePoolMetaCache.bind(this),
+      metadata
+    );
+  }
+
+  removePool(address) {
+    return removePoolRecord(
+      this._stmt.bind(this),
+      this._invalidatePoolMetaCache.bind(this),
+      address
+    );
+  }
+
+  updatePoolState(state) {
+    return updatePoolStateRecord(this._stmt.bind(this), state);
+  }
+
+  getPools(opts = {}) {
+    return getPoolsRecord(this.db, opts);
+  }
+
+  getActivePools() {
+    return this.getPools({ status: "active" });
+  }
+
+  getActivePoolsMeta() {
+    return this._metaCache.getActive();
+  }
+
+  getPoolMeta(address) {
+    return this._metaCache.get(address);
+  }
+
+  getPool(address) {
+    return getPoolRecord(this._stmt.bind(this), address);
+  }
+
+  getPoolCount() {
+    return getPoolCountRecord(this._stmt.bind(this));
+  }
+
+  getActivePoolCount() {
+    return getActivePoolCountRecord(this._stmt.bind(this));
+  }
+
+  // ─── Checkpoint Management ───────────────────────────────────
+
+  getCheckpoint(protocol) {
+    return getCheckpointRecord(this.db, protocol);
+  }
+
+  setCheckpoint(protocol, block, blockHash = null) {
+    setCheckpointRecord(this.db, protocol, block, blockHash);
+  }
+
+  getGlobalCheckpoint() {
+    return getGlobalCheckpointRecord(this.db);
+  }
+
+  // ─── Rollback Guard ──────────────────────────────────────────
+
+  setRollbackGuard(guard) {
+    setRollbackGuardRecord(this.db, guard);
+  }
+
+  getRollbackGuard() {
+    return getRollbackGuardRecord(this.db);
+  }
+
+  // ─── Rollback (Reorg) Handling ───────────────────────────────
+
+  rollbackToBlock(block) {
+    const result = rollbackRegistryToBlock(this.db, block);
+    this._invalidatePoolMetaCache();
+    return result;
+  }
+
+  // ─── Batch Operations ────────────────────────────────────────
+
+  batchUpsertPools(poolList) {
+    batchUpsertPoolsRecord(
+      this.db,
+      this._stmt.bind(this),
+      this._invalidatePoolMetaCache.bind(this),
+      poolList
+    );
+  }
+
+  /**
+   * Batch update pool states in a single transaction.
+   *
+   * @param {Array<{ pool_address: string, block: number, data: Object }>} stateList
+   */
+  batchUpdateStates(stateList) {
+    batchUpdateStatesRecord(this.db, this.updatePoolState.bind(this), stateList);
+  }
+
+  /**
+   * Get all active pools that have state data.
+   * Returns pools joined with their latest state.
+   */
+  getPoolsWithState(opts = {}) {
+    return getPoolsWithStateRecord(this.db, opts);
+  }
+
+  /**
+   * Get pools that need state refresh (no state or state older than given block).
+   *
+   * @param {number} staleThreshold  Block number; pools with state older than this are included
+   * @returns {Array}
+   */
+  getStaleStatePools(staleThreshold) {
+    return getStaleStatePoolsRecord(this.db, staleThreshold);
+  }
+
+  /**
+   * Get pool count by protocol.
+   * @returns {Object} e.g. { QUICKSWAP_V2: 3622, UNISWAP_V3: 3513, ... }
+   */
+  getPoolCountByProtocol() {
+    return getPoolCountByProtocolRecord(this._stmt.bind(this));
+  }
+
+  // ─── Snapshot I/O ────────────────────────────────────────────
+
+  loadSnapshot(snapshotPath) {
+    loadSnapshotRecord(this.batchUpsertPools.bind(this), snapshotPath);
+  }
+
+  saveSnapshot(snapshotPath) {
+    saveSnapshotRecord(this.getPools.bind(this), snapshotPath);
+  }
+
+  // ─── Token Decimals ───────────────────────────────────────────
+
+  /**
+   * Upsert token metadata (decimals, symbol, name).
+   *
+   * @param {string} address   Token address (lowercase)
+   * @param {number} decimals  Token decimals (e.g. 18, 6, 8)
+   * @param {string} [symbol]  Token symbol
+   * @param {string} [name]    Token name
+   */
+  upsertTokenMeta(address, decimals, symbol = null, name = null) {
+    upsertTokenMetaRecord(this.db, address, decimals, symbol, name);
+  }
+
+  /**
+   * Get token metadata for a given address.
+   *
+   * @param {string} address
+   * @returns {{ address, decimals, symbol, name } | null}
+   */
+  getTokenMeta(address) {
+    return getTokenMetaRecord(this.db, address);
+  }
+
+  /**
+   * Get decimals for multiple tokens at once.
+   *
+   * @param {string[]} addresses
+   * @returns {Map<string, number>}  address → decimals
+   */
+  getTokenDecimals(addresses) {
+    return getTokenDecimalsRecord(this.db, addresses);
+  }
+
+  /**
+   * Batch upsert token metadata.
+   *
+   * @param {Array<{ address: string, decimals: number, symbol?: string, name?: string }>} tokens
+   */
+  batchUpsertTokenMeta(tokens) {
+    batchUpsertTokenMetaRecords(this.db, tokens);
+  }
+
+  // ─── Fee Tiers ────────────────────────────────────────────────
+
+  /**
+   * Store or update the fee tier for a pool.
+   *
+   * @param {string} poolAddress  Lowercase pool address
+   * @param {number} feeBps       Fee in basis points (e.g. 30 = 0.3%)
+   * @param {string} [feeRaw]     Raw fee value from contract (e.g. "3000" for V3)
+   * @param {string} [protocol]   Protocol name
+   */
+  upsertPoolFee(poolAddress, feeBps, feeRaw = null, protocol = null) {
+    upsertPoolFeeRecord(this.db, poolAddress, feeBps, feeRaw, protocol);
+  }
+
+  /**
+   * Get fee tier for a pool.
+   *
+   * @param {string} poolAddress
+   * @returns {{ feeBps: number, feeRaw: string|null } | null}
+   */
+  getPoolFee(poolAddress) {
+    return getPoolFeeRecord(this.db, poolAddress);
+  }
+
+  // ─── Disabled Pool Tracking ───────────────────────────────────
+
+  /**
+   * Disable a pool (soft-remove from arb consideration).
+   * Sets status = 'disabled' (distinct from 'removed' which is for reorg cleanup).
+   *
+   * @param {string} poolAddress
+   * @param {string} [reason]  Why the pool is being disabled
+   */
+  disablePool(poolAddress, reason = "manual") {
+    disablePoolRecord(
+      this._stmt.bind(this),
+      this._invalidatePoolMetaCache.bind(this),
+      this.recordLiquidityEvent.bind(this),
+      poolAddress,
+      reason
+    );
+    console.log(`[registry] Disabled pool ${poolAddress}: ${reason}`);
+  }
+
+  /**
+   * Re-enable a previously disabled pool.
+   *
+   * @param {string} poolAddress
+   */
+  enablePool(poolAddress) {
+    enablePoolRecord(
+      this._stmt.bind(this),
+      this._invalidatePoolMetaCache.bind(this),
+      poolAddress
+    );
+  }
+
+  /**
+   * Get all disabled pools.
+   *
+   * @returns {Array}
+   */
+  getDisabledPools() {
+    return this.getPools({ status: "disabled" });
+  }
+
+  // ─── Liquidity Change Detection ───────────────────────────────
+
+  /**
+   * Record a liquidity event for a pool.
+   *
+   * @param {string} poolAddress
+   * @param {number} blockNumber
+   * @param {string} eventType   'large_change' | 'near_empty' | 'disabled'
+   * @param {*}      [oldValue]  Previous value
+   * @param {*}      [newValue]  New value
+   */
+  recordLiquidityEvent(poolAddress, blockNumber, eventType, oldValue, newValue) {
+    recordLiquidityEventRecord(
+      this._stmt.bind(this),
+      poolAddress,
+      blockNumber,
+      eventType,
+      oldValue,
+      newValue
+    );
+  }
+
+  /**
+   * Check if a pool has had a large liquidity change recently.
+   *
+   * @param {string} poolAddress
+   * @param {number} sinceBlock  Only look at events after this block
+   * @returns {boolean}
+   */
+  hasRecentLiquidityEvent(poolAddress, sinceBlock) {
+    return hasRecentLiquidityEventRecord(this._stmt.bind(this), poolAddress, sinceBlock);
+  }
+
+  /**
+   * Detect and record large liquidity changes given new vs old state.
+   *
+   * For V2 pools: checks if reserves changed by more than threshold%.
+   * For V3 pools: checks if liquidity changed by more than threshold%.
+   *
+   * @param {string} poolAddress
+   * @param {Object} oldState   Previous canonical state
+   * @param {Object} newState   New canonical state
+   * @param {number} blockNumber
+   * @param {number} [thresholdPct=50]  % change threshold
+   * @returns {boolean}  true if a significant change was detected
+   */
+  detectLiquidityChange(poolAddress, oldState, newState, blockNumber, thresholdPct = 50) {
+    return detectLiquidityChangeRecord(
+      this.recordLiquidityEvent.bind(this),
+      poolAddress,
+      oldState,
+      newState,
+      blockNumber,
+      thresholdPct
+    );
+  }
+
+  // ─── Metadata Validation ──────────────────────────────────────
+
+  /**
+   * Validate pool metadata and return a list of issues found.
+   *
+   * Checks:
+   *   - tokens array has >= 2 entries
+   *   - token addresses are valid (42-char 0x hex)
+   *   - no duplicate tokens
+   *   - V3 pools have fee and tickSpacing
+   *   - Balancer pools have poolId
+   *
+   * @param {Object} pool  Registry pool record
+   * @returns {string[]}   Array of validation issue strings (empty = valid)
+   */
+  validatePoolMetadata(pool) {
+    return validatePoolMetadataRecord(pool);
+  }
+
+  /**
+   * Validate all active pools and return pools with issues.
+   *
+   * @returns {Array<{ pool: Object, issues: string[] }>}
+   */
+  validateAllPools() {
+    return validateAllPoolsRecord(
+      this.getActivePools.bind(this),
+      this.validatePoolMetadata.bind(this)
+    );
+  }
+
+  // ─── Arbitrage History ────────────────────────────────────────
+
+  /**
+   * Log a completed arbitrage execution to the history table.
+   *
+   * @param {Object} arb
+   * @param {string}   [arb.txHash]        Transaction hash (null if not yet confirmed)
+   * @param {number}   [arb.blockNumber]   Block the arb was included in
+   * @param {string}    arb.startToken     Start/end token address (lowercase)
+   * @param {number}    arb.hopCount       Number of hops (2, 3, or 4)
+   * @param {bigint}    arb.amountIn       Input amount
+   * @param {bigint}    arb.amountOut      Output amount
+   * @param {bigint}    arb.grossProfit    Gross profit (amountOut - amountIn)
+   * @param {bigint}    arb.netProfit      Net profit after gas/slippage
+   * @param {number}   [arb.gasUsed]       Actual gas consumed
+   * @param {bigint}   [arb.gasPriceWei]   Gas price at execution time
+   * @param {string[]}  arb.pools          Ordered list of pool addresses
+   * @param {string[]}  arb.protocols      Ordered list of protocol names
+   * @param {string}   [arb.status]        'success' | 'reverted' | 'dropped'
+   */
+  logArbResult(arb) {
+    logArbResultRecord(this.db, arb);
+  }
+
+  /**
+   * Retrieve recent arb history entries.
+   *
+   * @param {Object} [opts]
+   * @param {number}  [opts.limit=100]     Max rows to return
+   * @param {string}  [opts.startToken]    Filter by start token
+   * @param {string}  [opts.status]        Filter by status ('success' | 'reverted' | 'dropped')
+   * @param {string}  [opts.since]         ISO datetime lower bound for recorded_at
+   * @returns {Array<Object>}
+   */
+  getArbHistory(opts = {}) {
+    return getArbHistoryRecords(this.db, opts);
+  }
+
+  /**
+   * Get aggregate profit statistics across all recorded arbs.
+   *
+   * Returns total/average net profit for successful arbs,
+   * along with counts per status and per hop count.
+   *
+   * @param {Object} [opts]
+   * @param {string} [opts.since]  ISO datetime lower bound
+   * @returns {Object}
+   */
+  getArbStats(opts = {}) {
+    return getArbStatsRecord(this.db, opts);
+  }
+
+  // ─── Lifecycle ───────────────────────────────────────────────
+
+  close() {
+    this.db.close();
+  }
+}
