@@ -19,7 +19,7 @@ import { WORKER_COUNT } from "../config/index.ts";
 import { logger } from "../utils/logger.ts";
 
 const WORKER_URL = new URL("./persistent_worker.ts", import.meta.url);
-const WORKER_EXEC_ARGV = [...process.execArgv];
+const WORKER_EXEC_ARGV = [...process.execArgv, '--import', 'tsx'];
 const workerLogger = logger.child({ component: "worker_pool" });
 
 function buildChunkStateObject(paths, stateCache) {

@@ -25,7 +25,29 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "@types/react": "17",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-reconciler": "^0.33.0",
+    "esbuild": "^0.28.0",
+    "ink": "^3.2.0",
+    "ink-big-text": "^2.0.0",
+    "ink-box": "^2.0.0",
+    "ink-gradient": "^4.0.0",
+    "ink-select-input": "^6.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-table": "^3.1.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^17.0.2",
+    "react-reconciler": "^0.33.0",
+    "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
+  },
+  "peerDependencies": {
+    "@types/react": "^17.0.91",
+    "@types/react-dom": "^19.2.3",
+    "ink": "^3.2.0",
+    "react": "^17.0.2",
+    "react-reconciler": "^0.33.0"
   }
 }

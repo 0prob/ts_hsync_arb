@@ -44,6 +44,7 @@ import { fetchAndNormalizeCurvePool } from "./src/state/poll_curve.ts";
 import { throttledMap } from "./src/enrichment/rpc.ts";
 import { logger } from "./src/utils/logger.ts";
 import { pathsEvaluated, arbsFound, startMetricsServer, stopMetricsServer } from "./src/utils/metrics.ts";
+import { startTui, updateTui, addLog, addOpportunity } from "./src/tui/index.tsx";
 import {
   DB_PATH,
   POLYGON_RPC,
@@ -68,6 +69,7 @@ const args = process.argv.slice(2);
 const LOOP_MODE       = args.includes("--loop");
 const LIVE_MODE       = args.includes("--live");
 const DISCOVERY_ONLY  = args.includes("--discovery-only");
+const TUI_MODE        = args.includes("--tui");
 const INTERVAL_IDX    = args.indexOf("--interval");
 const POLL_INTERVAL_SEC =
   INTERVAL_IDX !== -1 ? parseInt(args[INTERVAL_IDX + 1], 10) : DEFAULT_POLL_INTERVAL_SEC;
@@ -125,6 +127,10 @@ let _arbDirty = false;
 const runnerLogger = logger.child({ component: "runner" });
 
 function log(msg, level = "info", meta = undefined) {
+  if (TUI_MODE) {
+    addLog(`[${level.toUpperCase()}] ${msg}`);
+  }
+
   if (!runnerLogger.isLevelEnabled(level)) return;
 
   const payload = typeof meta === "function" ? meta() : meta;
@@ -282,6 +288,9 @@ function assessRouteResult(path, routeResult, gasPriceWei, tokenToMaticRate) {
 async function getCurrentFeeSnapshot() {
   try {
     const fees = await fetchEIP1559Fees();
+    if (TUI_MODE && fees?.maxFeePerGas) {
+      updateTui({ gasPrice: (Number(fees.maxFeePerGas) / 1e9).toFixed(2) });
+    }
     if (!fees?.updatedAt || Date.now() - fees.updatedAt > MAX_GAS_AGE_MS) {
       return null;
     }
@@ -1416,6 +1425,17 @@ async function runPass() {
     priceOracle.update();
 
     const opportunities = await findArbs();
+    if (TUI_MODE) {
+      updateTui({
+        passCount,
+        consecutiveErrors,
+        opportunities: opportunities.slice(0, 5).map(o => ({
+          Route: o.path.edges.map(e => e.protocol).join(' -> '),
+          Profit: `${(Number(o.result.profit) / 1e18).toFixed(4)} MATIC`,
+          ROI: `${(roiForCandidate(o.result) / 10000).toFixed(2)}%`
+        }))
+      });
+    }
     log(`Pass #${passCount}: ${opportunities.length} profitable route(s)`, "info", {
       event: "pass_opportunities",
       pass: passCount,
@@ -1514,12 +1534,17 @@ async function shutdown() {
 // ─── Main ──────────────────────────────────────────────────────
 
 async function main() {
-  startMetricsServer(9090);
+  if (TUI_MODE) {
+    startTui();
+    updateTui({ status: 'running' });
+  } else {
+    startMetricsServer(9090);
 
-  console.log("╔══════════════════════════════════════════════╗");
-  console.log("║   Polygon Arbitrage Bot — Event-Driven       ║");
-  console.log(`║   Workers: ${String(WORKER_COUNT).padEnd(3)}  Paths: ${String(MAX_TOTAL_PATHS).padEnd(7)}          ║`);
-  console.log("╚══════════════════════════════════════════════╝");
+    console.log("╔══════════════════════════════════════════════╗");
+    console.log("║   Polygon Arbitrage Bot — Event-Driven       ║");
+    console.log(`║   Workers: ${String(WORKER_COUNT).padEnd(3)}  Paths: ${String(MAX_TOTAL_PATHS).padEnd(7)}          ║`);
+    console.log("╚══════════════════════════════════════════════╝");
+  }
 
   registry     = new RegistryService(DB_PATH);
   priceOracle  = new PriceOracle(stateCache, registry);
