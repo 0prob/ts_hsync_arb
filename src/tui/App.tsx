@@ -1,40 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
 import Table from 'ink-table';
 import Gradient from 'ink-gradient';
 import BigText from 'ink-big-text';
+import type { BotState } from './index.tsx';
 
-interface TuiState {
-  passCount: number;
-  consecutiveErrors: number;
-  gasPrice: string;
-  maticPrice: string;
-  lastArbMs: number;
-  opportunities: any[];
-  logs: string[];
-  status: 'idle' | 'running' | 'error';
-}
-
-export const App = ({ initialState }: { initialState: TuiState }) => {
-  const [state, setState] = useState<TuiState>(initialState);
+export const App = ({ state }: { state: BotState }) => {
   const { exit } = useApp();
 
-  useInput((input, key) => {
-    if (input === 'q') {
-      exit();
-    }
+  useInput((input) => {
+    if (input === 'q') exit();
   });
-
-  // This would be updated via a global state or event emitter in a real app
-  // For now, we'll assume the runner updates this state
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // In a real implementation, we'd fetch the latest state from the runner
-      // For this demo, we'll just listen for updates if we had an event emitter
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -82,14 +59,13 @@ export const App = ({ initialState }: { initialState: TuiState }) => {
 
       <Text bold color="blue">Recent Logs</Text>
       <Box borderStyle="single" borderColor="blue" height={10} flexDirection="column">
-        {state.logs.map((log, i) => (
-          <Text key={i} wrap="truncate-end">{log}</Text>
+        {state.logs.map((line, i) => (
+          <Text key={i} wrap="truncate-end">{line}</Text>
         ))}
       </Box>
 
-      <Box marginTop={1} justifyContent="space-between">
-        <Text color="gray">Press 'q' to exit | 'r' to refresh</Text>
-        <Text color="gray">v2.0.0</Text>
+      <Box marginTop={1}>
+        <Text color="gray">Press 'q' to exit</Text>
       </Box>
     </Box>
   );
