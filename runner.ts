@@ -423,6 +423,23 @@ function formatDuration(ms) {
   return `${(ms / 60_000).toFixed(1)}m`;
 }
 
+function fmtSym(addr) {
+  return registry?.getTokenMeta?.(addr)?.symbol ?? addr.slice(2, 8).toUpperCase();
+}
+
+function fmtPath(path) {
+  const tokens = [path.startToken, ...path.edges.map(e => e.tokenOut)];
+  const prots  = path.edges.map(e => e.protocol);
+  return `${tokens.map(fmtSym).join('→')}  [${prots.join('/')}]`;
+}
+
+function fmtProfit(netWei, tokenAddr) {
+  const meta = registry?.getTokenMeta?.(tokenAddr);
+  const dec  = meta?.decimals ?? 18;
+  const sym  = meta?.symbol   ?? tokenAddr.slice(2, 8).toUpperCase();
+  return `${(Number(netWei) / 10 ** dec).toFixed(6)} ${sym}`;
+}
+
 function partitionChangedPools(changedPools) {
   const valid = new Set();
   const invalid = new Set();
@@ -1152,6 +1169,14 @@ async function findArbs() {
 
   pathsEvaluated.inc({ pass: passCount }, cachedCycles.length);
 
+  log(
+    candidates.length === 0
+      ? `Scanned ${cachedCycles.length} paths — no candidates above fee threshold`
+      : `Scanned ${cachedCycles.length} paths → ${candidates.length} candidates`,
+    "info",
+    { event: "scan_summary", paths: cachedCycles.length, candidates: candidates.length }
+  );
+
   if (candidates.length === 0) return [];
 
   const feeSnapshot = await getCurrentFeeSnapshot();
@@ -1191,8 +1216,20 @@ async function findArbs() {
 
   if (profitable.length > 0) {
     arbsFound.inc({ pass: passCount }, profitable.length);
-    // Persist profitable routes in cache for fast event-driven revalidation
     routeCache.update(profitable);
+    for (const { path, assessment } of profitable) {
+      const net = assessment.netProfitAfterGas ?? assessment.netProfit ?? 0n;
+      log(
+        `  ↳ ${fmtPath(path)}  net ${fmtProfit(net, path.startToken)}`,
+        "info",
+        {
+          event: "profitable_route",
+          route: fmtPath(path),
+          hopCount: path.hopCount,
+          netProfit: net.toString(),
+        }
+      );
+    }
   }
 
   log("[runner] Candidate optimization pass complete", "debug", {
@@ -1675,8 +1712,8 @@ async function main() {
 
     if (validChangedAddrs.size > 0) {
       log(
-        `[runner] ${validChangedAddrs.size}/${changedAddrs.size} pools updated with valid state`,
-        "debug",
+        `[watcher] ${validChangedAddrs.size}/${changedAddrs.size} pool state(s) updated`,
+        "info",
         {
           event: "watcher_batch_valid",
           changedPools: changedAddrs.size,
