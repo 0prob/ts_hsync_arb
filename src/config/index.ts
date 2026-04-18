@@ -298,6 +298,17 @@ export const MAX_SYNC_WARMUP_POOLS = _num(
   400
 );
 
+/**
+ * Maximum number of V3 pools to fully hydrate during synchronous startup warmup.
+ * Additional V3 hub-pair pools are deferred to watcher-driven admission to avoid
+ * cold-start stalls caused by full bitmap/tick hydration.
+ */
+export const MAX_SYNC_WARMUP_V3_POOLS = _num(
+  "MAX_SYNC_WARMUP_V3_POOLS",
+  "MAX_SYNC_WARMUP_V3_POOLS",
+  48
+);
+
 /** Max age of per-pool state allowed for execution-triggered route revalidation (ms). */
 export const ROUTE_STATE_MAX_AGE_MS = _num(
   "ROUTE_STATE_MAX_AGE_MS",

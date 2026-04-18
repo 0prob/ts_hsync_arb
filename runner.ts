@@ -58,6 +58,7 @@ import {
   V3_POLL_CONCURRENCY,
   ENRICH_CONCURRENCY,
   MAX_SYNC_WARMUP_POOLS,
+  MAX_SYNC_WARMUP_V3_POOLS,
   ROUTE_STATE_MAX_AGE_MS,
   ROUTE_STATE_MAX_SKEW_MS,
 } from "./src/config/index.ts";
@@ -731,10 +732,29 @@ async function _fetchAndCacheStates(pools) {
           poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
         }
       }
+      let lastV3ProgressLogAt = 0;
       const statesMap = await fetchMultipleV3States(
         v3.map((p) => p.pool_address),
         V3_POLL_CONCURRENCY,
-        poolMeta
+        poolMeta,
+        (completed, total) => {
+          const now = Date.now();
+          if (
+            completed === total ||
+            completed % 10 === 0 ||
+            now - lastV3ProgressLogAt >= 5_000
+          ) {
+            lastV3ProgressLogAt = now;
+            log(`State warmup progress: v3_progress (${completed}/${total}).`, "info", {
+              event: "warmup_progress",
+              phase: "v3_progress",
+              protocol: "v3",
+              completed,
+              total,
+              remaining: Math.max(0, total - completed),
+            });
+          }
+        }
       );
       for (const pool of v3) {
         const addr = pool.pool_address.toLowerCase();
@@ -917,8 +937,22 @@ async function warmupStateCache() {
   }
 
   const prioritizedHubPairPools = [...hubPairPools].sort(compareWarmupPriority);
-  const syncWarmupPools = prioritizedHubPairPools.slice(0, MAX_SYNC_WARMUP_POOLS);
+  const uncappedSyncWarmupPools = prioritizedHubPairPools.slice(0, MAX_SYNC_WARMUP_POOLS);
+  const syncWarmupPools = [];
+  let syncWarmupV3Pools = 0;
+
+  for (const pool of uncappedSyncWarmupPools) {
+    if (_WARMUP_V3.has(pool.protocol)) {
+      if (syncWarmupV3Pools >= MAX_SYNC_WARMUP_V3_POOLS) continue;
+      syncWarmupV3Pools++;
+    }
+    syncWarmupPools.push(pool);
+  }
+
   const deferredPools = hubPairPools.length - syncWarmupPools.length;
+  const deferredV3Pools =
+    uncappedSyncWarmupPools.filter((pool) => _WARMUP_V3.has(pool.protocol)).length -
+    syncWarmupV3Pools;
 
   if (syncWarmupPools.length === 0) {
     log("State warmup: synchronous warmup budget is 0 — watcher will populate hub pairs.", "info", {
@@ -935,7 +969,9 @@ async function warmupStateCache() {
     hubPairPools: hubPairPools.length,
     syncWarmupPools: syncWarmupPools.length,
     deferredPools,
+    deferredV3Pools,
     maxSyncWarmupPools: MAX_SYNC_WARMUP_POOLS,
+    maxSyncWarmupV3Pools: MAX_SYNC_WARMUP_V3_POOLS,
     protocolBreakdown: {
       v2: syncWarmupPools.filter((pool) => _WARMUP_V2.has(pool.protocol)).length,
       v3: syncWarmupPools.filter((pool) => _WARMUP_V3.has(pool.protocol)).length,
@@ -953,6 +989,7 @@ async function warmupStateCache() {
     hubPairPools: hubPairPools.length,
     syncWarmupPools: syncWarmupPools.length,
     deferredPools,
+    deferredV3Pools,
     routablePools: valid,
     unroutablePools: syncWarmupPools.length - valid,
     warmupStats,

@@ -66,7 +66,7 @@ export async function executeWithRpcRetry(fn, options = {}) {
             ? "unsupported for contract reads"
             : "rate-limited";
           console.warn(
-            onRateLimitMessage(_shortUrl(endpoint.url), endpoint, attempt, reason)
+            onRateLimitMessage(rpcShortUrl(endpoint.url), endpoint, attempt, reason)
           );
         }
         continue;
@@ -86,7 +86,7 @@ export async function executeWithRpcRetry(fn, options = {}) {
 
       if (attempt === 0 && onRetryMessage) {
         console.warn(
-          onRetryMessage(_shortUrl(endpoint.url), Math.round(delay), endpoint, attempt)
+          onRetryMessage(rpcShortUrl(endpoint.url), Math.round(delay), endpoint, attempt)
         );
       }
 

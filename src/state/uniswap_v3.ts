@@ -410,10 +410,13 @@ export async function fetchV3PoolState(poolAddress, { isAlgebra = false } = {}) 
 export async function fetchMultipleV3States(
   poolAddresses,
   concurrency = 2,
-  poolMeta = new Map()
+  poolMeta = new Map(),
+  onProgress = null
 ) {
   const states = new Map();
   const noDataFailures = new Set();
+  let completed = 0;
+  const total = poolAddresses.length;
 
   const results = await throttledMap(
     poolAddresses,
@@ -428,6 +431,15 @@ export async function fetchMultipleV3States(
         }
         console.warn(`  Failed to fetch state for ${addr}: ${error.message}`);
         return { addr, state: null, error };
+      } finally {
+        completed++;
+        if (onProgress) {
+          try {
+            onProgress(completed, total, addr);
+          } catch {
+            // progress callbacks must never break state fetches
+          }
+        }
       }
     },
     concurrency
