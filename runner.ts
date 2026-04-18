@@ -44,7 +44,6 @@ import { fetchAndNormalizeCurvePool } from "./src/state/poll_curve.ts";
 import { throttledMap } from "./src/enrichment/rpc.ts";
 import { logger } from "./src/utils/logger.ts";
 import { pathsEvaluated, arbsFound, startMetricsServer, stopMetricsServer } from "./src/utils/metrics.ts";
-import { startTui } from "./src/tui/index.tsx";
 import {
   DB_PATH,
   POLYGON_RPC,
@@ -1602,6 +1601,7 @@ async function main() {
   botState.status = 'running';
 
   if (TUI_MODE) {
+    const { startTui } = await import("./src/tui/index.tsx");
     startTui(botState);
   } else {
     startMetricsServer(9090);
