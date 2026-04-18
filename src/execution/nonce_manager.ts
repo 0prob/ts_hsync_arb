@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/execution/nonce_manager.js — Per-account nonce manager
  *

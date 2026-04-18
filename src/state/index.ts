@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/index.js — State fetching barrel export
  */

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/db/registry_assets.js — Token metadata and pool fee helpers
  */

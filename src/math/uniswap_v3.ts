@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/uniswap_v3.js — Optimized Uniswap V3 swap simulator
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/execution/build_tx.js — Transaction builder
  *

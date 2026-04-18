@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/worker.ts — One-shot worker wrapper
  *

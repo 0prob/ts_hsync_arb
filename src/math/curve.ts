@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/curve.js — Curve StableSwap swap math
  *

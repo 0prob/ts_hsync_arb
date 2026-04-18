@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/protocols/curve_crypto_factory.js — Curve Crypto Factory definition
  */

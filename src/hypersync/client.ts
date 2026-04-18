@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/hypersync/client.js — HyperSync client factory
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/simulator.js — Full-protocol route simulator
  *
@@ -64,7 +64,7 @@ export function simulateHop(edge, amountIn, stateCache) {
 
   // V3: use pre-attached swapFn if available (highest fidelity)
   if (edge.swapFn && edge.stateRef) {
-    return edge.swapFn(amountIn, edge.zeroForOne, edge.stateRef, edge.fee);
+    return edge.swapFn(edge.stateRef, amountIn, edge.zeroForOne, edge.fee);
   }
 
   if (V2_PROTOCOLS.has(protocol)) {

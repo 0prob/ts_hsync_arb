@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/swap_math.js — Single-tick-range swap computation
  *

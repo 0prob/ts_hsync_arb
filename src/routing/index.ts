@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/index.js — Routing module barrel export
  */

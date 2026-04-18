@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/db/registry_meta_cache.js — Metadata cache helper for RegistryService
  */

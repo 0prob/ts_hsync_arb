@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/tick_math.js — Tick ↔ sqrtPriceX96 conversions
  *

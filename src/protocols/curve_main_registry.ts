@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/protocols/curve_main_registry.js — Curve Main Registry protocol definition
  */

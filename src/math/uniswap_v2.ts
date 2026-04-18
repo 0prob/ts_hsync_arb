@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/uniswap_v2.js — Constant-product (x*y=k) swap simulator
  *

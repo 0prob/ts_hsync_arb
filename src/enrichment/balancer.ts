@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/enrichment/balancer.js — Balancer V2 on-chain enrichment
  *

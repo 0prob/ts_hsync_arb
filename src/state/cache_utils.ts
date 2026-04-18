@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/cache_utils.js — Cache merge/reload helpers used by the watcher
  *

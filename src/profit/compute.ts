@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/profit/compute.js — Gas-adjusted profitability engine
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/protocols/uniswap_v3.js — Uniswap V3 protocol definition
  */

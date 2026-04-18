@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/discovery/uniswapv3.js — Uniswap V3 pool discovery
  *

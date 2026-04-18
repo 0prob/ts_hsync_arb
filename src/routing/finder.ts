@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/finder.js — Arbitrage path finder
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/persistent_worker.ts — Long-lived simulation + enumeration worker
  *

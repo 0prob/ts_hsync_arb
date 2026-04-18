@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/execution/calldata.js — Multihop calldata encoder
  *

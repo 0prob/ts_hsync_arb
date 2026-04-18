@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/hypersync/index.js — Barrel export for HyperSync layer
  */

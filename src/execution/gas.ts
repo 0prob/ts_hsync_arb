@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/execution/gas.js — Gas estimation and fee management
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/utils/validation_job.js — Periodic registry validation job
  *

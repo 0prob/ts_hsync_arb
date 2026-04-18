@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/profit/price_oracle.js — Token-to-MATIC price oracle
  *

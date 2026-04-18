@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/enumerate_cycles.js — Arbitrage cycle enumerator
  *

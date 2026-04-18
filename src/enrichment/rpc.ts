@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/enrichment/rpc.js — Shared viem public client with multi-RPC switching
  *
@@ -49,6 +49,16 @@ export async function executeWithRpcRetry(fn, options = {}) {
   let lastError;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // If every endpoint is currently rate-limited or cooling down, wait for
+    // the soonest one to recover before issuing the call.  Without this, we
+    // burn all retry slots instantly on rapid-fire 429s and then throw even
+    // though a healthy endpoint would be available in a few seconds — or we
+    // keep hammering cooling endpoints and extend their cooldowns indefinitely.
+    const waitMs = rpcManager.msUntilAnyEndpointAvailable();
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(waitMs + 50, 30_000)));
+    }
+
     const endpoint = rpcManager.checkoutBestEndpoint();
     const client = endpoint.client;
 

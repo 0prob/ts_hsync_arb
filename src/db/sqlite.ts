@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/db/sqlite.js — small compatibility layer over node:sqlite
  *
@@ -11,55 +11,60 @@
  * This adapter keeps that surface stable while using Node's built-in SQLite.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, StatementSync } from "node:sqlite";
+type SQLInputValue = null | number | bigint | string | NodeJS.ArrayBufferView;
 
 class CompatStatement {
-  constructor(statement) {
+  statement: StatementSync;
+  constructor(statement: StatementSync) {
     this.statement = statement;
   }
 
-  run(...params) {
+  run(...params: SQLInputValue[]) {
     return this.statement.run(...params);
   }
 
-  get(...params) {
+  get(...params: SQLInputValue[]) {
     return this.statement.get(...params);
   }
 
-  all(...params) {
+  all(...params: SQLInputValue[]) {
     return this.statement.all(...params);
   }
 
-  iterate(...params) {
+  iterate(...params: SQLInputValue[]) {
     return this.statement.iterate(...params);
   }
 }
 
 export class CompatDatabase {
-  constructor(path) {
+  db: DatabaseSync;
+  _statementCache: Map<string, CompatStatement>;
+  _savepointId: number;
+  constructor(path: string) {
     this.db = new DatabaseSync(path);
     this._statementCache = new Map();
     this._savepointId = 0;
   }
 
-  prepare(sql) {
+  prepare(sql: string) {
     // Cache by SQL text to preserve existing statement reuse behavior.
     if (!this._statementCache.has(sql)) {
       this._statementCache.set(sql, new CompatStatement(this.db.prepare(sql)));
     }
-    return this._statementCache.get(sql);
+    return this._statementCache.get(sql)!;
   }
 
-  exec(sql) {
+  exec(sql: string) {
     return this.db.exec(sql);
   }
 
-  pragma(sql) {
+  pragma(sql: string) {
     return this.db.exec(`PRAGMA ${sql}`);
   }
 
-  transaction(fn) {
-    return (...args) => {
+  transaction(fn: (...args: unknown[]) => unknown) {
+    return (...args: unknown[]) => {
       const nested = this.db.isTransaction;
       const savepoint = `sp_${++this._savepointId}`;
 

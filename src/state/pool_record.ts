@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/pool_record.js — Shared helpers for registry-backed pool records
  */

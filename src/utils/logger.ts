@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/utils/logger.js — Structured logging with pino
  */

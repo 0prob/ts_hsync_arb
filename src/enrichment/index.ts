@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/enrichment/index.js — Barrel export for on-chain enrichment
  */

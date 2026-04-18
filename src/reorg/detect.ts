@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/reorg/detect.js — Chain reorganization detection
  *

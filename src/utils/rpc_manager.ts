@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/utils/rpc_manager.js — Multi-RPC manager with latency-based switching
  *
@@ -19,8 +19,9 @@ import { FREE_RPC_URLS } from "../config/index.ts";
 
 // ─── Metrics ───────────────────────────────────────────────────
 // Imported lazily to avoid circular dependency (metrics → logger → nothing)
-let _rpcSwitches = null;
-let _rpcLatency = null;
+import type { Counter, Histogram } from "prom-client";
+let _rpcSwitches: Counter | null = null;
+let _rpcLatency: Histogram | null = null;
 async function lazyMetrics() {
   if (_rpcSwitches) return;
   try {
@@ -42,10 +43,16 @@ const ERROR_COOLDOWN_MAX_MS = 60_000;
 const METHOD_UNAVAILABLE_COOLDOWN_MS = 86_400_000; // 24 h
 
 class RpcEndpoint {
-  /**
-   * @param {string} url  Full RPC URL
-   */
-  constructor(url) {
+  url: string;
+  latencyMs: number;
+  consecutiveErrors: number;
+  rateLimitedUntil: number;
+  errorCooldownUntil: number;
+  inFlight: number;
+  _backoffMs: number;
+  client: ReturnType<typeof createPublicClient>;
+
+  constructor(url: string) {
     this.url = url;
     this.latencyMs = Infinity;     // updated by probe()
     this.consecutiveErrors = 0;
@@ -76,7 +83,7 @@ class RpcEndpoint {
   /**
    * Record a 429 / rate-limit event. Applies exponential backoff and logs it.
    */
-  markRateLimited(error = null) {
+  markRateLimited(error: unknown = null) {
     const methodUnavailable = _isMethodUnavailableError(error);
     const cooldownMs = methodUnavailable
         ? METHOD_UNAVAILABLE_COOLDOWN_MS
@@ -148,10 +155,10 @@ class RpcEndpoint {
 // ─── RpcManager ────────────────────────────────────────────────
 
 class RpcManager {
-  /**
-   * @param {string[]} urls  Ordered list of RPC URLs (first = preferred)
-   */
-  constructor(urls) {
+  endpoints: RpcEndpoint[];
+  _probeInterval: ReturnType<typeof setInterval> | null;
+
+  constructor(urls: string[]) {
     if (!urls || urls.length === 0) {
       throw new Error("RpcManager: at least one RPC URL required");
     }
@@ -218,6 +225,21 @@ class RpcManager {
   }
 
   /**
+   * Returns the milliseconds until at least one endpoint is fully healthy
+   * (neither rate-limited nor in error cooldown). Returns 0 if any endpoint
+   * is already healthy — callers can skip the wait in that case.
+   */
+  msUntilAnyEndpointAvailable() {
+    const now = Date.now();
+    if (this.endpoints.some((ep) => !ep.isRateLimited() && !ep.isCoolingDown())) return 0;
+    const soonest = this.endpoints.reduce((min, ep) => {
+      const avail = Math.max(ep.rateLimitedUntil, ep.errorCooldownUntil);
+      return Math.min(min, avail);
+    }, Infinity);
+    return Number.isFinite(soonest) ? Math.max(0, soonest - now) : 0;
+  }
+
+  /**
    * Reserve the current best endpoint for the lifetime of one retry-managed call.
    * This reduces herd behavior where many concurrent requests pick the same
    * low-latency endpoint before the first 429 updates its cooldown state.
@@ -232,7 +254,7 @@ class RpcManager {
    * Find an endpoint by URL and mark it as rate-limited.
    * @param {string} url
    */
-  markRateLimited(url, error = null) {
+  markRateLimited(url: string, error: unknown = null) {
     const ep = this.endpoints.find((e) => e.url === url);
     if (ep) ep.markRateLimited(error);
   }
@@ -241,7 +263,7 @@ class RpcManager {
    * Find an endpoint by URL and mark a non-RL error.
    * @param {string} url
    */
-  markError(url) {
+  markError(url: string) {
     const ep = this.endpoints.find((e) => e.url === url);
     if (ep) ep.markError();
   }
@@ -250,7 +272,7 @@ class RpcManager {
    * Find an endpoint by URL and record a success.
    * @param {string} url
    */
-  markSuccess(url) {
+  markSuccess(url: string) {
     const ep = this.endpoints.find((e) => e.url === url);
     if (ep) ep.markSuccess();
   }
@@ -259,7 +281,7 @@ class RpcManager {
    * Release a prior checkoutBestEndpoint() reservation.
    * @param {string} url
    */
-  releaseEndpoint(url) {
+  releaseEndpoint(url: string) {
     const ep = this.endpoints.find((e) => e.url === url);
     if (ep) {
       ep.inFlight = Math.max(0, ep.inFlight - 1);
@@ -317,7 +339,7 @@ class RpcManager {
 
 // ─── Helpers ───────────────────────────────────────────────────
 
-function rpcManagerShortUrl(url) {
+function rpcManagerShortUrl(url: string): string {
   try {
     const u = new URL(url);
     return u.hostname + (u.pathname !== "/" ? u.pathname.slice(0, 20) : "");
@@ -343,10 +365,10 @@ export const dynamicPublicClient = new Proxy(
   {},
   {
     get(_target, prop) {
-      const client = rpcManager.getBestClient();
+      const client = rpcManager.getBestClient() as Record<string | symbol, unknown>;
       const value = client[prop];
       // Bind methods to their original client so `this` works correctly
-      return typeof value === "function" ? value.bind(client) : value;
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(client) : value;
     },
   }
 );
@@ -357,8 +379,8 @@ export const dynamicPublicClient = new Proxy(
  * Returns true if an error indicates a 429 / rate-limit condition.
  * @param {unknown} error
  */
-export function isRateLimitError(error) {
-  const msg = String(error?.message ?? error ?? "");
+export function isRateLimitError(error: unknown): boolean {
+  const msg = String((error as { message?: string })?.message ?? error ?? "");
   const lower = msg.toLowerCase();
   return (
     msg.includes("429") ||
@@ -374,8 +396,8 @@ export function isRateLimitError(error) {
  * These are endpoint capability failures, so callers should fail over.
  * @param {unknown} error
  */
-export function isEndpointCapabilityError(error) {
-  const lower = String(error?.message ?? error ?? "").toLowerCase();
+export function isEndpointCapabilityError(error: unknown): boolean {
+  const lower = String((error as { message?: string })?.message ?? error ?? "").toLowerCase();
   return (
     lower.includes("paid plans only") ||
     lower.includes("upgrade your subscription") ||
@@ -383,8 +405,6 @@ export function isEndpointCapabilityError(error) {
     lower.includes('method "eth_call" is available for paid plans only') ||
     lower.includes("method not available") ||
     lower.includes("unsupported method") ||
-    // local-hyperrpc currently fails some block methods with an internal
-    // backend translation error; treat that as endpoint-specific capability.
     lower.includes("batch to blocks") ||
     lower.includes("cast type of column 'number'") ||
     lower.includes('cast type of column "number"')
@@ -395,16 +415,16 @@ export function isEndpointCapabilityError(error) {
  * Returns true if an error is retryable (429, 5xx, network, malformed response).
  * @param {unknown} error
  */
-export function isRetryableError(error) {
+export function isRetryableError(error: unknown): boolean {
   if (isRateLimitError(error)) return true;
   if (isEndpointCapabilityError(error)) return true;
-  const msg = String(error?.message ?? error ?? "");
+  const msg = String((error as { message?: string })?.message ?? error ?? "");
   if (/\b5\d{2}\b/.test(msg)) return true;
   // viem HttpRequestError: endpoint returned a non-JSON or malformed response
   if (msg.includes("HTTP request failed")) return true;
   return false;
 }
 
-function _isMethodUnavailableError(error) {
+function _isMethodUnavailableError(error: unknown): boolean {
   return isEndpointCapabilityError(error);
 }

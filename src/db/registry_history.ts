@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/db/registry_history.js — Arbitrage history helpers
  */

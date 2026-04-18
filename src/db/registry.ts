@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/db/registry.js — SQLite-backed pool registry
  *
@@ -68,7 +68,10 @@ import {
 } from "./registry_pools.ts";
 
 export class RegistryService {
-  constructor(dbPath) {
+  db: CompatDatabase;
+  _stmtCache: Map<string, ReturnType<CompatDatabase['prepare']>>;
+  _metaCache: RegistryMetaCache;
+  constructor(dbPath: string) {
     const dbDir = path.dirname(dbPath);
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true });
@@ -190,11 +193,11 @@ export class RegistryService {
 
   // ─── Pool CRUD ───────────────────────────────────────────────
 
-  _stmt(key, sql) {
+  _stmt(key: string, sql: string) {
     if (!this._stmtCache.has(key)) {
       this._stmtCache.set(key, this.db.prepare(sql));
     }
-    return this._stmtCache.get(key);
+    return this._stmtCache.get(key)!;
   }
 
   _invalidatePoolMetaCache() {
@@ -205,7 +208,7 @@ export class RegistryService {
     return this._metaCache.getAll();
   }
 
-  upsertPool(metadata) {
+  upsertPool(metadata: Record<string, unknown>) {
     return upsertPoolRecord(
       this.db,
       this._stmt.bind(this),
@@ -214,7 +217,7 @@ export class RegistryService {
     );
   }
 
-  removePool(address) {
+  removePool(address: string) {
     return removePoolRecord(
       this._stmt.bind(this),
       this._invalidatePoolMetaCache.bind(this),
@@ -222,7 +225,7 @@ export class RegistryService {
     );
   }
 
-  updatePoolState(state) {
+  updatePoolState(state: Record<string, unknown>) {
     return updatePoolStateRecord(this._stmt.bind(this), state);
   }
 
@@ -238,11 +241,11 @@ export class RegistryService {
     return this._metaCache.getActive();
   }
 
-  getPoolMeta(address) {
+  getPoolMeta(address: string) {
     return this._metaCache.get(address);
   }
 
-  getPool(address) {
+  getPool(address: string) {
     return getPoolRecord(this._stmt.bind(this), address);
   }
 
@@ -256,11 +259,11 @@ export class RegistryService {
 
   // ─── Checkpoint Management ───────────────────────────────────
 
-  getCheckpoint(protocol) {
+  getCheckpoint(protocol: string) {
     return getCheckpointRecord(this.db, protocol);
   }
 
-  setCheckpoint(protocol, block, blockHash = null) {
+  setCheckpoint(protocol: string, block: number, blockHash: string | null = null) {
     setCheckpointRecord(this.db, protocol, block, blockHash);
   }
 
@@ -270,7 +273,7 @@ export class RegistryService {
 
   // ─── Rollback Guard ──────────────────────────────────────────
 
-  setRollbackGuard(guard) {
+  setRollbackGuard(guard: Record<string, unknown>) {
     setRollbackGuardRecord(this.db, guard);
   }
 
@@ -280,7 +283,7 @@ export class RegistryService {
 
   // ─── Rollback (Reorg) Handling ───────────────────────────────
 
-  rollbackToBlock(block) {
+  rollbackToBlock(block: number) {
     const result = rollbackRegistryToBlock(this.db, block);
     this._invalidatePoolMetaCache();
     return result;
@@ -288,7 +291,7 @@ export class RegistryService {
 
   // ─── Batch Operations ────────────────────────────────────────
 
-  batchUpsertPools(poolList) {
+  batchUpsertPools(poolList: Record<string, unknown>[]) {
     batchUpsertPoolsRecord(
       this.db,
       this._stmt.bind(this),
@@ -302,7 +305,7 @@ export class RegistryService {
    *
    * @param {Array<{ pool_address: string, block: number, data: Object }>} stateList
    */
-  batchUpdateStates(stateList) {
+  batchUpdateStates(stateList: Record<string, unknown>[]) {
     batchUpdateStatesRecord(this.db, this.updatePoolState.bind(this), stateList);
   }
 
@@ -320,7 +323,7 @@ export class RegistryService {
    * @param {number} staleThreshold  Block number; pools with state older than this are included
    * @returns {Array}
    */
-  getStaleStatePools(staleThreshold) {
+  getStaleStatePools(staleThreshold: number) {
     return getStaleStatePoolsRecord(this.db, staleThreshold);
   }
 
@@ -334,11 +337,11 @@ export class RegistryService {
 
   // ─── Snapshot I/O ────────────────────────────────────────────
 
-  loadSnapshot(snapshotPath) {
+  loadSnapshot(snapshotPath: string) {
     loadSnapshotRecord(this.batchUpsertPools.bind(this), snapshotPath);
   }
 
-  saveSnapshot(snapshotPath) {
+  saveSnapshot(snapshotPath: string) {
     saveSnapshotRecord(this.getPools.bind(this), snapshotPath);
   }
 
@@ -352,7 +355,7 @@ export class RegistryService {
    * @param {string} [symbol]  Token symbol
    * @param {string} [name]    Token name
    */
-  upsertTokenMeta(address, decimals, symbol = null, name = null) {
+  upsertTokenMeta(address: string, decimals: number, symbol: string | null = null, name: string | null = null) {
     upsertTokenMetaRecord(this.db, address, decimals, symbol, name);
   }
 
@@ -362,7 +365,7 @@ export class RegistryService {
    * @param {string} address
    * @returns {{ address, decimals, symbol, name } | null}
    */
-  getTokenMeta(address) {
+  getTokenMeta(address: string) {
     return getTokenMetaRecord(this.db, address);
   }
 
@@ -372,7 +375,7 @@ export class RegistryService {
    * @param {string[]} addresses
    * @returns {Map<string, number>}  address → decimals
    */
-  getTokenDecimals(addresses) {
+  getTokenDecimals(addresses: string[]) {
     return getTokenDecimalsRecord(this.db, addresses);
   }
 
@@ -381,7 +384,7 @@ export class RegistryService {
    *
    * @param {Array<{ address: string, decimals: number, symbol?: string, name?: string }>} tokens
    */
-  batchUpsertTokenMeta(tokens) {
+  batchUpsertTokenMeta(tokens: Array<{ address: string; decimals: number; symbol?: string; name?: string }>) {
     batchUpsertTokenMetaRecords(this.db, tokens);
   }
 

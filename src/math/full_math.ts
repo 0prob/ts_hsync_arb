@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/full_math.js — 512-bit precision math (BigInt)
  *

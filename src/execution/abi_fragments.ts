@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/execution/abi_fragments.js — Minimal ABI fragments for calldata encoding
  *

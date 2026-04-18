@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/db/registry_codec.js — Shared JSON/row conversion helpers for RegistryService
  */

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/worker_pool.ts — Persistent worker thread pool for route simulation
  *

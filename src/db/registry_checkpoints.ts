@@ -1,23 +1,13 @@
-// @ts-nocheck
+
 /**
  * src/db/registry_checkpoints.js — Checkpoint, rollback-guard, and reorg helpers
  */
 
-const STMT_CACHE_KEY = Symbol.for("registry_checkpoints_stmt_cache");
-
-function checkpointStmt(db, key, sql) {
-  let cache = db[STMT_CACHE_KEY];
-  if (!cache) {
-    cache = new Map();
-    Object.defineProperty(db, STMT_CACHE_KEY, { value: cache });
-  }
-  if (!cache.has(key)) {
-    cache.set(key, db.prepare(sql));
-  }
-  return cache.get(key);
+function checkpointStmt(db: import('./sqlite.ts').CompatDatabase, key: string, sql: string) {
+  return db.prepare(sql);
 }
 
-export function getCheckpoint(db, protocol) {
+export function getCheckpoint(db: import('./sqlite.ts').CompatDatabase, protocol: string) {
   return (
     checkpointStmt(
       db,
@@ -28,7 +18,7 @@ export function getCheckpoint(db, protocol) {
   );
 }
 
-export function setCheckpoint(db, protocol, block, blockHash = null) {
+export function setCheckpoint(db: import('./sqlite.ts').CompatDatabase, protocol: string, block: number, blockHash: string | null = null) {
   checkpointStmt(
     db,
     "setCheckpoint",
@@ -42,7 +32,7 @@ export function setCheckpoint(db, protocol, block, blockHash = null) {
     .run(protocol, block, blockHash);
 }
 
-export function getGlobalCheckpoint(db) {
+export function getGlobalCheckpoint(db: import('./sqlite.ts').CompatDatabase) {
   const row = checkpointStmt(
     db,
     "getGlobalCheckpoint",
@@ -51,7 +41,7 @@ export function getGlobalCheckpoint(db) {
   return row?.min_block ?? null;
 }
 
-export function setRollbackGuard(db, guard) {
+export function setRollbackGuard(db: import('./sqlite.ts').CompatDatabase, guard: Record<string, unknown>) {
   checkpointStmt(
     db,
     "setRollbackGuard",
@@ -65,19 +55,19 @@ export function setRollbackGuard(db, guard) {
          first_parent_hash  = excluded.first_parent_hash`
   )
     .run(
-      guard.blockNumber ?? guard.block_number,
-      guard.hash ?? guard.block_hash,
-      guard.timestamp ?? null,
-      guard.firstBlockNumber ?? guard.first_block_number ?? null,
-      guard.firstParentHash ?? guard.first_parent_hash ?? null
+      (guard.blockNumber ?? guard.block_number) as number,
+      (guard.hash ?? guard.block_hash) as string,
+      (guard.timestamp ?? null) as number | null,
+      (guard.firstBlockNumber ?? guard.first_block_number ?? null) as number | null,
+      (guard.firstParentHash ?? guard.first_parent_hash ?? null) as string | null
     );
 }
 
-export function getRollbackGuard(db) {
+export function getRollbackGuard(db: import('./sqlite.ts').CompatDatabase) {
   return checkpointStmt(db, "getRollbackGuard", `SELECT * FROM rollback_guard WHERE id = 1`).get() || null;
 }
 
-export function rollbackToBlock(db, block) {
+export function rollbackToBlock(db: import('./sqlite.ts').CompatDatabase, block: number) {
   const deleteState = checkpointStmt(
     db,
     "rollbackDeleteState",

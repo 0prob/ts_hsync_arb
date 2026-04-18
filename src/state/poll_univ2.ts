@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/poll_univ2.js — Continuous V2 reserve state poller
  *

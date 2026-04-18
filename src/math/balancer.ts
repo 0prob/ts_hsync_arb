@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/balancer.js — Balancer V2 weighted pool swap math
  *

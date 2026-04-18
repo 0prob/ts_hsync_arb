@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/execution/private_tx.js — Polygon private mempool transaction submitter
  *

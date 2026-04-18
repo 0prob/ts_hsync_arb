@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/normalizer.js — Unified pool state normalizer
  *

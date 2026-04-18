@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/db/registry_pools.js — Pool persistence/query helpers for RegistryService
  */

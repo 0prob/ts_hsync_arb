@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/index.js — Math module barrel export
  */

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/watcher_protocol_handlers.js — Topic dispatcher for StateWatcher
  */

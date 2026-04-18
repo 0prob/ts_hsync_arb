@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/protocols/balancer_v2.js — Balancer V2 protocol definition
  */

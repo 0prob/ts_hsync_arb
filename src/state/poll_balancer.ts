@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/poll_balancer.js — Balancer V2 vault balances poller
  *

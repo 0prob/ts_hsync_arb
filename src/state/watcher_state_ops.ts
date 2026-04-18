@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/watcher_state_ops.js — State mutation helpers for StateWatcher
  */

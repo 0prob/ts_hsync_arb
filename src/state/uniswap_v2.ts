@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/uniswap_v2.js — Uniswap V2 / QuickSwap / SushiSwap pool state fetcher
  *

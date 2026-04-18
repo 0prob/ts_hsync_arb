@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/protocols/index.js — Protocol registry
  *

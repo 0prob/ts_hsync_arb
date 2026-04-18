@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/protocols/sushiswap_v2.js — SushiSwap V2 protocol definition
  */

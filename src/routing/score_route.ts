@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/score_route.js — Route scoring and ranking
  *

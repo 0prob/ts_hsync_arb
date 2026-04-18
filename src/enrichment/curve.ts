@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/enrichment/curve.js — Curve on-chain enrichment
  *

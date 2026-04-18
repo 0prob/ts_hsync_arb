@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/graph.js — Token adjacency graph builder
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/poll_curve.js — Curve pool balances + virtual price poller
  *

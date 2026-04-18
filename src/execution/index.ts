@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/execution/index.js — Execution module barrel export
  */

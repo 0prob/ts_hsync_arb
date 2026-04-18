@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/discovery/discover.js — Core discovery engine
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/state/watcher.js — HyperSync Event Watcher
  *

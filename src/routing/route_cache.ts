@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/routing/route_cache.js — Top-N profitable route cache
  *

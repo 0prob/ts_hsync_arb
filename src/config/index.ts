@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/config/index.js — Centralized configuration
  *
@@ -63,7 +63,7 @@ const _perf = _loadPerfJson();
  * @param {string} perfKey  Key inside perf.json params object
  * @param {number} def      Built-in default
  */
-function _num(envKey, perfKey, def) {
+function _num(envKey: string, perfKey: string, def: number): number {
   if (process.env[envKey] != null && process.env[envKey] !== "") {
     const n = Number(process.env[envKey]);
     if (!Number.isNaN(n)) return n;
@@ -72,45 +72,25 @@ function _num(envKey, perfKey, def) {
   return def;
 }
 
-// ─── Local HyperRPC proxy ──────────────────────────────────────
-//
-// When set, LOCAL_HYPERRPC_URL is used as the primary JSON-RPC target for
-// read-only operations: HYPERRPC_URL (multicall) and FREE_RPC_URLS (head entry).
-// It is intentionally NOT used as POLYGON_RPC fallback because HyperRPC is
-// read-only and must not be relied on for transaction submission paths.
-//
-// Start the proxy: docker compose -f docker-compose.local-hyperrpc.yml up -d
-// Default: http://localhost:8545
-
-export const LOCAL_HYPERRPC_URL = process.env.LOCAL_HYPERRPC_URL || "";
-
 // ─── HyperSync ─────────────────────────────────────────────────
 
 // Direct HyperSync streaming endpoint — used by the StateWatcher native client.
-// This is distinct from LOCAL_HYPERRPC_URL; HyperSync uses its own binary
-// protocol, not standard JSON-RPC.
+// Uses its own binary protocol, not standard JSON-RPC.
 export const HYPERSYNC_URL =
   process.env.HYPERSYNC_URL || "https://polygon.hypersync.xyz";
 
-/**
- * Envio HyperRPC — EVM-compatible JSON-RPC endpoint backed by HyperSync data.
- * Used exclusively for multicall token metadata hydration (decimals/symbol/name).
- * Kept separate from FREE_RPC_URLS so batch reads don't skew hot-path RPC scoring.
- *
- * Priority: LOCAL_HYPERRPC_URL → HYPERRPC_URL env → remote HyperRPC default.
- * When local-hyperrpc is running it is always chosen: zero latency, no rate limits.
- */
+// HyperRPC JSON-RPC endpoint — used exclusively for multicall token metadata
+// hydration so batch reads don't compete with hot-path RPC scoring.
+// Point HYPERRPC_URL at your local HyperRPC instance or use the remote default.
 export const HYPERRPC_URL =
-  LOCAL_HYPERRPC_URL ||
-  process.env.HYPERRPC_URL ||
-  "https://polygon.rpc.hypersync.xyz";
+  process.env.HYPERRPC_URL || "https://polygon.rpc.hypersync.xyz";
 
 export const ENVIO_API_TOKEN = process.env.ENVIO_API_TOKEN || "";
 
 if (!ENVIO_API_TOKEN) {
   console.warn(
     "WARNING: ENVIO_API_TOKEN not set. HyperSync streaming (StateWatcher) will reject requests.\n" +
-    "         Set ENVIO_API_TOKEN in .env. The token is also consumed by local-hyperrpc internally."
+    "         Set ENVIO_API_TOKEN in .env."
   );
 }
 
@@ -130,9 +110,9 @@ export const DISCOVERY_INTERVAL_MS = _num("DISCOVERY_INTERVAL_MS", "DISCOVERY_IN
 
 // ─── RPC ───────────────────────────────────────────────────────
 
-function _dedupeRpcUrls(urls) {
-  const seen = new Set();
-  const out = [];
+function _dedupeRpcUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const raw of urls) {
     const url = String(raw || "").trim();
     if (!url || seen.has(url)) continue;
@@ -156,9 +136,6 @@ const _envRpcUrls = _dedupeRpcUrls(
  *
  * Priority: POLYGON_RPC env → first POLYGON_RPC_URLS entry → Alchemy demo
  *           (rate-limited, for dev only).
- *
- * HyperRPC/local-hyperrpc are read-only; keep POLYGON_RPC pointed at a write-capable
- * RPC or private mempool-compatible endpoint for live execution.
  */
 export const POLYGON_RPC =
   process.env.POLYGON_RPC ||
@@ -169,10 +146,9 @@ export const POLYGON_RPC =
  * Pool of Polygon RPC endpoints managed by the latency-based RPC manager.
  *
  * Priority order (highest first):
- *   1. LOCAL_HYPERRPC_URL — local proxy, effectively 0 ms latency, no rate limits
- *   2. POLYGON_RPC        — paid/private endpoint if explicitly configured
- *   3. POLYGON_RPC_URLS   — comma-separated env override
- *   4. Built-in free public endpoints (fallback)
+ *   1. POLYGON_RPC      — paid/private endpoint if explicitly configured
+ *   2. POLYGON_RPC_URLS — comma-separated env override
+ *   3. Built-in free public endpoints (fallback)
  *
  * The manager probes all endpoints every 15 s and routes to the healthiest one.
  */
@@ -195,7 +171,6 @@ const _paidRpc =
 const _publicRpcUrls = _envRpcUrls.length ? _envRpcUrls : _defaultFreeRpcs;
 
 const _allUrls = [
-  ...(LOCAL_HYPERRPC_URL ? [LOCAL_HYPERRPC_URL] : []),
   ..._paidRpc,
   ..._publicRpcUrls,
 ];

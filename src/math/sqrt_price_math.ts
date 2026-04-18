@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/math/sqrt_price_math.js — Q64.96 sqrt price math
  *

@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 /**
  * src/utils/metrics.js — Prometheus metrics for monitoring
  *
@@ -62,6 +62,23 @@ export const rpcErrors = new client.Counter({
   registers: [register],
 });
 
+/** Counter for RPC endpoint switches due to rate limits or errors */
+export const rpcSwitches = new client.Counter({
+  name: "arb_rpc_switches_total",
+  help: "Total number of times the RPC endpoint was switched",
+  labelNames: ["reason"],
+  registers: [register],
+});
+
+/** Histogram for RPC endpoint latency (ms) */
+export const rpcLatencyMs = new client.Histogram({
+  name: "arb_rpc_latency_ms",
+  help: "RPC endpoint probe latency in milliseconds",
+  labelNames: ["endpoint"],
+  buckets: [10, 50, 100, 250, 500, 1000],
+  registers: [register],
+});
+
 /** Gauge for registry invalid pool count (updated by validation_job) */
 export const registryInvalidPools = new client.Gauge({
   name: "arb_registry_invalid_pools",
@@ -81,7 +98,7 @@ export function getMetrics() {
 
 // ─── Metrics Server ────────────────────────────────────────────
 
-let server = null;
+let server: http.Server | null = null;
 
 /**
  * Start a simple HTTP server to expose metrics for Prometheus.
@@ -97,7 +114,7 @@ export function startMetricsServer(port = 9090) {
         res.end(await register.metrics());
       } catch (err) {
         res.statusCode = 500;
-        res.end(err.message);
+        res.end((err as Error).message);
       }
     } else {
       res.statusCode = 404;

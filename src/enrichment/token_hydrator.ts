@@ -1,18 +1,14 @@
-// @ts-nocheck
+
 /**
- * src/enrichment/token_hydrator.js — ERC-20 metadata hydration via HyperRPC + multicall
+ * src/enrichment/token_hydrator.js — ERC-20 metadata hydration via multicall
  *
- * Uses Envio's HyperRPC endpoint (backed by HyperSync's indexed data) and viem's
- * built-in Multicall3 support to batch-fetch decimals, symbol, and name for any
- * set of token addresses in a single JSON-RPC round-trip per chunk.
- *
- * When to call:
- *   - After inserting newly discovered pools into the registry (rare: ~10 min interval)
- *   - Never called on every block or arb scan
+ * Uses viem's built-in Multicall3 support to batch-fetch decimals, symbol, and
+ * name for any set of token addresses in a single JSON-RPC round-trip per chunk.
+ * Routes through HYPERRPC_URL (your external HyperRPC instance) with fallback
+ * to the hot-path RPC pool if unavailable.
  *
  * Cost model:
  *   - 200 tokens × 3 calls = 600 eth_call targets per multicall request
- *   - One HTTP round-trip to HyperRPC per 200-token chunk
  *   - allowFailure: true — a non-ERC20 token or failed call never aborts the batch
  */
 
@@ -27,11 +23,7 @@ import { isEndpointCapabilityError } from "../utils/rpc_manager.ts";
 //
 // Separate from the hot-path RPC manager so multicall traffic doesn't compete
 // with latency-sensitive arb calls for endpoint health scoring.
-//
-// Token handling follows HyperRPC docs: tokenized endpoint URL, if used, should
-// be provided in HYPERRPC_URL itself. We keep transport headers minimal here.
-// Fallback: if the HyperRPC client fails (e.g. local-hyperrpc not running),
-// fetchMetaBatch falls back to dynamicPublicClient (hot-path RPC pool).
+// Falls back to dynamicPublicClient if HYPERRPC_URL is unreachable.
 
 const hyperRpcClient = createPublicClient({
   chain: polygon,
@@ -81,9 +73,6 @@ async function fetchMetaBatch(addresses) {
     { address: addr, abi: NAME_ABI,     functionName: "name"     },
   ]);
 
-  // Try HyperRPC first (auth'd, separate from hot-path scoring).
-  // Fall back to dynamicPublicClient (RPC manager pool) if HyperRPC is
-  // unavailable (e.g. local-hyperrpc not started) or returns an error.
   let results;
   if (hyperRpcMulticallAvailable) {
     try {
@@ -91,10 +80,7 @@ async function fetchMetaBatch(addresses) {
     } catch (err) {
       if (isEndpointCapabilityError(err)) {
         hyperRpcMulticallAvailable = false;
-        logger.warn(
-          "[token_hydrator] HyperRPC endpoint does not support eth_call/multicall here; " +
-            "disabling HyperRPC token hydration for this process and falling back to RPC manager"
-        );
+        logger.warn("[token_hydrator] HyperRPC does not support multicall here — falling back to RPC manager");
       } else {
         logger.debug("[token_hydrator] HyperRPC multicall failed — falling back to RPC manager");
       }
@@ -154,7 +140,7 @@ export async function hydrateTokens(tokenAddresses, registry) {
   }
 
   logger.info(
-    `[token_hydrator] Hydrating ${toFetch.length} new token(s) via HyperRPC multicall ` +
+    `[token_hydrator] Hydrating ${toFetch.length} new token(s) via multicall ` +
     `(${chunk(toFetch, CHUNK_SIZE).length} batch(es) of up to ${CHUNK_SIZE})`
   );
 
