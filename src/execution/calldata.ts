@@ -54,7 +54,7 @@ import { MIN_SQRT_RATIO, MAX_SQRT_RATIO } from "../math/tick_math.ts";
  * @param {string} recipient         Address to receive output tokens
  * @returns {Array<{target: string, value: bigint, data: string}>}  1-2 Call structs
  */
-export function encodeV2Hop(hop, recipient) {
+export function encodeV2Hop(hop: any, recipient: any) {
   const pair = getAddress(hop.poolAddress);
   const tokenIn = getAddress(hop.tokenIn);
   const calls = [];
@@ -106,7 +106,7 @@ export function encodeV2Hop(hop, recipient) {
  * @param {Object} [options]
  * @returns {Array<{target: string, value: bigint, data: string}>}  1 Call struct
  */
-export function encodeV3Hop(hop, recipient, options = {}) {
+export function encodeV3Hop(hop: any, recipient: any, options: any = {}) {
   const pool = getAddress(hop.poolAddress);
   const tokenIn = getAddress(hop.tokenIn);
 
@@ -149,7 +149,7 @@ export function encodeV3Hop(hop, recipient, options = {}) {
 /**
  * Encode a Curve pool swap via exchange().
  */
-export function encodeCurveHop(hop, options = {}) {
+export function encodeCurveHop(hop: any, options: any = {}) {
   const { slippageBps = 50 } = options;
   const pool     = getAddress(hop.poolAddress);
   const tokenIn  = getAddress(hop.tokenIn);
@@ -191,11 +191,14 @@ export function encodeCurveHop(hop, options = {}) {
 /**
  * Encode a Balancer V2 single-pool swap via Vault.swap().
  */
-export function encodeBalancerHop(hop, executor, options = {}) {
+export function encodeBalancerHop(hop: any, executor: any, options: any = {}) {
   const { slippageBps = 50, deadline } = options;
 
   if (!hop.poolId) {
     throw new Error(`encodeBalancerHop: poolId required for pool ${hop.poolAddress}`);
+  }
+  if (deadline == null) {
+    throw new Error(`encodeBalancerHop: deadline required for pool ${hop.poolAddress}`);
   }
 
   const vault    = getAddress(BALANCER_VAULT);
@@ -257,7 +260,7 @@ export function encodeBalancerHop(hop, executor, options = {}) {
 /**
  * Encode a complete multi-hop route into a Call[] array.
  */
-export function encodeRoute(route, executorAddress, options = {}) {
+export function encodeRoute(route: any, executorAddress: any, options: any = {}) {
   const { path, result } = route;
   const executor = getAddress(executorAddress);
   const calls = [];
@@ -308,7 +311,7 @@ export function encodeRoute(route, executorAddress, options = {}) {
  *
  * Must match the Solidity: keccak256(abi.encode(calls))
  */
-export function computeRouteHash(calls) {
+export function computeRouteHash(calls: any) {
   const encoded = encodeAbiParameters(
     [
       {
@@ -320,7 +323,7 @@ export function computeRouteHash(calls) {
         ],
       },
     ],
-    [calls.map((c) => ({ target: c.target, value: c.value, data: c.data }))]
+    [calls.map((c: any) => ({ target: c.target, value: c.value, data: c.data }))]
   );
 
   return keccak256(encoded);
@@ -336,7 +339,7 @@ export function buildFlashParams({
   minProfit,
   deadline,
   calls,
-}) {
+}: any) {
   const routeHash = computeRouteHash(calls);
 
   return {
@@ -361,7 +364,7 @@ export function encodeExecuteArb({
   minProfit,
   deadline,
   calls,
-}) {
+}: any) {
   const flashParams = buildFlashParams({
     profitToken,
     minProfit,

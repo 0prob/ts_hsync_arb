@@ -66,8 +66,8 @@ const GET_POOL_ID_ABI = [
   },
 ];
 
-function withTimeout(promise, label, ms = BALANCER_READ_TIMEOUT_MS) {
-  let timer;
+function withTimeout(promise: any, label: any, ms = BALANCER_READ_TIMEOUT_MS) {
+  let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       reject(new Error(`${label} timed out after ${ms}ms`));
@@ -79,7 +79,7 @@ function withTimeout(promise, label, ms = BALANCER_READ_TIMEOUT_MS) {
   });
 }
 
-async function readContractWithTimeout(params, label) {
+async function readContractWithTimeout(params: any, label: any) {
   return withTimeout(readContractWithRetry(params), label, BALANCER_READ_TIMEOUT_MS);
 }
 
@@ -135,11 +135,11 @@ export async function fetchBalancerPoolState(poolAddress, poolId) {
   }
 
   const [vaultTokens, vaultBalances] = vaultResult.value;
-  const balances = Array.from(vaultBalances).map(BigInt);
+  const balances = Array.from(vaultBalances).map((v) => BigInt(v as any));
 
   let weights;
   if (weightsResult.status === "fulfilled") {
-    weights = Array.from(weightsResult.value).map(BigInt);
+    weights = Array.from(weightsResult.value).map((v) => BigInt(v as any));
   } else {
     const n = balances.length;
     weights = Array(n).fill(ONE / BigInt(n));
@@ -152,7 +152,7 @@ export async function fetchBalancerPoolState(poolAddress, poolId) {
 
   return {
     poolId: resolvedPoolId,
-    tokens: Array.from(vaultTokens).map((t) => t.toLowerCase()),
+    tokens: Array.from(vaultTokens).map((t: any) => t.toLowerCase()),
     balances,
     weights,
     swapFee,
@@ -160,7 +160,7 @@ export async function fetchBalancerPoolState(poolAddress, poolId) {
   };
 }
 
-export async function fetchAndNormalizeBalancerPool(pool) {
+export async function fetchAndNormalizeBalancerPool(pool: any) {
   const addr = pool.pool_address.toLowerCase();
   const meta = parsePoolMetadata(pool.metadata);
   const poolId = meta?.poolId || meta?.pool_id || null;
@@ -175,7 +175,15 @@ export async function fetchAndNormalizeBalancerPool(pool) {
 }
 
 export class PollBalancer {
-  constructor(registry, stateCache, options = {}) {
+  private _registry: any;
+  private _cache: Map<string, any>;
+  private _concurrency: number;
+  private _verbose: boolean;
+  private _timer: ReturnType<typeof setInterval> | null;
+  private _running: boolean;
+  private _passCount: number;
+
+  constructor(registry: any, stateCache: Map<string, any>, options: any = {}) {
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? ENRICH_CONCURRENCY;
@@ -188,7 +196,7 @@ export class PollBalancer {
   async poll() {
     const t0 = Date.now();
 
-    const pools = this._registry.getActivePoolsMeta().filter((p) =>
+    const pools = this._registry.getActivePoolsMeta().filter((p: any) =>
       BALANCER_PROTOCOLS.has(p.protocol)
     );
 
@@ -198,7 +206,7 @@ export class PollBalancer {
 
     const results = await throttledMap(
       pools,
-      async (pool) => {
+      async (pool: any) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool);
           return { addr, normalized, error: null };
@@ -244,7 +252,7 @@ export class PollBalancer {
       this._running = true;
       try {
         await this.poll();
-      } catch (err) {
+      } catch (err: any) {
         console.error(`[poll_balancer] Poll error: ${err.message}`);
       } finally {
         this._running = false;

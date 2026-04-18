@@ -28,7 +28,7 @@ const GET_COINS_ABI = [
  * @param {string} registryAddress Curve registry that tracks this pool
  * @returns {Promise<string[]>}
  */
-export async function getCurveTokens(poolAddress, registryAddress) {
+export async function getCurveTokens(poolAddress: any, registryAddress: any) {
   try {
     const tokens = await readContractWithRetry({
       address: registryAddress,
@@ -36,10 +36,10 @@ export async function getCurveTokens(poolAddress, registryAddress) {
       functionName: "get_coins",
       args: [poolAddress],
     });
-    return tokens
-      .filter((t) => t !== ZERO)
-      .map((t) => t.toString());
-  } catch (error) {
+    return (tokens as any[])
+      .filter((t: any) => t !== ZERO)
+      .map((t: any) => t.toString());
+  } catch (error: any) {
     console.error(
       `  Error fetching Curve tokens for ${poolAddress}: ${error.message}`
     );

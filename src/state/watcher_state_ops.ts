@@ -6,7 +6,7 @@
 import { mergeStateIntoCache, reloadCacheFromRegistry } from "./cache_utils.ts";
 import { createWatcherProtocolHandlers } from "./watcher_protocol_handlers.ts";
 
-export function toTopicArray(log) {
+export function toTopicArray(log: any) {
   return [log.topic0, log.topic1, log.topic2, log.topic3].filter((v) => v != null);
 }
 
@@ -21,7 +21,7 @@ export async function handleWatcherLogs({
   refreshCurve,
   enqueueEnrichment,
   commitState,
-}) {
+}: any) {
   const changedAddrs = new Set();
   const protocolHandlers = createWatcherProtocolHandlers({
     topics,
@@ -48,7 +48,7 @@ export async function handleWatcherLogs({
     if (!handler) continue;
 
     try {
-      if (handler({
+      if ((handler as any)({
         addr,
         log,
         pool,
@@ -61,7 +61,7 @@ export async function handleWatcherLogs({
       })) {
         changedAddrs.add(addr);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`[watcher] Failed to update ${addr}: ${err.message}`);
     }
   }
@@ -69,19 +69,19 @@ export async function handleWatcherLogs({
   return changedAddrs;
 }
 
-export function updateV2State(state, decoded) {
+export function updateV2State(state: any, decoded: any) {
   state.reserve0 = BigInt(decoded.body[0].val);
   state.reserve1 = BigInt(decoded.body[1].val);
 }
 
-export function updateV3SwapState(state, decoded) {
+export function updateV3SwapState(state: any, decoded: any) {
   state.sqrtPriceX96 = BigInt(decoded.body[2].val);
   state.liquidity = BigInt(decoded.body[3].val);
   state.tick = Number(decoded.body[4].val);
   state.initialized = true;
 }
 
-export function updateV3LiquidityState(state, decoded, isMint) {
+export function updateV3LiquidityState(state: any, decoded: any, isMint: any) {
   const tickLower = Number(decoded.indexed[1].val);
   const tickUpper = Number(decoded.indexed[2].val);
   const amount = BigInt(decoded.body[1].val);
@@ -95,7 +95,7 @@ export function updateV3LiquidityState(state, decoded, isMint) {
   updateTickState(state, tickUpper, amount, !isMint);
 }
 
-export function updateTickState(state, tick, amount, isNetPositive) {
+export function updateTickState(state: any, tick: any, amount: any, isNetPositive: any) {
   if (!state.ticks) state.ticks = new Map();
   const data = state.ticks.get(tick) || { liquidityGross: 0n, liquidityNet: 0n };
 
@@ -107,28 +107,28 @@ export function updateTickState(state, tick, amount, isNetPositive) {
   else state.ticks.set(tick, data);
 }
 
-export function mergeWatcherState(cache, addr, nextState) {
+export function mergeWatcherState(cache: any, addr: any, nextState: any) {
   return mergeStateIntoCache(cache, addr, nextState);
 }
 
-export function commitWatcherState(cache, persistState, addr, state, rawLog) {
+export function commitWatcherState(cache: any, persistState: any, addr: any, state: any, rawLog: any) {
   state.timestamp = Date.now();
   cache.set(addr, state);
   persistState(addr, state, rawLog);
 }
 
-export function persistWatcherState(registry, addr, state, rawLog, fallbackBlock) {
+export function persistWatcherState(registry: any, addr: any, state: any, rawLog: any, fallbackBlock: any) {
   try {
     registry.updatePoolState({
       pool_address: addr,
       block: Number(rawLog?.blockNumber ?? fallbackBlock),
       data: state,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.warn(`[watcher] Failed to persist state for ${addr}: ${err.message}`);
   }
 }
 
-export function reloadWatcherCache(registry, cache, pendingEnrichment) {
+export function reloadWatcherCache(registry: any, cache: any, pendingEnrichment: any) {
   return reloadCacheFromRegistry(registry, cache, pendingEnrichment);
 }

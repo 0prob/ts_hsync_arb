@@ -7,7 +7,7 @@ import { lowerCaseAddressList, mapArbHistoryRow } from "./registry_codec.ts";
 
 const STMT_CACHE_KEY = Symbol.for("registry_history_stmt_cache");
 
-function historyStmt(db, key, sql) {
+function historyStmt(db: any, key: any, sql: any) {
   let cache = db[STMT_CACHE_KEY];
   if (!cache) {
     cache = new Map();
@@ -19,7 +19,7 @@ function historyStmt(db, key, sql) {
   return cache.get(key);
 }
 
-export function logArbResult(db, arb) {
+export function logArbResult(db: any, arb: any) {
   historyStmt(
     db,
     "logArbResult",
@@ -46,7 +46,7 @@ export function logArbResult(db, arb) {
     );
 }
 
-export function getArbHistory(db, opts = {}) {
+export function getArbHistory(db: any, opts: any = {}) {
   const { limit = 100, startToken, status, since } = opts;
   const conditions = [];
   const params = [];
@@ -74,7 +74,7 @@ export function getArbHistory(db, opts = {}) {
   return rows.map(mapArbHistoryRow);
 }
 
-export function getArbStats(db, opts = {}) {
+export function getArbStats(db: any, opts: any = {}) {
   const { since } = opts;
   const whereClause = since ? "WHERE recorded_at >= ?" : "";
   const params = since ? [since] : [];
@@ -111,7 +111,7 @@ export function getArbStats(db, opts = {}) {
      GROUP BY hop_count`
   ).all(...params);
 
-  const byHopMap = {};
+  const byHopMap: Record<string, any> = {};
   for (const row of byHop) byHopMap[row.hop_count] = row.count;
 
   return {

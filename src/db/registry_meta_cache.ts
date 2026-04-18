@@ -6,7 +6,11 @@
 import { loadPoolMetaCache } from "./registry_pools.ts";
 
 export class RegistryMetaCache {
-  constructor(stmt) {
+  _stmt: any;
+  _poolMetaCache: any;
+  _activePoolMetaCache: any;
+
+  constructor(stmt: any) {
     this._stmt = stmt;
     this._poolMetaCache = null;
     this._activePoolMetaCache = null;
@@ -32,7 +36,7 @@ export class RegistryMetaCache {
     return this._activePoolMetaCache;
   }
 
-  get(address) {
+  get(address: any) {
     return this.getAll().get(address.toLowerCase()) ?? null;
   }
 }

@@ -7,7 +7,7 @@
  * doesn't match, a reorg has occurred.
  */
 
-function pick(obj, camelKey, snakeKey) {
+function pick(obj: any, camelKey: any, snakeKey: any) {
   if (!obj) return undefined;
   return obj[camelKey] ?? obj[snakeKey];
 }
@@ -19,7 +19,7 @@ function pick(obj, camelKey, snakeKey) {
  * @param {object} newGuard  Rollback guard from the latest HyperSync response
  * @returns {number|false}   The block number where the reorg occurred, or false
  */
-export function detectReorg(registry, newGuard) {
+export function detectReorg(registry: any, newGuard: any) {
   if (!newGuard) return false;
 
   const stored = registry.getRollbackGuard();

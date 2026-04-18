@@ -10,7 +10,7 @@ export default {
   address: "0x722272D36ef0Da72FF51c5A65Db7b870E2e8D4ee",
   signature:
     "event PoolCreated(address indexed pool, address[4] coins, uint256 A, uint256 fee, address deployer)",
-  decode(decoded) {
+  decode(decoded: any) {
     // indexed: [pool]; body: [coins, A, fee, deployer]
     const coins = decoded.body[0]?.val || [];
     return {

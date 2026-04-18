@@ -31,7 +31,7 @@ const GET_POOL_TOKENS_ABI = [
  * @param {string} poolId  The 32-byte Balancer pool ID
  * @returns {Promise<string[]>}
  */
-export async function getBalancerTokens(poolId) {
+export async function getBalancerTokens(poolId: any) {
   try {
     const [tokens] = await readContractWithRetry({
       address: VAULT_ADDRESS,
@@ -39,8 +39,8 @@ export async function getBalancerTokens(poolId) {
       functionName: "getPoolTokens",
       args: [poolId],
     });
-    return tokens.map((t) => t.toString());
-  } catch (error) {
+    return (tokens as any[]).map((t: any) => t.toString());
+  } catch (error: any) {
     console.error(
       `  Error fetching Balancer tokens for poolId ${poolId}: ${error.message}`
     );

@@ -21,7 +21,7 @@ import { throttledMap } from "../enrichment/rpc.ts";
 import { hydrateNewTokens } from "../enrichment/token_hydrator.ts";
 import { GENESIS_START_BLOCK, DB_PATH, ENVIO_API_TOKEN, HYPERSYNC_URL, ENRICH_CONCURRENCY } from "../config/index.ts";
 
-function discoveryCheckpointFromNextBlock(nextBlock, fallbackFromBlock) {
+function discoveryCheckpointFromNextBlock(nextBlock: any, fallbackFromBlock: any) {
   if (Number.isFinite(nextBlock) && nextBlock > 0) {
     return nextBlock - 1;
   }
@@ -30,7 +30,7 @@ function discoveryCheckpointFromNextBlock(nextBlock, fallbackFromBlock) {
 
 // ─── Per-protocol discovery ────────────────────────────────────
 
-async function discoverProtocol(key, protocol, registry) {
+async function discoverProtocol(key: any, protocol: any, registry: any) {
   const checkpoint = registry.getCheckpoint(key);
   const fromBlock = checkpoint ? checkpoint.last_block + 1 : GENESIS_START_BLOCK;
 
@@ -40,7 +40,7 @@ async function discoverProtocol(key, protocol, registry) {
       `...`
   );
 
-  const abiItem = parseAbiItem(protocol.signature);
+  const abiItem = parseAbiItem(protocol.signature) as any;
   const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
   const topic0 = topics[0];
 
@@ -103,7 +103,7 @@ async function discoverProtocol(key, protocol, registry) {
       }
 
       extractedPools.push({ extracted, rawLog });
-    } catch (innerError) {
+    } catch (innerError: any) {
       errors++;
       if (errors <= 5) {
         console.error(
@@ -125,10 +125,10 @@ async function discoverProtocol(key, protocol, registry) {
 
       const enrichedTokens = await throttledMap(
         needsEnrichment,
-        async (item) => {
+        async (item: any) => {
           try {
             return await protocol.enrichTokens(item.extracted);
-          } catch (err) {
+          } catch (err: any) {
             console.error(
               `  Enrichment failed for ${item.extracted.pool_address}: ${err.message}`
             );
@@ -162,11 +162,13 @@ async function discoverProtocol(key, protocol, registry) {
     status: "active",
   }));
 
+  let hydrationPromise: Promise<number> | null = null;
   if (poolBatch.length > 0) {
     registry.batchUpsertPools(poolBatch);
-    hydrateNewTokens(poolBatch, registry).catch((err) =>
-      console.warn(`  [discover] Token hydration failed: ${err.message}`)
-    );
+    hydrationPromise = hydrateNewTokens(poolBatch, registry).catch((err) => {
+      console.warn(`  [discover] Token hydration failed: ${err.message}`);
+      return 0;
+    });
   }
 
   registry.setCheckpoint(key, checkpointBlock);
@@ -174,19 +176,19 @@ async function discoverProtocol(key, protocol, registry) {
   if (errors > 5) console.warn(`  ... and ${errors - 5} more decode errors suppressed.`);
   console.log(`  Inserted/updated ${poolBatch.length} pools for ${protocol.name}.`);
 
-  return { discovered: poolBatch.length, checkpointBlock, rollbackGuard };
+  return { discovered: poolBatch.length, checkpointBlock, rollbackGuard, hydrationPromise };
 }
 
 // ─── Curve PoolRemoved lifecycle ───────────────────────────────
 
-async function discoverCurveRemovals(registry) {
+async function discoverCurveRemovals(registry: any) {
   const checkpointKey = "CURVE_POOL_REMOVED";
   const checkpoint = registry.getCheckpoint(checkpointKey);
   const fromBlock = checkpoint ? checkpoint.last_block + 1 : GENESIS_START_BLOCK;
 
   console.log(`\n[Curve PoolRemoved] Scanning from block ${fromBlock}...`);
 
-  const abiItem = parseAbiItem(CURVE_POOL_REMOVED.signature);
+  const abiItem = parseAbiItem(CURVE_POOL_REMOVED.signature) as any;
   const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
   const topic0 = topics[0];
 
@@ -245,6 +247,7 @@ async function discoverCurveRemovals(registry) {
 
 export async function discoverPools() {
   const registry = new RegistryService(DB_PATH);
+  const pendingHydrations: Promise<number>[] = [];
 
   console.log("=== Polygon Pool Discovery (HyperSync) ===");
   console.log(`HyperSync URL: ${HYPERSYNC_URL}`);
@@ -253,7 +256,7 @@ export async function discoverPools() {
   try {
     const chainHeight = await client.getHeight();
     console.log(`Chain height: ${chainHeight}`);
-  } catch (e) {
+  } catch (e: any) {
     console.warn(`Could not fetch chain height: ${e.message}`);
   }
 
@@ -263,17 +266,18 @@ export async function discoverPools() {
     try {
       const result = await discoverProtocol(key, protocol, registry);
       totalDiscovered += result.discovered;
+      if (result.hydrationPromise) pendingHydrations.push(result.hydrationPromise);
 
       if (result.rollbackGuard) {
         const reorgBlock = detectReorg(registry, result.rollbackGuard);
         if (reorgBlock !== false) {
           console.warn(`\n⚠ REORG DETECTED at block ${reorgBlock}! Rolling back...`);
-          const rb = registry.rollbackToBlock(reorgBlock);
+          const rb: any = registry.rollbackToBlock(reorgBlock);
           console.warn(`  Rolled back: ${rb.poolsRemoved} pools, ${rb.statesRemoved} states`);
         }
         registry.setRollbackGuard(result.rollbackGuard);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Error discovering ${protocol.name}: ${error.message}`);
       console.error(error.stack);
     }
@@ -285,13 +289,18 @@ export async function discoverPools() {
       const reorgBlock = detectReorg(registry, result.rollbackGuard);
       if (reorgBlock !== false) {
         console.warn(`\n⚠ REORG DETECTED at block ${reorgBlock}! Rolling back...`);
-        const rb = registry.rollbackToBlock(reorgBlock);
+        const rb: any = registry.rollbackToBlock(reorgBlock);
         console.warn(`  Rolled back: ${rb.poolsRemoved} pools, ${rb.statesRemoved} states`);
       }
       registry.setRollbackGuard(result.rollbackGuard);
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error(`Error discovering Curve removals: ${error.message}`);
+  }
+
+  if (pendingHydrations.length > 0) {
+    console.log(`Waiting for ${pendingHydrations.length} token hydration task(s) to finish...`);
+    await Promise.allSettled(pendingHydrations);
   }
 
   const totalPools = registry.getPoolCount();

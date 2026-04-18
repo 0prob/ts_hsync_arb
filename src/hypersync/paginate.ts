@@ -20,7 +20,7 @@ import { client, JoinMode } from "./client.ts";
  * @param {object} query  HyperSync query object (fromBlock, logs, fieldSelection, etc.)
  * @returns {{ logs: object[], archiveHeight: number|null, rollbackGuard: object|null, nextBlock: number|null }}
  */
-export async function fetchAllLogs(query) {
+export async function fetchAllLogs(query: any) {
   const allLogs = [];
   let currentQuery = {
     ...query,

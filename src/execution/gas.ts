@@ -33,12 +33,19 @@ export const executionClient = createPublicClient({
  * Background Gas Oracle to keep latest fee data ready for the hot path.
  */
 class GasOracle {
+  baseFee: bigint;
+  priorityFee: bigint;
+  maxFee: bigint;
+  updatedAt: number;
+  tokenPrices: Map<string, bigint>;
+  private _interval: ReturnType<typeof setInterval> | null;
+
   constructor() {
-    this.baseFee = 30n * 10n ** 9n; // Default fallback
+    this.baseFee = 30n * 10n ** 9n;
     this.priorityFee = 30n * 10n ** 9n;
     this.maxFee = 90n * 10n ** 9n;
     this.updatedAt = 0;
-    this.tokenPrices = new Map(); // tokenAddress -> priceInWei (1 token = X wei)
+    this.tokenPrices = new Map();
     this._interval = null;
   }
 
@@ -68,14 +75,14 @@ class GasOracle {
    */
   async update() {
     try {
-      const block = await executeWithRpcRetry((c) =>
+      const block = await executeWithRpcRetry((c: any) =>
         c.getBlock({ blockTag: "latest" })
       );
       this.baseFee = block.baseFeePerGas ?? 30n * 10n ** 9n;
 
       // ── Priority fee via eth_feeHistory ──────────────────────
       try {
-        const feeHistory = await executeWithRpcRetry((c) =>
+        const feeHistory = await executeWithRpcRetry((c: any) =>
           c.getFeeHistory({
             blockCount: 10,
             rewardPercentiles: [25, 50, 75],
@@ -86,8 +93,8 @@ class GasOracle {
         // Extract p50 (index 1) priority fee rewards from the last 10 blocks
         const rewards = feeHistory?.reward ?? [];
         const p50s = rewards
-          .map((r) => (r && r[1] != null ? BigInt(r[1]) : null))
-          .filter((r) => r !== null && r > 0n);
+          .map((r: any) => (r && r[1] != null ? BigInt(r[1]) : null))
+          .filter((r: any) => r !== null && r > 0n);
 
         if (p50s.length > 0) {
           const sorted = [...p50s].sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
@@ -107,12 +114,12 @@ class GasOracle {
 
       this.maxFee = this.baseFee * 2n + this.priorityFee;
       this.updatedAt = Date.now();
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`[gas_oracle] Update failed: ${err.message}`);
     }
   }
 
-  getTokenPrice(tokenAddress) {
+  getTokenPrice(tokenAddress: any) {
     return this.tokenPrices.get(tokenAddress.toLowerCase()) || null;
   }
 
@@ -145,7 +152,7 @@ if (process.env.NODE_ENV !== 'test') {
 // ─── Gas price ────────────────────────────────────────────────
 
 export async function fetchGasPrice() {
-  return executeWithRpcRetry((c) => c.getGasPrice());
+  return executeWithRpcRetry((c: any) => c.getGasPrice());
 }
 
 /**
@@ -158,8 +165,8 @@ export async function fetchEIP1559Fees() {
 
 // ─── Gas estimation ───────────────────────────────────────────
 
-export async function estimateGas(tx, fromAddress) {
-  return executeWithRpcRetry((c) =>
+export async function estimateGas(tx: any, fromAddress: any) {
+  return executeWithRpcRetry((c: any) =>
     c.estimateGas({
       account: fromAddress,
       to: tx.to,
@@ -175,7 +182,7 @@ export async function estimateGas(tx, fromAddress) {
  * Compute recommended gas parameters for a transaction.
  * Uses cached fees from the oracle to minimize hot-path latency.
  */
-export async function recommendGasParams(tx, fromAddress, options = {}) {
+export async function recommendGasParams(tx: any, fromAddress: any, options: any = {}) {
   const { gasMultiplier = 1.25, maxFeeOverride, priorityFeeOverride } = options;
 
   // Only perform eth_estimateGas on the hot path; fees are cached

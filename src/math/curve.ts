@@ -52,7 +52,7 @@ const MAX_ITERATIONS = 255;
  * @param {bigint}   A   Amplification coefficient (in A_PRECISION units)
  * @returns {bigint}     D — the invariant
  */
-function getD(xp, A) {
+function getD(xp: bigint[], A: bigint) {
   const n = BigInt(xp.length);
   const S = xp.reduce((a, b) => a + b, 0n);
   if (S === 0n) return 0n;
@@ -97,7 +97,7 @@ function getD(xp, A) {
  * @param {bigint}   D    Invariant
  * @returns {bigint}      New balance of output coin y
  */
-function getY(x, i, j, xp, A, D) {
+function getY(x: bigint, i: number, j: number, xp: bigint[], A: bigint, D: bigint) {
   const n = BigInt(xp.length);
   const Ann = A * n;
 
@@ -142,7 +142,7 @@ function getY(x, i, j, xp, A, D) {
  * @param {bigint[]} rates  (length must match balances)
  * @returns {bigint[]}
  */
-function toXp(balances, rates) {
+function toXp(balances: bigint[], rates: bigint[]) {
   return balances.map((b, i) => (b * rates[i]) / PRECISION);
 }
 
@@ -157,7 +157,7 @@ function toXp(balances, rates) {
  * @param {number} tokenOutIdx Index of output token in poolState.tokens
  * @returns {bigint}           Output amount (after fees)
  */
-export function getCurveAmountOut(amountIn, poolState, tokenInIdx, tokenOutIdx) {
+export function getCurveAmountOut(amountIn: bigint, poolState: any, tokenInIdx: number, tokenOutIdx: number) {
   if (amountIn <= 0n) return 0n;
 
   const { balances, rates, fee, A } = poolState;
@@ -193,7 +193,7 @@ export function getCurveAmountOut(amountIn, poolState, tokenInIdx, tokenOutIdx) 
  * @param {number} tokenOutIdx Index of output token
  * @returns {bigint}           Required input amount (or 0n if infeasible)
  */
-export function getCurveAmountIn(amountOut, poolState, tokenInIdx, tokenOutIdx) {
+export function getCurveAmountIn(amountOut: bigint, poolState: any, tokenInIdx: number, tokenOutIdx: number) {
   if (amountOut <= 0n) return 0n;
 
   // Binary search: find smallest amountIn such that getCurveAmountOut >= amountOut
@@ -232,7 +232,7 @@ export function getCurveAmountIn(amountOut, poolState, tokenInIdx, tokenOutIdx) 
  * @param {boolean} zeroForOne  true = token0→token1, false = token1→token0
  * @returns {{ amountOut: bigint, gasEstimate: number }}
  */
-export function simulateCurveSwap(amountIn, poolState, zeroForOne) {
+export function simulateCurveSwap(amountIn: bigint, poolState: any, zeroForOne: boolean) {
   if (amountIn <= 0n) return { amountOut: 0n, gasEstimate: 0 };
 
   const tokenInIdx = zeroForOne ? 0 : 1;
@@ -250,6 +250,6 @@ export function simulateCurveSwap(amountIn, poolState, zeroForOne) {
  * @param {number} n  Number of tokens
  * @returns {bigint[]}
  */
-export function defaultRates(n) {
+export function defaultRates(n: number) {
   return Array(n).fill(PRECISION);
 }

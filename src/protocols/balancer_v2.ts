@@ -10,7 +10,7 @@ export default {
   address: "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
   signature:
     "event PoolRegistered(bytes32 indexed poolId, address indexed poolAddress, uint8 specialization)",
-  decode(decoded) {
+  decode(decoded: any) {
     // indexed: [poolId, poolAddress]; body: [specialization]
     return {
       pool_address: decoded.indexed[1]?.val?.toString(),
@@ -21,7 +21,7 @@ export default {
       },
     };
   },
-  async enrichTokens(poolMeta) {
+  async enrichTokens(poolMeta: any) {
     return getBalancerTokens(poolMeta.metadata.poolId);
   },
 };

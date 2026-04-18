@@ -39,7 +39,7 @@ export const publicClient = dynamicPublicClient;
 
 // ─── Retry helpers ─────────────────────────────────────────────
 
-export async function executeWithRpcRetry(fn, options = {}) {
+export async function executeWithRpcRetry(fn: any, options: any = {}) {
   const {
     retries = RPC_MAX_RETRIES,
     onRateLimitMessage = null,
@@ -119,13 +119,13 @@ export async function executeWithRpcRetry(fn, options = {}) {
  * @returns {Promise<any>} The contract call result
  * @throws After RPC_MAX_RETRIES exhausted across all endpoints
  */
-export async function readContractWithRetry(params) {
+export async function readContractWithRetry(params: any) {
   return executeWithRpcRetry(
-    (client) => client.readContract(params),
+    (client: any) => client.readContract(params),
     {
-      onRateLimitMessage: (shortUrl, _endpoint, _attempt, reason = "rate-limited") =>
+      onRateLimitMessage: (shortUrl: any, _endpoint: any, _attempt: any, reason = "rate-limited") =>
         `    RPC ${reason} on ${shortUrl}, switching endpoint...`,
-      onRetryMessage: (shortUrl, delayMs) =>
+      onRetryMessage: (shortUrl: any, delayMs: any) =>
         `    RPC error on ${shortUrl}, retrying in ${delayMs}ms...`,
     }
   );
@@ -144,7 +144,7 @@ export async function readContractWithRetry(params) {
  * @param {unknown} error
  * @returns {boolean}
  */
-export function isNoDataReadContractError(error) {
+export function isNoDataReadContractError(error: any) {
   const msg = String(error?.message ?? error ?? "").toLowerCase();
   return msg.includes('returned no data ("0x")');
 }
@@ -159,7 +159,7 @@ export function isNoDataReadContractError(error) {
  * @param {number} concurrency  Max parallel workers (default 3)
  * @returns {Promise<R[]>}      Results in original order
  */
-export async function throttledMap(items, fn, concurrency = 3) {
+export async function throttledMap(items: any, fn: any, concurrency = 3) {
   const results = new Array(items.length);
   let nextIndex = 0;
 
@@ -181,7 +181,7 @@ export async function throttledMap(items, fn, concurrency = 3) {
 
 // ─── Helpers ───────────────────────────────────────────────────
 
-function rpcShortUrl(url) {
+function rpcShortUrl(url: any) {
   try {
     const u = new URL(url);
     return u.hostname;

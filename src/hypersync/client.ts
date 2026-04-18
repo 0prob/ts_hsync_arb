@@ -16,7 +16,7 @@ import { HYPERSYNC_URL, ENVIO_API_TOKEN } from "../config/index.ts";
 
 const require = createRequire(import.meta.url);
 
-function createUnsupportedHypersyncError(cause) {
+function createUnsupportedHypersyncError(cause: any) {
   const err = new Error(
     "HyperSync client is unavailable on this runtime. " +
     "The installed @envio-dev/hypersync-client@1.3.0 package does not ship a native binding for this platform."
@@ -25,8 +25,8 @@ function createUnsupportedHypersyncError(cause) {
   return err;
 }
 
-let hypersync = null;
-let hypersyncImportError = null;
+let hypersync: any = null;
+let hypersyncImportError: any = null;
 
 try {
   hypersync = require("@envio-dev/hypersync-client");

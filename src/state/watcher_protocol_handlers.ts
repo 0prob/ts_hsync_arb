@@ -8,37 +8,37 @@ export function createWatcherProtocolHandlers({
   updateV2State,
   updateV3SwapState,
   updateV3LiquidityState,
-}) {
+}: any): Map<any, any> {
   return new Map([
-    [topics[0], ({ state, decoded, commitState, addr, log }) => {
+    [topics[0], ({ state, decoded, commitState, addr, log }: any) => {
       updateV2State(state, decoded);
       commitState(addr, state, log);
       return true;
     }],
-    [topics[1], ({ state, decoded, commitState, addr, log }) => {
+    [topics[1], ({ state, decoded, commitState, addr, log }: any) => {
       updateV3SwapState(state, decoded);
       commitState(addr, state, log);
       return true;
     }],
-    [topics[2], ({ state, decoded, commitState, addr, log }) => {
+    [topics[2], ({ state, decoded, commitState, addr, log }: any) => {
       updateV3LiquidityState(state, decoded, true);
       commitState(addr, state, log);
       return true;
     }],
-    [topics[3], ({ state, decoded, commitState, addr, log }) => {
+    [topics[3], ({ state, decoded, commitState, addr, log }: any) => {
       updateV3LiquidityState(state, decoded, false);
       commitState(addr, state, log);
       return true;
     }],
-    [topics[4], ({ addr, pool, enqueueEnrichment, refreshBalancer }) => {
+    [topics[4], ({ addr, pool, enqueueEnrichment, refreshBalancer }: any) => {
       enqueueEnrichment(addr, () => refreshBalancer(addr, pool));
       return true;
     }],
-    [topics[5], ({ addr, pool, enqueueEnrichment, refreshCurve }) => {
+    [topics[5], ({ addr, pool, enqueueEnrichment, refreshCurve }: any) => {
       enqueueEnrichment(addr, () => refreshCurve(addr, pool));
       return true;
     }],
-    [topics[6], ({ addr, pool, enqueueEnrichment, refreshCurve }) => {
+    [topics[6], ({ addr, pool, enqueueEnrichment, refreshCurve }: any) => {
       enqueueEnrichment(addr, () => refreshCurve(addr, pool));
       return true;
     }],

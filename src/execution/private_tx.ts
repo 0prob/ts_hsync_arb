@@ -30,7 +30,7 @@ const FAST_PUBLIC_RPCS = [
 /**
  * Send a raw JSON-RPC request to a URL.
  */
-async function jsonRpc(url, method, params, headers = {}) {
+async function jsonRpc(url: any, method: any, params: any, headers: any = {}) {
   const body = JSON.stringify({
     jsonrpc: "2.0",
     id: 1,
@@ -57,7 +57,7 @@ async function jsonRpc(url, method, params, headers = {}) {
 
 // ─── Sign transaction ─────────────────────────────────────────
 
-export async function signTransaction(tx, privateKey, nonce, chainId = 137) {
+export async function signTransaction(tx: any, privateKey: any, nonce: any, chainId = 137) {
   const account = privateKeyToAccount(privateKey);
 
   const walletClient = createWalletClient({
@@ -84,23 +84,23 @@ export async function signTransaction(tx, privateKey, nonce, chainId = 137) {
 
 // ─── Submission strategies ────────────────────────────────────
 
-export async function sendPrivateTransaction(rawTx, rpcUrl) {
+export async function sendPrivateTransaction(rawTx: any, rpcUrl: any) {
   const url = rpcUrl || PRIVATE_MEMPOOL_URL;
   if (!url) throw new Error("sendPrivateTransaction: no URL");
 
-  const response = await jsonRpc(url, "eth_sendPrivateTransaction", [{ tx: rawTx }]);
+  const response: any = await jsonRpc(url, "eth_sendPrivateTransaction", [{ tx: rawTx }]);
   if (response.error) throw new Error(`eth_sendPrivateTransaction failed: ${response.error.message}`);
   return response.result;
 }
 
-export async function sendViaBloXroute(rawTx, auth) {
+export async function sendViaBloXroute(rawTx: any, auth: any) {
   const token = auth || BLOXROUTE_AUTH;
   if (!token) throw new Error("sendViaBloXroute: no auth token");
 
   const BLOXROUTE_URL = "https://mdn.api.bloxroute.com/";
   const rawHex = rawTx.startsWith("0x") ? rawTx.slice(2) : rawTx;
 
-  const response = await jsonRpc(
+  const response: any = await jsonRpc(
     BLOXROUTE_URL,
     "blxr_tx",
     [{ transaction: rawHex }],
@@ -116,14 +116,14 @@ export async function sendViaBloXroute(rawTx, auth) {
  * @param {string[]} rawTxs  Array of signed raw transactions
  * @param {Object} options   Bundle options (blockNumber, etc.)
  */
-export async function sendBundleBloXroute(rawTxs, options = {}, auth) {
+export async function sendBundleBloXroute(rawTxs: any, options: any = {}, auth: any) {
   const token = auth || BLOXROUTE_AUTH;
   if (!token) throw new Error("sendBundleBloXroute: no auth token");
 
   const BLOXROUTE_URL = "https://mdn.api.bloxroute.com/";
-  const transactions = rawTxs.map(tx => ({ transaction: tx.startsWith("0x") ? tx.slice(2) : tx }));
+  const transactions = rawTxs.map((tx: any) => ({ transaction: tx.startsWith("0x") ? tx.slice(2) : tx }));
 
-  const response = await jsonRpc(
+  const response: any = await jsonRpc(
     BLOXROUTE_URL,
     "blxr_submit_bundle",
     [{
@@ -142,11 +142,11 @@ export async function sendBundleBloXroute(rawTxs, options = {}, auth) {
 /**
  * Submit a bundle of transactions to Alchemy (Flashbots-compatible).
  */
-export async function sendBundleAlchemy(rawTxs, options = {}, rpcUrl) {
+export async function sendBundleAlchemy(rawTxs: any, options: any = {}, rpcUrl: any) {
   const url = rpcUrl || PRIVATE_MEMPOOL_URL;
   if (!url) throw new Error("sendBundleAlchemy: no URL");
 
-  const response = await jsonRpc(
+  const response: any = await jsonRpc(
     url,
     "eth_sendBundle",
     [{
@@ -161,11 +161,11 @@ export async function sendBundleAlchemy(rawTxs, options = {}, rpcUrl) {
   return response.result;
 }
 
-export async function racePublicRPCs(rawTx, rpcs) {
+export async function racePublicRPCs(rawTx: any, rpcs: any) {
   const targets = (rpcs && rpcs.length > 0) ? rpcs : FAST_PUBLIC_RPCS;
 
-  const submissions = targets.map(async (url) => {
-    const response = await jsonRpc(url, "eth_sendRawTransaction", [rawTx]);
+  const submissions = targets.map(async (url: any) => {
+    const response: any = await jsonRpc(url, "eth_sendRawTransaction", [rawTx]);
     if (response.error) throw new Error(`${url}: ${response.error.message}`);
     return response.result;
   });
@@ -181,14 +181,14 @@ export async function racePublicRPCs(rawTx, rpcs) {
  * Instead of sequential attempts, we fire to all configured endpoints 
  * simultaneously. This ensures the fastest relay wins and minimizes latency.
  */
-export async function sendPrivateTx(rawTx, options = {}) {
+export async function sendPrivateTx(rawTx: any, options: any = {}) {
   const { allowPublicFallback = true } = options;
   const submissions = [];
 
   // 1. BloXroute
   if (BLOXROUTE_AUTH) {
     submissions.push(
-      sendViaBloXroute(rawTx)
+      sendViaBloXroute(rawTx, undefined)
         .then(txHash => ({ txHash, method: "bloxroute" }))
     );
   }
@@ -208,7 +208,7 @@ export async function sendPrivateTx(rawTx, options = {}) {
   ) {
     submissions.push(
       jsonRpc(PRIVATE_MEMPOOL_URL, "eth_sendRawTransaction", [rawTx])
-        .then(res => {
+        .then((res: any) => {
           if (res.error) throw new Error(res.error.message);
           return { txHash: res.result, method: "eth_sendRawTransaction_private" };
         })
@@ -221,7 +221,7 @@ export async function sendPrivateTx(rawTx, options = {}) {
       const result = await Promise.any(submissions);
       console.log(`[private_tx] Raced private submission success: ${result.txHash} via ${result.method}`);
       return { submitted: true, ...result };
-    } catch (err) {
+    } catch (err: any) {
       console.warn(`[private_tx] All parallel private submissions failed: ${err.message}`);
     }
   }
@@ -230,9 +230,9 @@ export async function sendPrivateTx(rawTx, options = {}) {
   if (allowPublicFallback) {
     console.warn("[private_tx] Falling back to public RPC race");
     try {
-      const txHash = await racePublicRPCs(rawTx);
+      const txHash = await racePublicRPCs(rawTx, undefined);
       return { submitted: true, txHash, method: "public_race" };
-    } catch (err) {
+    } catch (err: any) {
       return { submitted: false, error: `Public race failed: ${err.message}` };
     }
   }

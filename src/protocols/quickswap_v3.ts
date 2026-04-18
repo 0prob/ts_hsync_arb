@@ -25,7 +25,7 @@ export default {
   // Algebra factory emits Pool(token0, token1, pool) — no fee or tickSpacing in event
   signature:
     "event Pool(address indexed token0, address indexed token1, address pool)",
-  decode(decoded) {
+  decode(decoded: any) {
     // indexed: [token0, token1]; body: [pool]
     return {
       pool_address: decoded.body[0]?.val?.toString(),

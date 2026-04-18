@@ -40,7 +40,7 @@ export const PROTOCOL_KEY = "UNISWAP_V3";
 const POOL_CREATED_SIG =
   "event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)";
 
-function checkpointFromNextBlock(nextBlock, fallbackFromBlock) {
+function checkpointFromNextBlock(nextBlock: any, fallbackFromBlock: any) {
   if (Number.isFinite(nextBlock) && nextBlock > 0) {
     return nextBlock - 1;
   }
@@ -54,7 +54,7 @@ const _topic0 = encodeEventTopics({
 })[0];
 const _decoder = Decoder.fromSignatures([POOL_CREATED_SIG]);
 
-function decodePoolCreated(decoded, rawLog) {
+function decodePoolCreated(decoded: any, rawLog: any) {
   const token0 = decoded.indexed[0]?.val?.toString();
   const token1 = decoded.indexed[1]?.val?.toString();
   const fee = Number(decoded.indexed[2]?.val);
@@ -122,7 +122,7 @@ export async function fetchV3Pools(fromBlock = GENESIS_START_BLOCK) {
   return { pools, rollbackGuard, nextBlock };
 }
 
-export async function discoverV3Pools(registry, fromBlock) {
+export async function discoverV3Pools(registry: any, fromBlock: any) {
   const checkpoint = registry.getCheckpoint(PROTOCOL_KEY);
   const startBlock =
     fromBlock ??

@@ -23,17 +23,15 @@ const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
 // ─── Poller class ─────────────────────────────────────────────
 
 export class PollUniv2 {
-  /**
-   * @param {import('../db/registry.ts').RegistryService} registry
-   *   Live registry for pool metadata queries.
-   * @param {Map<string, Object>} stateCache
-   *   Shared map: lowercase poolAddress → canonical pool state.
-   *   Updated in-place after each poll.
-   * @param {Object} [options]
-   * @param {number} [options.concurrency=10]  Max parallel RPC fetches
-   * @param {boolean} [options.verbose=false]  Log individual pool updates
-   */
-  constructor(registry, stateCache, options = {}) {
+  private _registry: any;
+  private _cache: Map<string, any>;
+  private _concurrency: number;
+  private _verbose: boolean;
+  private _timer: ReturnType<typeof setTimeout> | null;
+  private _running: boolean;
+  private _passCount: number;
+
+  constructor(registry: any, stateCache: Map<string, any>, options: any = {}) {
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? 10;

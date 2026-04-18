@@ -82,7 +82,7 @@ const BALANCER_PROTOCOLS = new Set([
  * @param {Object}   [meta]       Registry metadata (fee override, etc.)
  * @returns {Object}  Canonical pool state
  */
-export function normalizeV2State(poolAddress, protocol, tokens, rawState, meta = {}) {
+export function normalizeV2State(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   // V2 fee: default 997/1000 (0.3%). SushiSwap also 0.3%.
   // Some forks differ — use registry metadata if available.
   const feeNumerator = meta?.feeNumerator != null ? BigInt(meta.feeNumerator) : 997n;
@@ -92,7 +92,7 @@ export function normalizeV2State(poolAddress, protocol, tokens, rawState, meta =
     protocol,
     token0: (tokens[0] || "").toLowerCase(),
     token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t) => t.toLowerCase()),
+    tokens: tokens.map((t: any) => t.toLowerCase()),
     fee: feeNumerator,        // 997 = 0.3% fee (out of 1000)
     reserve0: rawState.reserve0,
     reserve1: rawState.reserve1,
@@ -110,13 +110,13 @@ export function normalizeV2State(poolAddress, protocol, tokens, rawState, meta =
  * @param {Object}   [meta]       Registry metadata
  * @returns {Object}  Canonical pool state
  */
-export function normalizeV3State(poolAddress, protocol, tokens, rawState, meta = {}) {
+export function normalizeV3State(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   return {
     poolId: poolAddress.toLowerCase(),
     protocol,
     token0: (tokens[0] || "").toLowerCase(),
     token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t) => t.toLowerCase()),
+    tokens: tokens.map((t: any) => t.toLowerCase()),
     fee: BigInt(rawState.fee || meta?.fee || 3000),
     sqrtPriceX96: rawState.sqrtPriceX96,
     tick: rawState.tick,
@@ -138,7 +138,7 @@ export function normalizeV3State(poolAddress, protocol, tokens, rawState, meta =
  * @param {Object}   [meta]       Registry metadata (A, fee, etc.)
  * @returns {Object}  Canonical pool state
  */
-export function normalizeCurveState(poolAddress, protocol, tokens, rawState, meta = {}) {
+export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   const n = tokens.length;
   const rates = rawState.rates || defaultRates(n);
   const A = rawState.A || BigInt(meta?.A || 100) * 100n; // A in A_PRECISION units
@@ -148,7 +148,7 @@ export function normalizeCurveState(poolAddress, protocol, tokens, rawState, met
     protocol,
     token0: (tokens[0] || "").toLowerCase(),
     token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t) => t.toLowerCase()),
+    tokens: tokens.map((t: any) => t.toLowerCase()),
     fee: rawState.fee || BigInt(meta?.fee || 4_000_000n),  // default 0.04% in 1e10
     balances: rawState.balances || [],
     rates,
@@ -168,7 +168,7 @@ export function normalizeCurveState(poolAddress, protocol, tokens, rawState, met
  * @param {Object}   [meta]       Registry metadata (weights, swapFee)
  * @returns {Object}  Canonical pool state
  */
-export function normalizeBalancerState(poolAddress, protocol, tokens, rawState, meta = {}) {
+export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   const n = tokens.length;
   const ONE = 10n ** 18n;
 
@@ -182,11 +182,11 @@ export function normalizeBalancerState(poolAddress, protocol, tokens, rawState, 
     protocol,
     token0: (tokens[0] || "").toLowerCase(),
     token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t) => t.toLowerCase()),
+    tokens: tokens.map((t: any) => t.toLowerCase()),
     fee: rawState.swapFee || BigInt(meta?.swapFee || 3_000_000_000_000_000n), // 0.3%
     balances: rawState.balances || [],
     weights,
-    swapFee: rawState.swapFee || BigInt(meta?.swapFee || 3_000_000_000_000_000n),
+    swapFee: rawState.swapFee || BigInt(meta?.swapFee || 3_000_000_000_000_000n) as any,
     timestamp: rawState.fetchedAt || Date.now(),
   };
 }
@@ -205,7 +205,7 @@ export function normalizeBalancerState(poolAddress, protocol, tokens, rawState, 
  * @param {Object}   [meta]       Registry metadata
  * @returns {Object|null}  Canonical pool state, or null if protocol unknown
  */
-export function normalizePoolState(poolAddress, protocol, tokens, rawState, meta = {}) {
+export function normalizePoolState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   if (!rawState) return null;
 
   const addr = poolAddress.toLowerCase();
@@ -236,7 +236,7 @@ export function normalizePoolState(poolAddress, protocol, tokens, rawState, meta
  * @param {Object} state  Canonical pool state
  * @returns {{ valid: boolean, reason?: string }}
  */
-export function validatePoolState(state) {
+export function validatePoolState(state: any) {
   if (!state) return { valid: false, reason: "null state" };
   if (!state.poolId) return { valid: false, reason: "missing poolId" };
   if (!state.protocol) return { valid: false, reason: "missing protocol" };
@@ -258,7 +258,7 @@ export function validatePoolState(state) {
   } else if (CURVE_PROTOCOLS.has(state.protocol)) {
     if (!state.balances || state.balances.length < 2)
       return { valid: false, reason: "Curve: missing balances" };
-    if (state.balances.some((b) => b <= 0n))
+    if (state.balances.some((b: any) => b <= 0n))
       return { valid: false, reason: "Curve: zero balance" };
     if (!state.A || state.A <= 0n)
       return { valid: false, reason: "Curve: missing A" };
@@ -267,7 +267,7 @@ export function validatePoolState(state) {
       return { valid: false, reason: "Balancer: missing balances" };
     if (!state.weights || state.weights.length < 2)
       return { valid: false, reason: "Balancer: missing weights" };
-    if (state.balances.some((b) => b <= 0n))
+    if (state.balances.some((b: any) => b <= 0n))
       return { valid: false, reason: "Balancer: zero balance" };
   }
 

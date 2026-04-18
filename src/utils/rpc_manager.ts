@@ -157,6 +157,7 @@ class RpcEndpoint {
 class RpcManager {
   endpoints: RpcEndpoint[];
   _probeInterval: ReturnType<typeof setInterval> | null;
+  _nextIndex: number;
 
   constructor(urls: string[]) {
     if (!urls || urls.length === 0) {
@@ -164,6 +165,7 @@ class RpcManager {
     }
     this.endpoints = urls.map((u) => new RpcEndpoint(u));
     this._probeInterval = null;
+    this._nextIndex = 0;
   }
 
   /**
@@ -184,39 +186,27 @@ class RpcManager {
     );
 
     if (healthy.length > 0) {
-      return healthy.reduce((best, ep) => {
-        if (ep.inFlight !== best.inFlight) {
-          return ep.inFlight < best.inFlight ? ep : best;
-        }
-        return ep.latencyMs < best.latencyMs ? ep : best;
-      });
+      return this._selectEndpoint(
+        healthy,
+        (ep) => [ep.inFlight, ep.latencyMs]
+      );
     }
 
     // All healthy candidates exhausted — pick the non-rate-limited endpoint
     // whose transport-error cooldown expires soonest.
     const available = this.endpoints.filter((ep) => !ep.isRateLimited());
     if (available.length > 0) {
-      return available.reduce((best, ep) => {
-        if (ep.errorCooldownUntil !== best.errorCooldownUntil) {
-          return ep.errorCooldownUntil < best.errorCooldownUntil ? ep : best;
-        }
-        if (ep.inFlight !== best.inFlight) {
-          return ep.inFlight < best.inFlight ? ep : best;
-        }
-        return ep.latencyMs < best.latencyMs ? ep : best;
-      });
+      return this._selectEndpoint(
+        available,
+        (ep) => [ep.errorCooldownUntil, ep.inFlight, ep.latencyMs]
+      );
     }
 
     // All rate-limited — return the one whose cooldown expires soonest
-    return this.endpoints.reduce((best, ep) => {
-      if (ep.rateLimitedUntil !== best.rateLimitedUntil) {
-        return ep.rateLimitedUntil < best.rateLimitedUntil ? ep : best;
-      }
-      if (ep.inFlight !== best.inFlight) {
-        return ep.inFlight < best.inFlight ? ep : best;
-      }
-      return ep.latencyMs < best.latencyMs ? ep : best;
-    });
+    return this._selectEndpoint(
+      this.endpoints,
+      (ep) => [ep.rateLimitedUntil, ep.inFlight, ep.latencyMs]
+    );
   }
 
   /** Convenience: return the viem PublicClient for the best endpoint. */
@@ -335,6 +325,57 @@ class RpcManager {
 
     logger.debug(`[rpc_manager] Endpoint ranking:\n${lines}`);
   }
+
+  _selectEndpoint(
+    candidates: RpcEndpoint[],
+    scoreFn: (ep: RpcEndpoint) => number[]
+  ) {
+    let bestScore: number[] | null = null;
+    let tied: RpcEndpoint[] = [];
+
+    for (const ep of candidates) {
+      const score = scoreFn(ep);
+      if (bestScore === null) {
+        bestScore = score;
+        tied = [ep];
+        continue;
+      }
+      const cmp = this._compareScores(score, bestScore);
+      if (cmp < 0) {
+        bestScore = score;
+        tied = [ep];
+      } else if (cmp === 0) {
+        tied.push(ep);
+      }
+    }
+
+    const chosen = this._roundRobinTieBreak(tied);
+    const chosenIndex = this.endpoints.indexOf(chosen);
+    if (chosenIndex >= 0) {
+      this._nextIndex = (chosenIndex + 1) % this.endpoints.length;
+    }
+    return chosen;
+  }
+
+  _compareScores(a: number[], b: number[]) {
+    const len = Math.max(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      const av = a[i] ?? 0;
+      const bv = b[i] ?? 0;
+      if (av !== bv) return av < bv ? -1 : 1;
+    }
+    return 0;
+  }
+
+  _roundRobinTieBreak(candidates: RpcEndpoint[]) {
+    if (candidates.length === 1) return candidates[0];
+    for (let offset = 0; offset < this.endpoints.length; offset++) {
+      const idx = (this._nextIndex + offset) % this.endpoints.length;
+      const ep = this.endpoints[idx];
+      if (candidates.includes(ep)) return ep;
+    }
+    return candidates[0];
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -368,7 +409,27 @@ export const dynamicPublicClient = new Proxy(
       const client = rpcManager.getBestClient() as Record<string | symbol, unknown>;
       const value = client[prop];
       // Bind methods to their original client so `this` works correctly
-      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(client) : value;
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        const endpoint = rpcManager.checkoutBestEndpoint();
+        const boundClient = endpoint.client as Record<string | symbol, unknown>;
+        const method = boundClient[prop];
+
+        try {
+          const result = await (method as (...callArgs: unknown[]) => unknown).apply(boundClient, args);
+          rpcManager.markSuccess(endpoint.url);
+          return result;
+        } catch (error) {
+          if (isRateLimitError(error) || isEndpointCapabilityError(error)) {
+            rpcManager.markRateLimited(endpoint.url, error);
+          } else if (isRetryableError(error)) {
+            rpcManager.markError(endpoint.url);
+          }
+          throw error;
+        } finally {
+          rpcManager.releaseEndpoint(endpoint.url);
+        }
+      };
     },
   }
 );

@@ -50,7 +50,7 @@ const BALANCER_PROTOCOLS = new Set([
  * @param {Map<string, Object>}          stateCache  Canonical pool state map
  * @returns {{ amountOut: bigint, gasEstimate: number }}
  */
-export function simulateHop(edge, amountIn, stateCache) {
+export function simulateHop(edge: any, amountIn: any, stateCache: any) {
   if (amountIn <= 0n) return { amountOut: 0n, gasEstimate: 0 };
 
   // Prefer pre-attached state from graph edge (V3 edges built with stateMap)
@@ -68,7 +68,7 @@ export function simulateHop(edge, amountIn, stateCache) {
   }
 
   if (V2_PROTOCOLS.has(protocol)) {
-    const feeNum = state.fee != null ? state.fee : 997n;
+    const feeNum = state.fee != null ? BigInt(state.fee) : 997n;
     return simulateV2Swap(state, amountIn, edge.zeroForOne, feeNum);
   }
 
@@ -111,7 +111,7 @@ export function simulateHop(edge, amountIn, stateCache) {
  * @param {Map<string, Object>}           stateCache Canonical pool state map
  * @returns {RouteSimResult}
  */
-export function simulateRoute(path, amountIn, stateCache) {
+export function simulateRoute(path: any, amountIn: any, stateCache: any) {
   const hopAmounts = [amountIn];
   const poolPath = [];
   const tokenPath = [path.startToken];
@@ -158,13 +158,13 @@ export function simulateRoute(path, amountIn, stateCache) {
  * @param {number} [options.iterations=40]
  * @returns {RouteSimResult|null}   Best result, or null if no profitable amount
  */
-export function optimizeInputAmount(path, stateCache, options = {}) {
+export function optimizeInputAmount(path: any, stateCache: any, options: any = {}) {
   const {
     minAmount = 1_000n,
     maxAmount = 10n ** 24n,
     iterations = 40,
-    scorer = (result) => result.profit,
-    accept = (result) => result.profitable,
+    scorer = (result: any) => result.profit,
+    accept = (result: any) => result.profitable,
   } = options;
 
   let lo = minAmount;
@@ -172,7 +172,7 @@ export function optimizeInputAmount(path, stateCache, options = {}) {
   let best = null;
 
   for (let i = 0; i < iterations; i++) {
-    const third = (hi - lo) / 3n;
+    const third = (BigInt(hi) - BigInt(lo)) / 3n;
     if (third <= 0n) break;
 
     const m1 = lo + third;
@@ -212,7 +212,7 @@ export function optimizeInputAmount(path, stateCache, options = {}) {
  * @param {boolean} [options.optimize=false]  Run ternary search on profitable paths
  * @returns {Array<{ path: Object, result: RouteSimResult }>}
  */
-export function evaluatePaths(paths, stateCache, testAmount, options = {}) {
+export function evaluatePaths(paths: any, stateCache: any, testAmount: any, options: any = {}) {
   const { optimize = false } = options;
   const profitable = [];
 
@@ -250,7 +250,7 @@ export function evaluatePaths(paths, stateCache, testAmount, options = {}) {
  * @param {number} [options.workerCount]    Ignored — pool size is set at startup
  * @returns {Promise<Array<{ path: Object, result: RouteSimResult }>>}
  */
-export async function evaluatePathsParallel(paths, stateCache, testAmount, options = {}) {
+export async function evaluatePathsParallel(paths: any, stateCache: any, testAmount: any, options: any = {}) {
   const { optimize = false } = options;
 
   // Below the threshold the IPC serialisation overhead exceeds the parallelism gain

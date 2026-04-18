@@ -11,7 +11,7 @@ export default {
   name: "Curve Main Registry",
   address: REGISTRY_ADDRESS,
   signature: "event PoolAdded(address indexed pool, bytes rate_method_id)",
-  decode(decoded) {
+  decode(decoded: any) {
     // indexed: [pool]; body: [rate_method_id]
     return {
       pool_address: decoded.indexed[0]?.val?.toString(),
@@ -21,7 +21,7 @@ export default {
       },
     };
   },
-  async enrichTokens(poolMeta) {
+  async enrichTokens(poolMeta: any) {
     return getCurveTokens(poolMeta.pool_address, REGISTRY_ADDRESS);
   },
 };

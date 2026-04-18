@@ -23,7 +23,7 @@ const MAX_SUBMISSION_RETRIES = 3;
 /**
  * Simulate the transaction via eth_call before submitting.
  */
-async function dryRun(tx, fromAddress, publicClient) {
+async function dryRun(tx: any, fromAddress: any, publicClient: any) {
   try {
     await publicClient.call({
       account: fromAddress,
@@ -32,7 +32,7 @@ async function dryRun(tx, fromAddress, publicClient) {
       value: tx.value ?? 0n,
     });
     return { success: true, error: null };
-  } catch (err) {
+  } catch (err: any) {
     return { success: false, error: err.shortMessage || err.message || String(err) };
   }
 }
@@ -48,7 +48,7 @@ async function dryRun(tx, fromAddress, publicClient) {
  * @param {import('./nonce_manager.ts').NonceManager} [config.nonceManager]
  * @param {Object} [options]
  */
-export async function sendTx(builtTx, config, options = {}) {
+export async function sendTx(builtTx: any, config: any, options: any = {}) {
   const {
     privateKey,
     nonceManager,
@@ -64,7 +64,7 @@ export async function sendTx(builtTx, config, options = {}) {
     accountFromPrivateKey = privateKeyToAccount,
     signTransactionFn = signTransaction,
     sendPrivateTxFn = sendPrivateTx,
-    sleepFn = (ms) => new Promise((r) => setTimeout(r, ms)),
+    sleepFn = (ms: any) => new Promise((r) => setTimeout(r, ms)),
   } = options;
 
   if (!privateKey) throw new Error("sendTx: privateKey required");
@@ -107,7 +107,7 @@ export async function sendTx(builtTx, config, options = {}) {
   let rawTx;
   try {
     rawTx = await signTransactionFn(builtTx, privateKey, nonce, 137);
-  } catch (err) {
+  } catch (err: any) {
     if (nonceManager) nonceManager.revert(fromAddress);
     return {
       submitted: false,
@@ -139,7 +139,7 @@ export async function sendTx(builtTx, config, options = {}) {
       if (nonceManager) nonceManager.confirm(fromAddress);
       submitError = null;
       break;
-    } catch (err) {
+    } catch (err: any) {
       submitError = err.shortMessage || err.message || String(err);
       console.error(`[send_tx] Submission attempt ${attempt + 1} failed: ${submitError}`);
 
@@ -204,7 +204,7 @@ export async function sendTx(builtTx, config, options = {}) {
       receipt,
       dryRun: dryRunResult,
     };
-  } catch (err) {
+  } catch (err: any) {
     console.warn(`[send_tx] Receipt wait failed: ${err.message}`);
     return {
       submitted: true,
@@ -218,7 +218,7 @@ export async function sendTx(builtTx, config, options = {}) {
 
 // ─── Failure logging ──────────────────────────────────────────
 
-function logFailure(txHash, builtTx, receipt) {
+function logFailure(txHash: any, builtTx: any, receipt: any) {
   const entry = {
     timestamp: new Date().toISOString(),
     txHash,

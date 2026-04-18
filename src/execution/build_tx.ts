@@ -34,7 +34,7 @@ const DEFAULT_GAS_MULTIPLIER = 1.25;
  * @param {Object} route  { path, result }
  * @returns {{ flashToken: string, flashAmount: bigint }}
  */
-function resolveFlashLoan(route) {
+function resolveFlashLoan(route: any) {
   return {
     flashToken: route.path.startToken,
     flashAmount: route.result.amountIn,
@@ -72,7 +72,7 @@ function resolveFlashLoan(route) {
  * @param {{maxFeePerGas: bigint, maxPriorityFeePerGas: bigint, gasLimit: bigint, estimatedCostWei: bigint}} [options.gasParamsOverride]
  * @returns {Promise<BuiltTx>}
  */
-export async function buildArbTx(route, config, options = {}) {
+export async function buildArbTx(route: any, config: any, options: any = {}) {
   const { executorAddress, fromAddress } = config;
   const {
     minProfit = DEFAULT_MIN_PROFIT,
@@ -92,7 +92,7 @@ export async function buildArbTx(route, config, options = {}) {
   const deadline = BigInt(Math.floor(Date.now() / 1000) + deadlineOffsetS);
 
   // Encode route into Call[]
-  const calls = encodeRoute(route, executorAddress, { slippageBps });
+  const calls = encodeRoute(route, executorAddress, { slippageBps, deadline });
 
   // Build flash loan params (includes route hash)
   const flashParams = buildFlashParams({ profitToken, minProfit, deadline, calls });
@@ -124,7 +124,7 @@ export async function buildArbTx(route, config, options = {}) {
 
   // Metadata for logging
   const meta = {
-    protocol: route.path.edges.map((e) => e.protocol),
+    protocol: route.path.edges.map((e: any) => e.protocol),
     pools: route.result.poolPath,
     tokens: route.result.tokenPath,
     hopAmounts: route.result.hopAmounts.map(String),
@@ -161,7 +161,7 @@ export async function buildArbTx(route, config, options = {}) {
  * @param {string} fromAddress Sender
  * @returns {Promise<BuiltTx>}
  */
-export async function buildTransferTx(token, to, amount, fromAddress) {
+export async function buildTransferTx(token: any, to: any, amount: any, fromAddress: any) {
   // ERC-20 transfer(address,uint256) = 0xa9059cbb
   const data =
     "0xa9059cbb" +

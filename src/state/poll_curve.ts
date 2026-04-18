@@ -180,14 +180,15 @@ export async function fetchAndNormalizeCurvePool(pool) {
 // ─── Poller class ─────────────────────────────────────────────
 
 export class PollCurve {
-  /**
-   * @param {import('../db/registry.ts').RegistryService} registry
-   * @param {Map<string, Object>} stateCache
-   * @param {Object} [options]
-   * @param {number} [options.concurrency=3]
-   * @param {boolean} [options.verbose=false]
-   */
-  constructor(registry, stateCache, options = {}) {
+  private _registry: any;
+  private _cache: Map<string, any>;
+  private _concurrency: number;
+  private _verbose: boolean;
+  private _timer: ReturnType<typeof setTimeout> | null;
+  private _running: boolean;
+  private _passCount: number;
+
+  constructor(registry: any, stateCache: Map<string, any>, options: any = {}) {
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? ENRICH_CONCURRENCY;

@@ -24,7 +24,7 @@ import { computeSwapStep } from "./swap_math.ts";
  * @param {boolean}  zeroForOne   Direction (true = decreasing, false = increasing)
  * @returns {number|null}
  */
-function nextInitializedTickOptimized(sortedTicks, currentTick, zeroForOne) {
+function nextInitializedTickOptimized(sortedTicks: any, currentTick: any, zeroForOne: any) {
   if (!sortedTicks || sortedTicks.length === 0) return null;
 
   let low = 0;
@@ -69,7 +69,7 @@ function nextInitializedTickOptimized(sortedTicks, currentTick, zeroForOne) {
  * @param {number} [feeOverride]     Optional fee tier override
  * @returns {{ amountOut: bigint, sqrtPriceX96After: bigint, tickAfter: number, gasEstimate: number }}
  */
-export function simulateV3Swap(state, amountIn, zeroForOne, feeOverride) {
+export function simulateV3Swap(state: any, amountIn: any, zeroForOne: any, feeOverride: any) {
   if (amountIn <= 0n || !state.initialized || state.sqrtPriceX96 === 0n) {
     return {
       amountOut: 0n,
@@ -88,7 +88,7 @@ export function simulateV3Swap(state, amountIn, zeroForOne, feeOverride) {
 
   // OPTIMIZATION: Cache sorted ticks on the state object to avoid re-sorting
   if (!state._sortedTicks) {
-    state._sortedTicks = Array.from(state.ticks.keys()).sort((a, b) => a - b);
+    state._sortedTicks = Array.from(state.ticks.keys()).sort((a: any, b: any) => a - b);
   }
 
   // Mutable swap state
@@ -184,6 +184,6 @@ export function simulateV3Swap(state, amountIn, zeroForOne, feeOverride) {
  * @param {number} [fee]      Optional fee tier override
  * @returns {bigint}          Output amount
  */
-export function quoteV3(state, amountIn, zeroForOne, fee) {
+export function quoteV3(state: any, amountIn: any, zeroForOne: any, fee: any) {
   return simulateV3Swap(state, amountIn, zeroForOne, fee).amountOut;
 }

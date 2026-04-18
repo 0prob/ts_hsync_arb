@@ -15,7 +15,7 @@ export default {
   address: "0x917933899c6a5F8E37F31E19f92CdBFF7e8FF0e2",
   signature:
     "event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)",
-  decode(decoded) {
+  decode(decoded: any) {
     // indexed: [token0, token1, fee]; body: [tickSpacing, pool]
     return {
       pool_address: decoded.body[1]?.val?.toString(),

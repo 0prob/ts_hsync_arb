@@ -3,13 +3,13 @@
  * src/db/registry_codec.js — Shared JSON/row conversion helpers for RegistryService
  */
 
-export function stringifyWithBigInt(obj) {
+export function stringifyWithBigInt(obj: any) {
   return JSON.stringify(obj, (_key, value) =>
     typeof value === "bigint" ? value.toString() : value
   );
 }
 
-export function parseJson(value, fallback) {
+export function parseJson(value: any, fallback: any) {
   if (value == null) return fallback;
   if (typeof value !== "string") return value;
 
@@ -20,13 +20,13 @@ export function parseJson(value, fallback) {
   }
 }
 
-export function lowerCaseAddressList(values = []) {
+export function lowerCaseAddressList(values: any[] = []) {
   return values.map((value) =>
     typeof value === "string" ? value.toLowerCase() : value
   );
 }
 
-export function mapPoolRow(row) {
+export function mapPoolRow(row: any) {
   return {
     pool_address: row.address,
     protocol: row.protocol,
@@ -41,7 +41,7 @@ export function mapPoolRow(row) {
   };
 }
 
-export function mapPoolMetaRow(row) {
+export function mapPoolMetaRow(row: any) {
   return {
     pool_address: row.address,
     protocol: row.protocol,
@@ -54,7 +54,7 @@ export function mapPoolMetaRow(row) {
   };
 }
 
-export function mapStalePoolRow(row) {
+export function mapStalePoolRow(row: any) {
   return {
     pool_address: row.address,
     protocol: row.protocol,
@@ -63,7 +63,7 @@ export function mapStalePoolRow(row) {
   };
 }
 
-export function mapArbHistoryRow(row) {
+export function mapArbHistoryRow(row: any) {
   return {
     ...row,
     pools: parseJson(row.pools, []),

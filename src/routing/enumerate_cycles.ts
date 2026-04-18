@@ -44,7 +44,7 @@ const DEFAULTS = {
 
 // ─── Liquidity pruning ────────────────────────────────────────
 
-function v2LiquidityWmatic(edge, getRateWei) {
+function v2LiquidityWmatic(edge: any, getRateWei: any) {
   const s = edge.stateRef;
   if (!s?.reserve0 || !s?.reserve1) return 0n;
   const t0 = edge.zeroForOne ? edge.tokenIn  : edge.tokenOut;
@@ -52,9 +52,9 @@ function v2LiquidityWmatic(edge, getRateWei) {
   return s.reserve0 * getRateWei(t0) + s.reserve1 * getRateWei(t1);
 }
 
-function pruneByLiquidity(paths, minWmatic, getRateWei) {
+function pruneByLiquidity(paths: any, minWmatic: any, getRateWei: any) {
   if (minWmatic <= 0n || !getRateWei) return paths;
-  return paths.filter((path) => {
+  return paths.filter((path: any) => {
     for (const edge of path.edges) {
       const liq = v2LiquidityWmatic(edge, getRateWei);
       if (liq > 0n && liq < minWmatic) return false;
@@ -65,10 +65,10 @@ function pruneByLiquidity(paths, minWmatic, getRateWei) {
 
 // ─── Sort ─────────────────────────────────────────────────────
 
-function sortByLogWeight(paths) {
-  return paths.sort((a, b) => {
-    const noA = a.logWeight === 0 && a.edges.some((e) => !e.stateRef);
-    const noB = b.logWeight === 0 && b.edges.some((e) => !e.stateRef);
+function sortByLogWeight(paths: any) {
+  return paths.sort((a: any, b: any) => {
+    const noA = a.logWeight === 0 && a.edges.some((e: any) => !e.stateRef);
+    const noB = b.logWeight === 0 && b.edges.some((e: any) => !e.stateRef);
     if (noA && !noB) return 1;
     if (!noA && noB) return -1;
     return a.logWeight - b.logWeight;
@@ -77,7 +77,7 @@ function sortByLogWeight(paths) {
 
 // ─── Single-graph (backward-compatible) ──────────────────────
 
-export function enumerateCycles(graph, options = {}) {
+export function enumerateCycles(graph: any, options: any = {}) {
   const opts = { ...DEFAULTS, ...options };
 
   let startTokens;
@@ -115,7 +115,7 @@ export function enumerateCycles(graph, options = {}) {
 
 // ─── Dual-graph hub-first (preferred) ────────────────────────
 
-export function enumerateCyclesDual(hubGraph, fullGraph, options = {}) {
+export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any = {}) {
   const opts      = { ...DEFAULTS, ...options };
   const maxTotal  = opts.maxTotalPaths;
   const hubBudget = opts.hubPathBudget ?? Math.ceil(maxTotal * 0.6);
@@ -157,17 +157,17 @@ export function enumerateCyclesDual(hubGraph, fullGraph, options = {}) {
 
 // ─── Convenience wrappers ────────────────────────────────────
 
-export function enumerateCyclesForToken(graph, startToken, options = {}) {
+export function enumerateCyclesForToken(graph: any, startToken: any, options: any = {}) {
   return enumerateCycles(graph, { ...options, hubTokensOnly: false, startTokens: new Set([startToken]) });
 }
 
-export function cycleSummary(cycles) {
-  const byHops = {}, byProtocol = {};
+export function cycleSummary(cycles: any) {
+  const byHops: Record<string, any> = {}, byProtocol: Record<string, any> = {};
   let crossProtocol = 0;
   for (const c of cycles) {
     byHops[c.hopCount] = (byHops[c.hopCount] || 0) + 1;
-    const protos = new Set(c.edges.map((e) => e.protocol));
-    for (const p of protos) byProtocol[p] = (byProtocol[p] || 0) + 1;
+    const protos = new Set(c.edges.map((e: any) => e.protocol));
+    for (const p of protos) byProtocol[p as string] = (byProtocol[p as string] || 0) + 1;
     if (protos.size > 1) crossProtocol++;
   }
   return { total: cycles.length, byHops, byProtocol, crossProtocol };

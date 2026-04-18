@@ -22,29 +22,21 @@
 import { executionClient } from "./gas.ts";
 
 export class NonceManager {
-  /**
-   * Uses the write-capable execution client backed by POLYGON_RPC.
-   * The rpcUrl parameter is kept for backward-compatibility but ignored.
-   *
-   * @param {string} [_rpcUrl]  Ignored — executionClient is used instead
-   */
-  constructor(_rpcUrl) {
-    this._client = executionClient;
+  private _client: any;
+  private _state: Map<string, any>;
 
-    /**
-     * Map of address → { nonce: bigint, pending: number, dirty: boolean }
-     * dirty: true means we need to resync from chain
-     */
+  constructor(_rpcUrl?: string) {
+    this._client = executionClient;
     this._state = new Map();
   }
 
   // ─── Helpers ─────────────────────────────────────────────────
 
-  _key(address) {
+  _key(address: any) {
     return address.toLowerCase();
   }
 
-  async _fetchOnchain(address) {
+  async _fetchOnchain(address: any) {
     const count = await this._client.getTransactionCount({
       address,
       blockTag: "pending", // Include mempool txs in count
@@ -63,7 +55,7 @@ export class NonceManager {
    * @param {string} address  Sender address (0x-prefixed)
    * @returns {Promise<bigint>}  Nonce to use for the next transaction
    */
-  async next(address) {
+  async next(address: any) {
     const key = this._key(address);
 
     if (!this._state.has(key) || this._state.get(key).dirty) {
@@ -85,7 +77,7 @@ export class NonceManager {
    *
    * @param {string} address
    */
-  confirm(address) {
+  confirm(address: any) {
     const key = this._key(address);
     const entry = this._state.get(key);
     if (!entry) return;
@@ -100,7 +92,7 @@ export class NonceManager {
    *
    * @param {string} address
    */
-  revert(address) {
+  revert(address: any) {
     const key = this._key(address);
     const entry = this._state.get(key);
     if (!entry) return;
@@ -113,7 +105,7 @@ export class NonceManager {
    *
    * @param {string} address
    */
-  resync(address) {
+  resync(address: any) {
     const key = this._key(address);
     const entry = this._state.get(key);
     if (entry) {
@@ -129,7 +121,7 @@ export class NonceManager {
    * @param {string} address
    * @returns {{ nonce: bigint, pending: number } | null}
    */
-  peek(address) {
+  peek(address: any) {
     const entry = this._state.get(this._key(address));
     if (!entry) return null;
     return { nonce: entry.nonce, pending: entry.pending };

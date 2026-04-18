@@ -30,17 +30,17 @@ import { simulateBalancerSwap } from "../math/balancer.ts";
  * sqrtPriceX96 can be up to 160 bits; direct Number() loses precision.
  * Shifting right 64 bits first keeps the high 96 bits — plenty for log().
  */
-function sqrtPriceToFloat(sqrtPriceX96) {
+function sqrtPriceToFloat(sqrtPriceX96: any) {
   return Number(sqrtPriceX96 >> 64n) / (2 ** 32);
 }
 
-function probeAmountFromBalance(balance) {
+function probeAmountFromBalance(balance: any) {
   if (!balance || balance <= 0n) return 0n;
   const probe = balance / 1_000_000n;
   return probe > 0n ? probe : 1n;
 }
 
-function quoteBasedLogWeight(edge, simulateFn) {
+function quoteBasedLogWeight(edge: any, simulateFn: any) {
   const state = edge.stateRef;
   const balances = state?.balances;
   if (!balances || balances.length < 2) return null;
@@ -68,7 +68,7 @@ function quoteBasedLogWeight(edge, simulateFn) {
  * @param {import('./graph.ts').SwapEdge} edge
  * @returns {number|null}
  */
-export function edgeSpotLogWeight(edge) {
+export function edgeSpotLogWeight(edge: any) {
   const state = edge.stateRef;
   if (!state) return null;
 
@@ -111,7 +111,7 @@ export function edgeSpotLogWeight(edge) {
  * @param {ArbPath} path
  * @returns {number}
  */
-export function pathCumulativeFeesBps(path) {
+export function pathCumulativeFeesBps(path: any) {
   let total = 0;
   for (const edge of path.edges) {
     total += edge.feeBps ?? 0;
@@ -130,7 +130,7 @@ export function pathCumulativeFeesBps(path) {
  * @param {ArbPath} path
  * @returns {ArbPath}
  */
-export function annotatePath(path) {
+export function annotatePath(path: any) {
   let logWeight = 0;
   let hasNull = false;
 
@@ -158,10 +158,10 @@ export function annotatePath(path) {
  * @param {Array<{ poolAddress: string, zeroForOne: boolean }>} edges
  * @returns {string}
  */
-export function routeKeyFromEdges(startToken, edges) {
+export function routeKeyFromEdges(startToken: any, edges: any) {
   return [
     startToken.toLowerCase(),
-    ...edges.map((edge) =>
+    ...edges.map((edge: any) =>
       `${edge.poolAddress.toLowerCase()}:${edge.zeroForOne ? "1" : "0"}`
     ),
   ].join("|");
@@ -193,7 +193,7 @@ export function routeKeyFromEdges(startToken, edges) {
  * @param {bigint} [opts.probeWei=0n]       Test trade size for 0.3 % impact check
  * @returns {boolean}  true = prune (skip this edge)
  */
-function shouldPruneEdge(edge, opts = {}) {
+function shouldPruneEdge(edge: any, opts: any = {}) {
   const { minV2Reserve = 0n, probeWei = 0n } = opts;
   const state = edge.stateRef;
   if (!state) return false; // no state yet — let simulator reject it
@@ -227,7 +227,7 @@ function shouldPruneEdge(edge, opts = {}) {
 
   if (edge.protocol.startsWith("CURVE_")) {
     if (!Array.isArray(state.balances) || state.balances.length < 2) return false;
-    if (state.balances.some((b) => b <= 0n)) return true;
+    if (state.balances.some((b: any) => b <= 0n)) return true;
     if (!state.A || state.A <= 0n) return true;
     return false;
   }
@@ -235,7 +235,7 @@ function shouldPruneEdge(edge, opts = {}) {
   if (edge.protocol.startsWith("BALANCER_")) {
     if (!Array.isArray(state.balances) || state.balances.length < 2) return false;
     if (!Array.isArray(state.weights) || state.weights.length < 2) return false;
-    if (state.balances.some((b) => b <= 0n)) return true;
+    if (state.balances.some((b: any) => b <= 0n)) return true;
     return false;
   }
 
@@ -264,7 +264,7 @@ function shouldPruneEdge(edge, opts = {}) {
  * @param {bigint} [opts.probeWei]
  * @returns {ArbPath[]}
  */
-export function find2HopPaths(graph, startToken, opts = {}) {
+export function find2HopPaths(graph: any, startToken: any, opts: any = {}) {
   const paths = [];
   const edgesOut = graph.getEdges(startToken);
 
@@ -306,7 +306,7 @@ export function find2HopPaths(graph, startToken, opts = {}) {
  * @param {bigint} [opts.probeWei]
  * @returns {ArbPath[]}
  */
-export function find3HopPaths(graph, startToken, opts = {}) {
+export function find3HopPaths(graph: any, startToken: any, opts: any = {}) {
   const { maxPaths = 10_000 } = opts;
   const paths = [];
 
@@ -359,9 +359,9 @@ export function find3HopPaths(graph, startToken, opts = {}) {
  * @param {bigint} [opts.probeWei]
  * @returns {ArbPath[]}
  */
-export function find4HopPathsBidirectional(graph, startToken, opts = {}) {
+export function find4HopPathsBidirectional(graph: any, startToken: any, opts: any = {}) {
   const { maxPaths = 2_000 } = opts;
-  const paths = [];
+  const paths: any[] = [];
 
   // ── Forward half: A → B → C ──────────────────────────────
   // fwd: midToken(C) → [ [e1, e2], ... ]
@@ -454,7 +454,7 @@ export const find4HopPaths = find4HopPathsBidirectional;
  * @param {bigint}  [opts.probeWei=0n]       probe trade size for 0.3 % impact
  * @returns {ArbPath[]}
  */
-export function findArbPaths(graph, startTokens, opts = {}) {
+export function findArbPaths(graph: any, startTokens: any, opts: any = {}) {
   const {
     include2Hop = true,
     include3Hop = true,
@@ -502,7 +502,7 @@ export function findArbPaths(graph, startTokens, opts = {}) {
  * @param {ArbPath[]} paths
  * @returns {ArbPath[]}
  */
-export function deduplicatePaths(paths) {
+export function deduplicatePaths(paths: any) {
   const seen   = new Set();
   const unique = [];
 

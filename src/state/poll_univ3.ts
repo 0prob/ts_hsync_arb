@@ -28,15 +28,16 @@ const V3_PROTOCOLS = new Set([
 // ─── Poller class ─────────────────────────────────────────────
 
 export class PollUniv3 {
-  /**
-   * @param {import('../db/registry.ts').RegistryService} registry
-   * @param {Map<string, Object>} stateCache  Shared canonical state map
-   * @param {Object} [options]
-   * @param {number} [options.concurrency=2]   V3 fetches are expensive (many sub-calls); keep low
-   * @param {boolean} [options.verbose=false]
-   * @param {number} [options.maxPools=500]    Cap how many pools to refresh per pass
-   */
-  constructor(registry, stateCache, options = {}) {
+  private _registry: any;
+  private _cache: Map<string, any>;
+  private _concurrency: number;
+  private _verbose: boolean;
+  private _maxPools: number;
+  private _timer: ReturnType<typeof setTimeout> | null;
+  private _running: boolean;
+  private _passCount: number;
+
+  constructor(registry: any, stateCache: Map<string, any>, options: any = {}) {
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? 2;

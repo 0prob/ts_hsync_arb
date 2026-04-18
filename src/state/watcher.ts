@@ -49,7 +49,7 @@ const SIGNATURES = [
 
 const TOPICS = SIGNATURES.map((sig) => {
   const item = parseAbiItem(sig);
-  return encodeEventTopics({ abi: [item], eventName: item.name })[0];
+  return encodeEventTopics({ abi: [item], eventName: (item as any).name })[0];
 });
 
 const LOG_FIELDS = [
@@ -65,11 +65,11 @@ const LOG_FIELDS = [
   LogField.TransactionIndex,
 ];
 
-function watcherSleep(ms) {
+function watcherSleep(ms: any) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function watcherCheckpointFromNextBlock(nextBlock, currentLastBlock) {
+function watcherCheckpointFromNextBlock(nextBlock: any, currentLastBlock: any) {
   if (Number.isFinite(nextBlock) && nextBlock > 0) {
     return nextBlock - 1;
   }
@@ -77,7 +77,21 @@ function watcherCheckpointFromNextBlock(nextBlock, currentLastBlock) {
 }
 
 export class StateWatcher {
-  constructor(registry, stateCache) {
+  private _registry: any;
+  private _cache: any;
+  private _decoder: any;
+  private _running: boolean;
+  private _closed: boolean;
+  private _lastBlock: number;
+  private _checkpointKey: string;
+  private _loopPromise: Promise<void> | null;
+  private _watchedAddresses: string[];
+  private _watchedAddressSet: Set<string>;
+  private _pendingEnrichment: Map<string, any>;
+  onBatch: ((batch: any) => void) | null;
+  onReorg: ((reorg: any) => void) | null;
+
+  constructor(registry: any, stateCache: any) {
     this._registry = registry;
     this._cache = stateCache;
     this._decoder = Decoder.fromSignatures(SIGNATURES);
@@ -94,7 +108,7 @@ export class StateWatcher {
     this.onReorg = null;
   }
 
-  async start(fromBlock) {
+  async start(fromBlock: any) {
     if (this._running) return;
     this._running = true;
     this._closed = false;
@@ -125,7 +139,7 @@ export class StateWatcher {
     return this._loopPromise ?? Promise.resolve();
   }
 
-  async addPools(newAddresses) {
+  async addPools(newAddresses: any) {
     if (!newAddresses || newAddresses.length === 0) return;
 
     const added = [];
@@ -260,7 +274,7 @@ export class StateWatcher {
         if (logs.length === 0 || caughtUp) {
         await watcherSleep(WATCHER_IDLE_SLEEP_MS);
         }
-      } catch (err) {
+      } catch (err: any) {
         if (!this._running) break;
         console.error(`[watcher] HyperSync poll error: ${err.message}`);
         await watcherSleep(WATCHER_ERROR_SLEEP_MS);
@@ -268,7 +282,7 @@ export class StateWatcher {
     }
   }
 
-  async _handleLogs(logs) {
+  async _handleLogs(logs: any) {
     const decoded = await this._decoder.decodeLogs(logs);
     return handleWatcherLogs({
       logs,
@@ -284,14 +298,14 @@ export class StateWatcher {
     });
   }
 
-  _enqueueEnrichment(addr, taskFn) {
+  _enqueueEnrichment(addr: any, taskFn: any) {
     const pending = this._pendingEnrichment.get(addr);
     if (pending) {
       pending.dirty = true;
       return pending.promise;
     }
 
-    const entry = { dirty: false, promise: null };
+    const entry: { dirty: boolean; promise: any } = { dirty: false, promise: null };
     entry.promise = (async () => {
       try {
         do {
@@ -307,32 +321,32 @@ export class StateWatcher {
     return entry.promise;
   }
 
-  async _refreshBalancer(addr, pool) {
+  async _refreshBalancer(addr: any, pool: any) {
     const { normalized } = await fetchAndNormalizeBalancerPool(pool);
     const state = this._mergeState(addr, normalized);
     this._commitState(addr, state, { blockNumber: this._lastBlock });
   }
 
-  async _refreshCurve(addr, pool) {
+  async _refreshCurve(addr: any, pool: any) {
     const { normalized } = await fetchAndNormalizeCurvePool(pool);
     const state = this._mergeState(addr, normalized);
     this._commitState(addr, state, { blockNumber: this._lastBlock });
   }
 
-  _commitState(addr, state, rawLog) {
+  _commitState(addr: any, state: any, rawLog: any) {
     commitWatcherState(this._cache, this._persistState.bind(this), addr, state, rawLog);
   }
 
-  _mergeState(addr, nextState) {
+  _mergeState(addr: any, nextState: any) {
     return mergeWatcherState(this._cache, addr, nextState);
   }
 
-  _persistState(addr, state, rawLog) {
+  _persistState(addr: any, state: any, rawLog: any) {
     persistWatcherState(this._registry, addr, state, rawLog, this._lastBlock);
   }
 
   _reloadCacheFromRegistry() {
-    const nextAddrs = reloadWatcherCache(this._registry, this._cache, this._pendingEnrichment);
+    const nextAddrs: any[] = reloadWatcherCache(this._registry, this._cache, this._pendingEnrichment) as unknown as any[];
     this._watchedAddresses = [...nextAddrs];
     this._watchedAddressSet = new Set(this._watchedAddresses);
     return nextAddrs;

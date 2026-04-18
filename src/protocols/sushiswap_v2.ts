@@ -8,7 +8,7 @@ export default {
   address: "0xc35dadb65012ec5796536bd9864ed8773abc74c4",
   signature:
     "event PairCreated(address indexed token0, address indexed token1, address pair, uint256)",
-  decode(decoded) {
+  decode(decoded: any) {
     return {
       pool_address: decoded.body[0]?.val?.toString(),
       tokens: [

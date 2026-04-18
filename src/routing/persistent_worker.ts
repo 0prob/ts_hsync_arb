@@ -23,23 +23,23 @@ import { deserializeTopology } from "./graph.ts";
 if (!parentPort) throw new Error("persistent_worker must run in a Worker thread");
 
 const workerStateMap = new Map();
-let cachedTopologyKey = null;
-let cachedTopologyGraph = null;
+let cachedTopologyKey: any = null;
+let cachedTopologyGraph: any = null;
 
-parentPort.on("message", ({ type = "EVALUATE", id, ...payload }) => {
+parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
   try {
     if (type === "SYNC_STATE") {
       const { stateObj } = payload;
       for (const [poolAddress, state] of Object.entries(stateObj || {})) {
         workerStateMap.set(poolAddress, state);
       }
-      parentPort.postMessage({ id, type: "SYNC_STATE" });
+      parentPort!.postMessage({ id, type: "SYNC_STATE" });
 
     } else if (type === "SYNC_TOPOLOGY") {
       const { adjacency, topologyKey } = payload;
       cachedTopologyGraph = deserializeTopology(adjacency);
       cachedTopologyKey = topologyKey ?? null;
-      parentPort.postMessage({ id, type: "SYNC_TOPOLOGY" });
+      parentPort!.postMessage({ id, type: "SYNC_TOPOLOGY" });
 
     } else if (type === "EVALUATE") {
       const { paths, stateObj, testAmount, options } = payload;
@@ -53,7 +53,7 @@ parentPort.on("message", ({ type = "EVALUATE", id, ...payload }) => {
       }
 
       const profitable = evaluatePaths(paths, workerStateMap, BigInt(testAmount), options || {});
-      parentPort.postMessage({ id, type: "EVALUATE", profitable });
+      parentPort!.postMessage({ id, type: "EVALUATE", profitable });
 
     } else if (type === "ENUMERATE") {
       const { adjacency, topologyKey, startTokens, options } = payload;
@@ -72,20 +72,20 @@ parentPort.on("message", ({ type = "EVALUATE", id, ...payload }) => {
       }
 
       const paths = findArbPaths(graph, startTokens, options || {});
-      const serialised = paths.map((p) => ({
+      const serialised = paths.map((p: any) => ({
         startToken: p.startToken,
         hopCount: p.hopCount,
         logWeight: p.logWeight,
         cumulativeFeesBps: p.cumulativeFeesBps,
-        poolAddresses: p.edges.map((e) => e.poolAddress),
-        zeroForOnes: p.edges.map((e) => e.zeroForOne),
+        poolAddresses: p.edges.map((e: any) => e.poolAddress),
+        zeroForOnes: p.edges.map((e: any) => e.zeroForOne),
       }));
-      parentPort.postMessage({ id, type: "ENUMERATE", paths: serialised });
+      parentPort!.postMessage({ id, type: "ENUMERATE", paths: serialised });
 
     } else {
-      parentPort.postMessage({ id, error: `Unknown message type: ${type}` });
+      parentPort!.postMessage({ id, error: `Unknown message type: ${type}` });
     }
-  } catch (err) {
-    parentPort.postMessage({ id, error: err.message });
+  } catch (err: any) {
+    parentPort!.postMessage({ id, error: err.message });
   }
 });

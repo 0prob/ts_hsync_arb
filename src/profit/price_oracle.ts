@@ -61,20 +61,17 @@ const KNOWN_DECIMALS = new Map([
 ]);
 
 export class PriceOracle {
-  /**
-   * @param {Map<string, Object>} stateCache  Live state cache (shared reference)
-   * @param {import('../db/registry.ts').RegistryService} registry
-   */
-  constructor(stateCache, registry) {
+  private _cache: Map<string, any>;
+  private _registry: any;
+  private _updatedAt: number;
+  private _poolMeta: Map<string, any>;
+  private _rates: Map<string, bigint>;
+
+  constructor(stateCache: Map<string, any>, registry: any) {
     this._cache    = stateCache;
     this._registry = registry;
     this._updatedAt = 0;
     this._poolMeta = new Map();
-
-    /**
-     * Rate map: tokenAddress (lowercase) → bigint rate
-     * Semantics: 1 raw token unit = rate MATIC wei
-     */
     this._rates = new Map();
     this._setDefaults();
   }

@@ -25,18 +25,18 @@ import { simulateV3Swap } from "../math/uniswap_v3.ts";
 const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3"]);
 const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
 
-function getLiveStateRef(stateMap, poolAddress) {
+function getLiveStateRef(stateMap: any, poolAddress: any) {
   const stateRef = stateMap.get(poolAddress);
   return stateRef && typeof stateRef === "object" ? stateRef : null;
 }
 
-function getProtocolKind(protocol) {
+function getProtocolKind(protocol: any) {
   if (V2_PROTOCOLS.has(protocol)) return "v2";
   if (V3_PROTOCOLS.has(protocol)) return "v3";
   return "other";
 }
 
-function getFeeBps(protocolKind, fee) {
+function getFeeBps(protocolKind: any, fee: any) {
   if (protocolKind === "v2") return 30;
   if (protocolKind === "v3") return Math.round((fee ?? 3000) / 100);
   return 0;
@@ -52,6 +52,9 @@ function createSwapEdge({
   swapFn,
   stateRef,
   metadata,
+}: {
+  protocol: any; poolAddress: any; tokenIn: any; tokenOut: any;
+  zeroForOne: any; fee: any; swapFn: any; stateRef: any; metadata: any;
 }) {
   const protocolKind = getProtocolKind(protocol);
   return {
@@ -89,22 +92,17 @@ function createSwapEdge({
 // ─── Graph class ──────────────────────────────────────────────
 
 export class RoutingGraph {
+  adjacency: Map<string, any[]>;
+  tokens: Set<string>;
+  edgeCount: number;
+  _edgesByPool: Map<string, any[]>;
+  _edgeByPoolDirection: Map<string, any>;
+
   constructor() {
-    /**
-     * Adjacency list: tokenAddress → SwapEdge[]
-     * @type {Map<string, SwapEdge[]>}
-     */
     this.adjacency = new Map();
-
-    /** Set of all unique token addresses */
     this.tokens = new Set();
-
-    /** Total edge count */
     this.edgeCount = 0;
-
-    /** poolAddress → [edge, edge] — used for O(1) edge state updates */
     this._edgesByPool = new Map();
-    /** poolAddress:direction → edge — used for O(1) path hydration */
     this._edgeByPoolDirection = new Map();
   }
 
@@ -113,12 +111,12 @@ export class RoutingGraph {
    *
    * @param {SwapEdge} edge
    */
-  addEdge(edge) {
+  addEdge(edge: any) {
     const key = edge.tokenIn;
     if (!this.adjacency.has(key)) {
       this.adjacency.set(key, []);
     }
-    this.adjacency.get(key).push(edge);
+    this.adjacency.get(key)!.push(edge);
     this.tokens.add(edge.tokenIn);
     this.tokens.add(edge.tokenOut);
     this.edgeCount++;
@@ -127,7 +125,7 @@ export class RoutingGraph {
     if (!this._edgesByPool.has(edge.poolAddress)) {
       this._edgesByPool.set(edge.poolAddress, []);
     }
-    this._edgesByPool.get(edge.poolAddress).push(edge);
+    this._edgesByPool.get(edge.poolAddress)!.push(edge);
     this._edgeByPoolDirection.set(
       `${edge.poolAddress}:${edge.zeroForOne ? "1" : "0"}`,
       edge
@@ -141,7 +139,7 @@ export class RoutingGraph {
    * @param {boolean} zeroForOne
    * @returns {SwapEdge|undefined}
    */
-  getPoolEdge(poolAddress, zeroForOne) {
+  getPoolEdge(poolAddress: any, zeroForOne: any) {
     return this._edgeByPoolDirection.get(
       `${poolAddress.toLowerCase()}:${zeroForOne ? "1" : "0"}`
     );
@@ -153,7 +151,7 @@ export class RoutingGraph {
    * @param {string} tokenAddress  Lowercase token address
    * @returns {SwapEdge[]}
    */
-  getEdges(tokenAddress) {
+  getEdges(tokenAddress: any) {
     return this.adjacency.get(tokenAddress) || [];
   }
 
@@ -164,7 +162,7 @@ export class RoutingGraph {
    * @param {string} tokenOut  Output token (lowercase)
    * @returns {SwapEdge[]}
    */
-  getEdgesBetween(tokenIn, tokenOut) {
+  getEdgesBetween(tokenIn: any, tokenOut: any) {
     return this.getEdges(tokenIn).filter((e) => e.tokenOut === tokenOut);
   }
 
@@ -174,7 +172,7 @@ export class RoutingGraph {
    * @param {string} tokenAddress
    * @returns {string[]}
    */
-  getNeighbors(tokenAddress) {
+  getNeighbors(tokenAddress: any) {
     const edges = this.getEdges(tokenAddress);
     return [...new Set(edges.map((e) => e.tokenOut))];
   }
@@ -185,7 +183,7 @@ export class RoutingGraph {
    * @param {string} tokenAddress
    * @returns {boolean}
    */
-  hasToken(tokenAddress) {
+  hasToken(tokenAddress: any) {
     return this.tokens.has(tokenAddress);
   }
 
@@ -198,7 +196,7 @@ export class RoutingGraph {
    * @param {Object}              pool      Pool record (pool_address, protocol, tokens, metadata)
    * @param {Map<string,Object>}  stateMap  Live stateCache (stateRef assignment)
    */
-  addPool(pool, stateMap = new Map()) {
+  addPool(pool: any, stateMap = new Map()) {
     if (pool.status !== "active") return;
 
     let tokens;
@@ -242,7 +240,7 @@ export class RoutingGraph {
    * @param {string} poolAddress  Lowercase pool address
    * @param {Object} newState     New state object
    */
-  updateEdgeState(poolAddress, newState) {
+  updateEdgeState(poolAddress: any, newState: any) {
     const edges = this._edgesByPool.get(poolAddress);
     if (!edges) return;
     for (const edge of edges) {
@@ -250,7 +248,7 @@ export class RoutingGraph {
     }
   }
 
-  _tokenHasReferences(tokenAddress) {
+  _tokenHasReferences(tokenAddress: any) {
     const outgoing = this.adjacency.get(tokenAddress);
     if (outgoing && outgoing.length > 0) return true;
 
@@ -270,7 +268,7 @@ export class RoutingGraph {
    * @param {string} poolAddress  Lowercase pool address
    * @returns {number}            Number of removed directed edges
    */
-  removePool(poolAddress) {
+  removePool(poolAddress: any) {
     const edges = this._edgesByPool.get(poolAddress);
     if (!edges || edges.length === 0) return 0;
 
@@ -306,7 +304,7 @@ export class RoutingGraph {
    * Get graph statistics.
    */
   stats() {
-    const protocolCounts = {};
+    const protocolCounts: Record<string, number> = {};
     for (const [, edges] of this.adjacency) {
       for (const edge of edges) {
         protocolCounts[edge.protocol] =
@@ -339,7 +337,7 @@ export class RoutingGraph {
  * @param {Map<string,Object>} [stateMap]  Lowercase pool address → pool state
  * @returns {RoutingGraph}
  */
-export function buildGraph(pools, stateMap = new Map()) {
+export function buildGraph(pools: any, stateMap = new Map()) {
   const graph = new RoutingGraph();
 
   for (const pool of pools) {
@@ -426,7 +424,7 @@ export function buildGraph(pools, stateMap = new Map()) {
  * @param {Map<string,Object>} [stateMap] Lowercase pool address → pool state
  * @returns {RoutingGraph}
  */
-export function buildHubGraph(pools, hubTokens, stateMap = new Map()) {
+export function buildHubGraph(pools: any, hubTokens: any, stateMap = new Map()) {
   const graph = new RoutingGraph();
 
   for (const pool of pools) {
@@ -564,8 +562,8 @@ export const HUB_4_TOKENS = new Set([
  * @param {RoutingGraph} graph
  * @returns {Object.<string, Array>}  token → lightweight edge array
  */
-export function serializeTopology(graph) {
-  const adjacency = {};
+export function serializeTopology(graph: any) {
+  const adjacency: Record<string, any[]> = {};
   for (const [token, edges] of graph.adjacency) {
     adjacency[token] = edges.map(({ protocol, poolAddress, tokenIn, tokenOut, zeroForOne, fee }) => ({
       protocol, poolAddress, tokenIn, tokenOut, zeroForOne, fee: fee ?? null,
@@ -581,9 +579,9 @@ export function serializeTopology(graph) {
  * @param {Object.<string, Array>} adjacency  Output of serializeTopology
  * @returns {RoutingGraph}
  */
-export function deserializeTopology(adjacency) {
+export function deserializeTopology(adjacency: any) {
   const graph = new RoutingGraph();
-  for (const edges of Object.values(adjacency)) {
+  for (const edges of Object.values(adjacency) as any[]) {
     for (const e of edges) {
       graph.addEdge({ ...e, fee: e.fee ?? undefined, swapFn: null, stateRef: null, metadata: null });
     }

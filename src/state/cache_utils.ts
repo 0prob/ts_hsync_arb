@@ -6,7 +6,7 @@
  * HyperSync client.
  */
 
-export function mergeStateIntoCache(cache, addr, nextState) {
+export function mergeStateIntoCache(cache: any, addr: any, nextState: any) {
   const current = cache.get(addr);
   if (!current) {
     cache.set(addr, nextState);
@@ -26,7 +26,7 @@ export function mergeStateIntoCache(cache, addr, nextState) {
   return current;
 }
 
-export function reloadCacheFromRegistry(registry, cache, pendingEnrichment = new Map()) {
+export function reloadCacheFromRegistry(registry: any, cache: any, pendingEnrichment = new Map()) {
   const pools = registry.getPools({ status: "active" });
   const nextAddrs = new Set();
 

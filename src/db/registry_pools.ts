@@ -13,7 +13,7 @@ import {
   stringifyWithBigInt,
 } from "./registry_codec.ts";
 
-function assertPoolAddress(metadata) {
+function assertPoolAddress(metadata: any) {
   if (!metadata.pool_address) {
     throw new Error(
       `RegistryService: pool_address is required for protocol ${metadata.protocol}`
@@ -21,7 +21,7 @@ function assertPoolAddress(metadata) {
   }
 }
 
-export function upsertPool(db, stmt, invalidatePoolMetaCache, metadata) {
+export function upsertPool(db: any, stmt: any, invalidatePoolMetaCache: any, metadata: any) {
   assertPoolAddress(metadata);
 
   const upsertPoolStmt = stmt("upsertPool", `
@@ -49,7 +49,7 @@ export function upsertPool(db, stmt, invalidatePoolMetaCache, metadata) {
   return result;
 }
 
-export function removePool(stmt, invalidatePoolMetaCache, address) {
+export function removePool(stmt: any, invalidatePoolMetaCache: any, address: any) {
   const result = stmt(
     "removePool",
     `UPDATE pools SET status = 'removed' WHERE address = ?`
@@ -58,7 +58,7 @@ export function removePool(stmt, invalidatePoolMetaCache, address) {
   return result;
 }
 
-export function updatePoolState(stmt, state) {
+export function updatePoolState(stmt: any, state: any) {
   if (!state.pool_address) {
     throw new Error("RegistryService: pool_address is required for state update");
   }
@@ -76,7 +76,7 @@ export function updatePoolState(stmt, state) {
   );
 }
 
-export function getPools(db, opts = {}) {
+export function getPools(db: any, opts: any = {}) {
   let sql = `
     SELECT p.*, s.last_updated_block, s.state_data
     FROM pools p
@@ -100,21 +100,21 @@ export function getPools(db, opts = {}) {
   return db.prepare(sql).all(...params).map(mapPoolRow);
 }
 
-export function loadPoolMetaCache(stmt) {
+export function loadPoolMetaCache(stmt: any) {
   const rows = stmt(
     "getAllPoolMeta",
     `SELECT address, protocol, tokens, created_block, created_tx, metadata, status
      FROM pools`
   ).all();
   return new Map(
-    rows.map((row) => {
+    rows.map((row: any) => {
       const pool = mapPoolMetaRow(row);
       return [pool.pool_address, pool];
     })
   );
 }
 
-export function getPool(stmt, address) {
+export function getPool(stmt: any, address: any) {
   const row = stmt(
     "getPool",
     `SELECT p.*, s.last_updated_block, s.state_data
@@ -125,18 +125,18 @@ export function getPool(stmt, address) {
   return row ? mapPoolRow(row) : null;
 }
 
-export function getPoolCount(stmt) {
+export function getPoolCount(stmt: any) {
   return stmt("getPoolCount", `SELECT COUNT(*) as count FROM pools`).get().count;
 }
 
-export function getActivePoolCount(stmt) {
+export function getActivePoolCount(stmt: any) {
   return stmt(
     "getActivePoolCount",
     `SELECT COUNT(*) as count FROM pools WHERE status = 'active'`
   ).get().count;
 }
 
-export function batchUpsertPools(db, stmt, invalidatePoolMetaCache, poolList) {
+export function batchUpsertPools(db: any, stmt: any, invalidatePoolMetaCache: any, poolList: any) {
   const upsertPoolStmt = stmt("upsertPool", `
     INSERT INTO pools (address, protocol, tokens, created_block, created_tx, metadata, status)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -149,7 +149,7 @@ export function batchUpsertPools(db, stmt, invalidatePoolMetaCache, poolList) {
       status   = excluded.status
   `);
 
-  db.transaction((pools) => {
+  db.transaction((pools: any) => {
     for (const pool of pools) {
       upsertPoolStmt.run(
         pool.pool_address.toLowerCase(),
@@ -166,15 +166,15 @@ export function batchUpsertPools(db, stmt, invalidatePoolMetaCache, poolList) {
   invalidatePoolMetaCache();
 }
 
-export function batchUpdateStates(db, updatePoolStateImpl, stateList) {
-  db.transaction((states) => {
+export function batchUpdateStates(db: any, updatePoolStateImpl: any, stateList: any) {
+  db.transaction((states: any) => {
     for (const state of states) {
       updatePoolStateImpl(state);
     }
   })(stateList);
 }
 
-export function getPoolsWithState(db, opts = {}) {
+export function getPoolsWithState(db: any, opts: any = {}) {
   let sql = `
     SELECT p.*, s.last_updated_block, s.state_data
     FROM pools p
@@ -191,7 +191,7 @@ export function getPoolsWithState(db, opts = {}) {
   return db.prepare(sql).all(...params).map(mapPoolRow);
 }
 
-export function getStaleStatePools(db, staleThreshold) {
+export function getStaleStatePools(db: any, staleThreshold: any) {
   const sql = `
     SELECT p.*
     FROM pools p
@@ -202,27 +202,27 @@ export function getStaleStatePools(db, staleThreshold) {
   return db.prepare(sql).all(staleThreshold).map(mapStalePoolRow);
 }
 
-export function getPoolCountByProtocol(stmt) {
+export function getPoolCountByProtocol(stmt: any) {
   const rows = stmt(
     "getPoolCountByProtocol",
     `SELECT protocol, COUNT(*) as count FROM pools WHERE status = 'active' GROUP BY protocol`
   ).all();
-  const result = {};
+  const result: Record<string, any> = {};
   for (const row of rows) result[row.protocol] = row.count;
   return result;
 }
 
-export function loadSnapshot(batchUpsertPoolsImpl, snapshotPath) {
+export function loadSnapshot(batchUpsertPoolsImpl: any, snapshotPath: any) {
   if (!fs.existsSync(snapshotPath)) return;
   const pools = parseJson(fs.readFileSync(snapshotPath, "utf8"), []);
   batchUpsertPoolsImpl(pools);
 }
 
-export function saveSnapshot(getPoolsImpl, snapshotPath) {
+export function saveSnapshot(getPoolsImpl: any, snapshotPath: any) {
   fs.writeFileSync(snapshotPath, stringifyWithBigInt(getPoolsImpl()));
 }
 
-export function disablePool(stmt, invalidatePoolMetaCache, recordLiquidityEventImpl, poolAddress, reason = "manual") {
+export function disablePool(stmt: any, invalidatePoolMetaCache: any, recordLiquidityEventImpl: any, poolAddress: any, reason = "manual") {
   stmt("disablePool", `UPDATE pools SET status = 'disabled' WHERE address = ?`)
     .run(poolAddress.toLowerCase());
   invalidatePoolMetaCache();
@@ -230,13 +230,13 @@ export function disablePool(stmt, invalidatePoolMetaCache, recordLiquidityEventI
   recordLiquidityEventImpl(poolAddress, 0, "disabled", null, reason);
 }
 
-export function enablePool(stmt, invalidatePoolMetaCache, poolAddress) {
+export function enablePool(stmt: any, invalidatePoolMetaCache: any, poolAddress: any) {
   stmt("enablePool", `UPDATE pools SET status = 'active' WHERE address = ?`)
     .run(poolAddress.toLowerCase());
   invalidatePoolMetaCache();
 }
 
-export function recordLiquidityEvent(stmt, poolAddress, blockNumber, eventType, oldValue, newValue) {
+export function recordLiquidityEvent(stmt: any, poolAddress: any, blockNumber: any, eventType: any, oldValue: any, newValue: any) {
   stmt(
     "recordLiquidityEvent",
     `INSERT INTO liquidity_events (address, block_number, event_type, old_value, new_value)
@@ -250,7 +250,7 @@ export function recordLiquidityEvent(stmt, poolAddress, blockNumber, eventType, 
   );
 }
 
-export function hasRecentLiquidityEvent(stmt, poolAddress, sinceBlock) {
+export function hasRecentLiquidityEvent(stmt: any, poolAddress: any, sinceBlock: any) {
   const row = stmt(
     "hasRecentLiquidityEvent",
     `SELECT COUNT(*) as count FROM liquidity_events
@@ -259,15 +259,15 @@ export function hasRecentLiquidityEvent(stmt, poolAddress, sinceBlock) {
   return row.count > 0;
 }
 
-export function detectLiquidityChange(recordLiquidityEventImpl, poolAddress, oldState, newState, blockNumber, thresholdPct = 50) {
+export function detectLiquidityChange(recordLiquidityEventImpl: any, poolAddress: any, oldState: any, newState: any, blockNumber: any, thresholdPct = 50) {
   if (!oldState || !newState) return false;
 
   let changed = false;
   const threshold = BigInt(thresholdPct);
 
   if (oldState.reserve0 != null && newState.reserve0 != null) {
-    const oldR = oldState.reserve0;
-    const newR = newState.reserve0;
+    const oldR: bigint = oldState.reserve0;
+    const newR: bigint = newState.reserve0;
     if (oldR > 0n) {
       const changePct = ((newR > oldR ? newR - oldR : oldR - newR) * 100n) / oldR;
       if (changePct >= threshold) {
@@ -295,8 +295,8 @@ export function detectLiquidityChange(recordLiquidityEventImpl, poolAddress, old
   }
 
   if (oldState.liquidity != null && newState.liquidity != null) {
-    const oldL = oldState.liquidity;
-    const newL = newState.liquidity;
+    const oldL: bigint = oldState.liquidity;
+    const newL: bigint = newState.liquidity;
     if (oldL > 0n) {
       const changePct = ((newL > oldL ? newL - oldL : oldL - newL) * 100n) / oldL;
       if (changePct >= threshold) {
@@ -315,7 +315,7 @@ export function detectLiquidityChange(recordLiquidityEventImpl, poolAddress, old
   return changed;
 }
 
-export function validatePoolMetadata(pool) {
+export function validatePoolMetadata(pool: any) {
   const issues = [];
   const addr = pool.pool_address || pool.address;
 
@@ -359,7 +359,7 @@ export function validatePoolMetadata(pool) {
   return issues;
 }
 
-export function validateAllPools(getActivePoolsImpl, validatePoolMetadataImpl) {
+export function validateAllPools(getActivePoolsImpl: any, validatePoolMetadataImpl: any) {
   const pools = getActivePoolsImpl();
   const invalid = [];
 

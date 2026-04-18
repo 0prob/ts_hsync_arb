@@ -5,7 +5,7 @@
 
 const STMT_CACHE_KEY = Symbol.for("registry_assets_stmt_cache");
 
-function assetStmt(db, key, sql) {
+function assetStmt(db: any, key: any, sql: any) {
   let cache = db[STMT_CACHE_KEY];
   if (!cache) {
     cache = new Map();
@@ -17,7 +17,7 @@ function assetStmt(db, key, sql) {
   return cache.get(key);
 }
 
-export function upsertTokenMeta(db, address, decimals, symbol = null, name = null) {
+export function upsertTokenMeta(db: any, address: any, decimals: any, symbol: any = null, name: any = null) {
   assetStmt(
     db,
     "upsertTokenMeta",
@@ -32,14 +32,14 @@ export function upsertTokenMeta(db, address, decimals, symbol = null, name = nul
     .run(address.toLowerCase(), decimals, symbol, name);
 }
 
-export function getTokenMeta(db, address) {
+export function getTokenMeta(db: any, address: any) {
   return (
     assetStmt(db, "getTokenMeta", `SELECT * FROM token_meta WHERE address = ?`)
       .get(address.toLowerCase()) || null
   );
 }
 
-export function getTokenDecimals(db, addresses) {
+export function getTokenDecimals(db: any, addresses: any) {
   const result = new Map();
   if (!Array.isArray(addresses) || addresses.length === 0) return result;
 
@@ -62,15 +62,15 @@ export function getTokenDecimals(db, addresses) {
   return result;
 }
 
-export function batchUpsertTokenMeta(db, tokens, upsertTokenMetaImpl = upsertTokenMeta) {
-  db.transaction((list) => {
+export function batchUpsertTokenMeta(db: any, tokens: any, upsertTokenMetaImpl = upsertTokenMeta) {
+  db.transaction((list: any) => {
     for (const t of list) {
       upsertTokenMetaImpl(db, t.address, t.decimals, t.symbol, t.name);
     }
   })(tokens);
 }
 
-export function upsertPoolFee(db, poolAddress, feeBps, feeRaw = null, protocol = null) {
+export function upsertPoolFee(db: any, poolAddress: any, feeBps: any, feeRaw = null, protocol = null) {
   assetStmt(
     db,
     "upsertPoolFee",
@@ -85,7 +85,7 @@ export function upsertPoolFee(db, poolAddress, feeBps, feeRaw = null, protocol =
     .run(poolAddress.toLowerCase(), feeBps, feeRaw, protocol);
 }
 
-export function getPoolFee(db, poolAddress) {
+export function getPoolFee(db: any, poolAddress: any) {
   const row = assetStmt(
     db,
     "getPoolFee",

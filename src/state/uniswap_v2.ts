@@ -43,7 +43,7 @@ const GET_RESERVES_ABI = [
  * @property {bigint}  reserve1   Reserve of token1
  * @property {number}  fetchedAt  Timestamp of fetch (ms)
  */
-export async function fetchV2PoolState(poolAddress) {
+export async function fetchV2PoolState(poolAddress: any) {
   const result = await readContractWithRetry({
     address: poolAddress,
     abi: GET_RESERVES_ABI,
@@ -67,19 +67,19 @@ export async function fetchV2PoolState(poolAddress) {
  * @returns {Promise<Map<string, V2PoolState>>}
  */
 export async function fetchMultipleV2States(
-  poolAddresses,
+  poolAddresses: any,
   concurrency = ENRICH_CONCURRENCY
 ) {
-  const states = new Map();
-  const noDataFailures = new Set();
+  const states: Map<string, any> & { noDataFailures?: Set<string> } = new Map();
+  const noDataFailures = new Set<string>();
 
   const results = await throttledMap(
     poolAddresses,
-    async (addr) => {
+    async (addr: any) => {
       try {
         const state = await fetchV2PoolState(addr);
         return { addr, state, error: null };
-      } catch (error) {
+      } catch (error: any) {
         if (isNoDataReadContractError(error)) {
           noDataFailures.add(addr.toLowerCase());
         }

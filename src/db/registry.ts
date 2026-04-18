@@ -398,7 +398,7 @@ export class RegistryService {
    * @param {string} [feeRaw]     Raw fee value from contract (e.g. "3000" for V3)
    * @param {string} [protocol]   Protocol name
    */
-  upsertPoolFee(poolAddress, feeBps, feeRaw = null, protocol = null) {
+  upsertPoolFee(poolAddress: any, feeBps: any, feeRaw = null, protocol = null) {
     upsertPoolFeeRecord(this.db, poolAddress, feeBps, feeRaw, protocol);
   }
 
@@ -408,7 +408,7 @@ export class RegistryService {
    * @param {string} poolAddress
    * @returns {{ feeBps: number, feeRaw: string|null } | null}
    */
-  getPoolFee(poolAddress) {
+  getPoolFee(poolAddress: any) {
     return getPoolFeeRecord(this.db, poolAddress);
   }
 
@@ -421,7 +421,7 @@ export class RegistryService {
    * @param {string} poolAddress
    * @param {string} [reason]  Why the pool is being disabled
    */
-  disablePool(poolAddress, reason = "manual") {
+  disablePool(poolAddress: any, reason = "manual") {
     disablePoolRecord(
       this._stmt.bind(this),
       this._invalidatePoolMetaCache.bind(this),
@@ -437,7 +437,7 @@ export class RegistryService {
    *
    * @param {string} poolAddress
    */
-  enablePool(poolAddress) {
+  enablePool(poolAddress: any) {
     enablePoolRecord(
       this._stmt.bind(this),
       this._invalidatePoolMetaCache.bind(this),
@@ -465,7 +465,7 @@ export class RegistryService {
    * @param {*}      [oldValue]  Previous value
    * @param {*}      [newValue]  New value
    */
-  recordLiquidityEvent(poolAddress, blockNumber, eventType, oldValue, newValue) {
+  recordLiquidityEvent(poolAddress: any, blockNumber: any, eventType: any, oldValue: any, newValue: any) {
     recordLiquidityEventRecord(
       this._stmt.bind(this),
       poolAddress,
@@ -483,7 +483,7 @@ export class RegistryService {
    * @param {number} sinceBlock  Only look at events after this block
    * @returns {boolean}
    */
-  hasRecentLiquidityEvent(poolAddress, sinceBlock) {
+  hasRecentLiquidityEvent(poolAddress: any, sinceBlock: any) {
     return hasRecentLiquidityEventRecord(this._stmt.bind(this), poolAddress, sinceBlock);
   }
 
@@ -500,7 +500,7 @@ export class RegistryService {
    * @param {number} [thresholdPct=50]  % change threshold
    * @returns {boolean}  true if a significant change was detected
    */
-  detectLiquidityChange(poolAddress, oldState, newState, blockNumber, thresholdPct = 50) {
+  detectLiquidityChange(poolAddress: any, oldState: any, newState: any, blockNumber: any, thresholdPct = 50) {
     return detectLiquidityChangeRecord(
       this.recordLiquidityEvent.bind(this),
       poolAddress,
@@ -526,7 +526,7 @@ export class RegistryService {
    * @param {Object} pool  Registry pool record
    * @returns {string[]}   Array of validation issue strings (empty = valid)
    */
-  validatePoolMetadata(pool) {
+  validatePoolMetadata(pool: any) {
     return validatePoolMetadataRecord(pool);
   }
 
@@ -562,7 +562,7 @@ export class RegistryService {
    * @param {string[]}  arb.protocols      Ordered list of protocol names
    * @param {string}   [arb.status]        'success' | 'reverted' | 'dropped'
    */
-  logArbResult(arb) {
+  logArbResult(arb: any) {
     logArbResultRecord(this.db, arb);
   }
 

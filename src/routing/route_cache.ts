@@ -23,24 +23,13 @@
 import { routeKeyFromEdges } from "./finder.ts";
 
 export class RouteCache {
-  /**
-   * @param {number} maxSize  Maximum routes to keep (default 1 000)
-   */
+  private _maxSize: number;
+  private _routes: any[];
+  private _poolIndex: Map<string, Set<number>>;
+
   constructor(maxSize = 1_000) {
     this._maxSize = maxSize;
-
-    /**
-     * Ordered route list: [{ path, result, profit }]
-     * Sorted descending by profit (index 0 = best).
-     * @type {Array<{ path: object, result: object, profit: bigint }>}
-     */
     this._routes = [];
-
-    /**
-     * Inverted index: poolAddress (lowercase) → Set of route indices.
-     * Allows O(1) lookup of all routes touching a given pool.
-     * @type {Map<string, Set<number>>}
-     */
     this._poolIndex = new Map();
   }
 

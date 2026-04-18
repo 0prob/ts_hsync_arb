@@ -51,7 +51,7 @@ const NAME_ABI = [
 
 const CHUNK_SIZE = 200; // tokens per multicall → 600 call targets per request
 
-function chunk(arr, size) {
+function chunk(arr: any, size: any) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
@@ -66,8 +66,8 @@ function chunk(arr, size) {
  * @param {string[]} addresses  Lowercase token addresses (max CHUNK_SIZE)
  * @returns {Promise<Array<{ address: string, decimals: number|null, symbol: string|null, name: string|null }>>}
  */
-async function fetchMetaBatch(addresses) {
-  const contracts = addresses.flatMap((addr) => [
+async function fetchMetaBatch(addresses: any) {
+  const contracts = addresses.flatMap((addr: any) => [
     { address: addr, abi: DECIMALS_ABI, functionName: "decimals" },
     { address: addr, abi: SYMBOL_ABI,   functionName: "symbol"   },
     { address: addr, abi: NAME_ABI,     functionName: "name"     },
@@ -84,10 +84,10 @@ async function fetchMetaBatch(addresses) {
       } else {
         logger.debug("[token_hydrator] HyperRPC multicall failed — falling back to RPC manager");
       }
-      results = await dynamicPublicClient.multicall({ contracts, allowFailure: true });
+      results = await (dynamicPublicClient as any).multicall({ contracts, allowFailure: true });
     }
   } else {
-    results = await dynamicPublicClient.multicall({ contracts, allowFailure: true });
+    results = await (dynamicPublicClient as any).multicall({ contracts, allowFailure: true });
   }
 
   const successCount = Array.isArray(results)
@@ -101,7 +101,7 @@ async function fetchMetaBatch(addresses) {
     firstResults: Array.isArray(results) ? results.slice(0, 6) : results,
   }, "[token_hydrator] multicall raw result summary");
 
-  return addresses.map((addr, i) => {
+  return addresses.map((addr: any, i: any) => {
     const dec  = results[i * 3];
     const sym  = results[i * 3 + 1];
     const name = results[i * 3 + 2];
@@ -126,13 +126,13 @@ async function fetchMetaBatch(addresses) {
  * @param {import('../db/registry.ts').RegistryService} registry
  * @returns {Promise<number>}  Number of new tokens persisted
  */
-export async function hydrateTokens(tokenAddresses, registry) {
+export async function hydrateTokens(tokenAddresses: any, registry: any) {
   if (!tokenAddresses || tokenAddresses.length === 0) return 0;
 
   // Filter to only addresses not yet in the DB — re-hydration is rare; this
   // check ensures a repeated discovery run is a no-op for existing tokens.
   const existing = registry.getTokenDecimals(tokenAddresses);
-  const toFetch  = tokenAddresses.filter((a) => !existing.has(a));
+  const toFetch  = tokenAddresses.filter((a: any) => !existing.has(a));
 
   if (toFetch.length === 0) {
     logger.debug(`[token_hydrator] ${tokenAddresses.length} token(s) already in DB — skipping`);
@@ -153,13 +153,13 @@ export async function hydrateTokens(tokenAddresses, registry) {
       logger.info({
         batchSize: batch.length,
         sample: meta.slice(0, 5),
-        decimalsResolved: meta.filter((m) => m.decimals !== null).length,
-        symbolResolved: meta.filter((m) => m.symbol !== null).length,
-        nameResolved: meta.filter((m) => m.name !== null).length,
+        decimalsResolved: meta.filter((m: any) => m.decimals !== null).length,
+        symbolResolved: meta.filter((m: any) => m.symbol !== null).length,
+        nameResolved: meta.filter((m: any) => m.name !== null).length,
       }, "[token_hydrator] batch decode summary");
 
       // Only persist entries where decimals resolved — symbol/name are optional
-      const valid = meta.filter((m) => m.decimals !== null);
+      const valid = meta.filter((m: any) => m.decimals !== null);
       if (valid.length > 0) {
         registry.batchUpsertTokenMeta(valid);
         hydrated += valid.length;
@@ -169,7 +169,7 @@ export async function hydrateTokens(tokenAddresses, registry) {
       if (skipped > 0) {
         logger.debug(`[token_hydrator] ${skipped} address(es) returned no decimals (non-ERC20 or call reverted)`);
       }
-    } catch (err) {
+    } catch (err: any) {
       logger.warn(`[token_hydrator] Multicall chunk failed: ${err.message}`);
     }
   }
@@ -187,7 +187,7 @@ export async function hydrateTokens(tokenAddresses, registry) {
  * @param {import('../db/registry.ts').RegistryService} registry
  * @returns {Promise<number>}
  */
-export async function hydrateNewTokens(pools, registry) {
+export async function hydrateNewTokens(pools: any, registry: any) {
   const seen = new Set();
   for (const pool of pools) {
     const tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;

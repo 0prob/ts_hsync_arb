@@ -28,9 +28,9 @@ const FEE_DENOMINATOR = 1000n;
  * @returns {bigint}            Output amount
  */
 export function getV2AmountOut(
-  amountIn,
-  reserveIn,
-  reserveOut,
+  amountIn: any,
+  reserveIn: any,
+  reserveOut: any,
   feeNumerator = DEFAULT_FEE_NUMERATOR
 ) {
   if (amountIn <= 0n) return 0n;
@@ -55,9 +55,9 @@ export function getV2AmountOut(
  * @returns {bigint}            Required input amount
  */
 export function getV2AmountIn(
-  amountOut,
-  reserveIn,
-  reserveOut,
+  amountOut: any,
+  reserveIn: any,
+  reserveOut: any,
   feeNumerator = DEFAULT_FEE_NUMERATOR
 ) {
   if (amountOut <= 0n) return 0n;
@@ -66,8 +66,8 @@ export function getV2AmountIn(
     throw new Error("V2Math: insufficient liquidity for desired output");
   }
 
-  const numerator = reserveIn * amountOut * FEE_DENOMINATOR;
-  const denominator = (reserveOut - amountOut) * feeNumerator;
+  const numerator: bigint = BigInt(reserveIn) * BigInt(amountOut) * FEE_DENOMINATOR;
+  const denominator: bigint = BigInt(reserveOut - amountOut) * feeNumerator;
 
   return numerator / denominator + 1n;
 }
@@ -84,9 +84,9 @@ export function getV2AmountIn(
  * @returns {{ amountOut: bigint, gasEstimate: number }}
  */
 export function simulateV2Swap(
-  poolState,
-  amountIn,
-  zeroForOne,
+  poolState: any,
+  amountIn: any,
+  zeroForOne: any,
   feeNumerator = DEFAULT_FEE_NUMERATOR
 ) {
   if (amountIn <= 0n) {
@@ -114,6 +114,6 @@ export function simulateV2Swap(
  * @param {boolean} zeroForOne Direction
  * @returns {bigint}          Output amount
  */
-export function quoteV2(poolState, amountIn, zeroForOne) {
+export function quoteV2(poolState: any, amountIn: any, zeroForOne: any) {
   return simulateV2Swap(poolState, amountIn, zeroForOne).amountOut;
 }

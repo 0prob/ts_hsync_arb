@@ -22,7 +22,7 @@ const DEFAULT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ─── Job state ─────────────────────────────────────────────────
 
-let _timer = null;
+let _timer: ReturnType<typeof setInterval> | null = null;
 
 // ─── Core validation runner ────────────────────────────────────
 
@@ -32,7 +32,7 @@ let _timer = null;
  * @param {import('../db/registry.ts').RegistryService} registry
  * @returns {Promise<{ issues: number, total: number, invalid: Array }>}
  */
-async function runValidation(registry) {
+async function runValidation(registry: any) {
   const start = Date.now();
 
   let total = 0;
@@ -47,7 +47,7 @@ async function runValidation(registry) {
   }
 
   const elapsed = Date.now() - start;
-  const issueCount = invalid.reduce((sum, entry) => sum + entry.issues.length, 0);
+  const issueCount = invalid.reduce((sum: any, entry: any) => sum + entry.issues.length, 0);
 
   if (issueCount === 0) {
     logger.info(
@@ -100,7 +100,7 @@ async function runValidation(registry) {
  * @param {boolean} [options.runImmediately=true] Run one pass on startup
  * @returns {{ stop: Function }}  Handle with a `stop()` method
  */
-export function startValidationJob(registry, options = {}) {
+export function startValidationJob(registry: any, options: any = {}) {
   const {
     intervalMs = DEFAULT_INTERVAL_MS,
     runImmediately = true,
