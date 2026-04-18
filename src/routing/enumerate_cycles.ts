@@ -24,6 +24,7 @@
 
 import { findArbPaths, deduplicatePaths } from "./finder.ts";
 import { POLYGON_HUB_TOKENS, HUB_4_TOKENS } from "./graph.ts";
+import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 
 // ─── Defaults ────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ const DEFAULTS = {
   minLiquidityWmatic:   0n,
   getRateWei:           null,
 };
+
 
 // ─── Liquidity pruning ────────────────────────────────────────
 
@@ -71,7 +73,7 @@ function sortByLogWeight(paths: any) {
     const noB = b.logWeight === 0 && b.edges.some((e: any) => !e.stateRef);
     if (noA && !noB) return 1;
     if (!noA && noB) return -1;
-    return a.logWeight - b.logWeight;
+    return normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight);
   });
 }
 

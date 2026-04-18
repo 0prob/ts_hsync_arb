@@ -27,19 +27,19 @@ import {
  * @returns {{ sqrtRatioNextX96: bigint, amountIn: bigint, amountOut: bigint, feeAmount: bigint }}
  */
 export function computeSwapStep(
-  sqrtRatioCurrentX96,
-  sqrtRatioTargetX96,
-  liquidity,
-  amountRemaining,
-  feePips
-) {
+  sqrtRatioCurrentX96: bigint,
+  sqrtRatioTargetX96: bigint,
+  liquidity: bigint,
+  amountRemaining: bigint,
+  feePips: bigint
+): { sqrtRatioNextX96: bigint; amountIn: bigint; amountOut: bigint; feeAmount: bigint } {
   const zeroForOne = sqrtRatioCurrentX96 >= sqrtRatioTargetX96;
   const exactIn = amountRemaining >= 0n;
 
-  let sqrtRatioNextX96;
-  let amountIn;
-  let amountOut;
-  let feeAmount;
+  let sqrtRatioNextX96: bigint = 0n;
+  let amountIn: bigint = 0n;
+  let amountOut: bigint = 0n;
+  let feeAmount: bigint = 0n;
 
   if (exactIn) {
     const amountRemainingLessFee = mulDiv(

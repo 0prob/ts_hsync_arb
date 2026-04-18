@@ -84,7 +84,9 @@ export function updateV3SwapState(state: any, decoded: any) {
 export function updateV3LiquidityState(state: any, decoded: any, isMint: any) {
   const tickLower = Number(decoded.indexed[1].val);
   const tickUpper = Number(decoded.indexed[2].val);
-  const amount = BigInt(decoded.body[1].val);
+  // Mint body: [sender, amount, amount0, amount1] → amount at index 1
+  // Burn body: [amount, amount0, amount1]          → amount at index 0 (no sender)
+  const amount = BigInt(isMint ? decoded.body[1].val : decoded.body[0].val);
 
   if (state.tick >= tickLower && state.tick < tickUpper) {
     if (isMint) state.liquidity = (state.liquidity ?? 0n) + amount;
@@ -105,6 +107,8 @@ export function updateTickState(state: any, tick: any, amount: any, isNetPositiv
 
   if (data.liquidityGross === 0n) state.ticks.delete(tick);
   else state.ticks.set(tick, data);
+
+  state._sortedTicks = null;
 }
 
 export function mergeWatcherState(cache: any, addr: any, nextState: any) {

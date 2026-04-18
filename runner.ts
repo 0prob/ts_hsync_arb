@@ -21,6 +21,7 @@
  *   --interval <sec>  Override poll/heartbeat interval (legacy; sets heartbeat)
  */
 
+import { toFiniteNumber as normaliseLogWeight } from "./src/util/bigint.ts";
 import { RegistryService } from "./src/db/registry.ts";
 import { discoverPools } from "./src/discovery/discover.ts";
 import { buildGraph, buildHubGraph, HUB_4_TOKENS, POLYGON_HUB_TOKENS, serializeTopology } from "./src/routing/graph.ts";
@@ -229,6 +230,7 @@ function roiForCandidate(result) {
   return Number((result.profit * 1_000_000n) / result.amountIn);
 }
 
+
 function selectOptimizationCandidates(candidates, limit) {
   if (candidates.length <= limit) return candidates;
 
@@ -245,7 +247,9 @@ function selectOptimizationCandidates(candidates, limit) {
 
   const topByProfit = [...candidates];
   const topByRoi = [...candidates].sort((a, b) => roiForCandidate(b.result) - roiForCandidate(a.result));
-  const topByLogWeight = [...candidates].sort((a, b) => (a.path.logWeight || 0) - (b.path.logWeight || 0));
+  const topByLogWeight = [...candidates].sort(
+    (a, b) => normaliseLogWeight(a.path.logWeight) - normaliseLogWeight(b.path.logWeight)
+  );
 
   addBatch(topByProfit.slice(0, Math.ceil(limit * 0.5)));
   addBatch(topByRoi.slice(0, Math.ceil(limit * 0.3)));
@@ -614,7 +618,7 @@ function resolveWarmupPersistBlock() {
   }
 
   const globalCheckpoint = registry.getGlobalCheckpoint();
-  const globalBlock = Number(globalCheckpoint?.min_block);
+  const globalBlock = Number(globalCheckpoint);
   if (Number.isFinite(globalBlock) && globalBlock >= 0) {
     return globalBlock;
   }
@@ -644,8 +648,10 @@ async function _fetchAndCacheStates(pools) {
     };
   }
 
-  const persistedStates = [];
   const persistBlock = resolveWarmupPersistBlock();
+  const persistBatch = (states: Array<{ pool_address: string; block: number; data: object }>) => {
+    if (states.length > 0) registry.batchUpdateStates(states);
+  };
   const v2  = pools.filter((p) => _WARMUP_V2.has(p.protocol));
   const v3  = pools.filter((p) => _WARMUP_V3.has(p.protocol));
   const bal = pools.filter((p) => _WARMUP_BAL.has(p.protocol));
@@ -697,6 +703,7 @@ async function _fetchAndCacheStates(pools) {
         v2.map((p) => p.pool_address),
         V2_POLL_CONCURRENCY
       );
+      const v2Persisted = [];
       for (const pool of v2) {
         const addr = pool.pool_address.toLowerCase();
         const raw  = statesMap.get(addr);
@@ -709,12 +716,13 @@ async function _fetchAndCacheStates(pools) {
         const normalized = normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata);
         if (normalized) {
           stateCache.set(addr, normalized);
-          persistedStates.push({ pool_address: addr, block: persistBlock, data: normalized });
+          v2Persisted.push({ pool_address: addr, block: persistBlock, data: normalized });
           stats.protocols.v2.normalized++;
           stats.normalized++;
         }
       }
       disableNoDataFailures(v2, statesMap, "v2 warmup", stats.protocols.v2);
+      persistBatch(v2Persisted);
       logWarmupProgress(stats, "v2_complete", {
         protocol: "v2",
       });
@@ -756,6 +764,7 @@ async function _fetchAndCacheStates(pools) {
           }
         }
       );
+      const v3Persisted = [];
       for (const pool of v3) {
         const addr = pool.pool_address.toLowerCase();
         const raw  = statesMap.get(addr);
@@ -768,12 +777,13 @@ async function _fetchAndCacheStates(pools) {
         const normalized = normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata);
         if (normalized) {
           stateCache.set(addr, normalized);
-          persistedStates.push({ pool_address: addr, block: persistBlock, data: normalized });
+          v3Persisted.push({ pool_address: addr, block: persistBlock, data: normalized });
           stats.protocols.v3.normalized++;
           stats.normalized++;
         }
       }
       disableNoDataFailures(v3, statesMap, "v3 warmup", stats.protocols.v3);
+      persistBatch(v3Persisted);
       logWarmupProgress(stats, "v3_complete", {
         protocol: "v3",
       });
@@ -783,11 +793,12 @@ async function _fetchAndCacheStates(pools) {
     (async () => {
       if (!bal.length) return;
       let completed = 0;
+      const balPersisted = [];
       await throttledMap(bal, async (pool) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool);
           stateCache.set(addr, normalized);
-          persistedStates.push({ pool_address: addr, block: persistBlock, data: normalized });
+          balPersisted.push({ pool_address: addr, block: persistBlock, data: normalized });
           stats.protocols.balancer.fetched++;
           stats.protocols.balancer.normalized++;
           stats.fetched++;
@@ -809,17 +820,19 @@ async function _fetchAndCacheStates(pools) {
           }
         }
       }, ENRICH_CONCURRENCY);
+      persistBatch(balPersisted);
     })(),
 
     // ── Curve: get_balances + A + fee ────────────────────────────
     (async () => {
       if (!crv.length) return;
       let completed = 0;
+      const crvPersisted = [];
       await throttledMap(crv, async (pool) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeCurvePool(pool);
           stateCache.set(addr, normalized);
-          persistedStates.push({ pool_address: addr, block: persistBlock, data: normalized });
+          crvPersisted.push({ pool_address: addr, block: persistBlock, data: normalized });
           stats.protocols.curve.fetched++;
           stats.protocols.curve.normalized++;
           stats.fetched++;
@@ -841,12 +854,9 @@ async function _fetchAndCacheStates(pools) {
           }
         }
       }, ENRICH_CONCURRENCY);
+      persistBatch(crvPersisted);
     })(),
   ]);
-
-  if (persistedStates.length > 0) {
-    registry.batchUpdateStates(persistedStates);
-  }
 
   return stats;
 }
@@ -1190,7 +1200,7 @@ function _hydratePaths(serialised, hub, full) {
   }
 
   // Sort most-profitable first
-  paths.sort((a, b) => (a.logWeight || 0) - (b.logWeight || 0));
+  paths.sort((a, b) => normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight));
   if (paths.length > MAX_TOTAL_PATHS) return paths.slice(0, MAX_TOTAL_PATHS);
   return paths;
 }

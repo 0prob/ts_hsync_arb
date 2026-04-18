@@ -82,7 +82,10 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
         continue;
       }
 
-      if (!isRetryableError(error) || attempt === retries) {
+      if (!isRetryableError(error)) {
+        throw error;
+      }
+      if (attempt === retries) {
         rpcManager.markError(endpoint.url);
         throw error;
       }

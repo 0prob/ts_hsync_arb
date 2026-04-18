@@ -69,7 +69,7 @@ function nextInitializedTickOptimized(sortedTicks: any, currentTick: any, zeroFo
  * @param {number} [feeOverride]     Optional fee tier override
  * @returns {{ amountOut: bigint, sqrtPriceX96After: bigint, tickAfter: number, gasEstimate: number }}
  */
-export function simulateV3Swap(state: any, amountIn: any, zeroForOne: any, feeOverride: any) {
+export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean, feeOverride?: number) {
   if (amountIn <= 0n || !state.initialized || state.sqrtPriceX96 === 0n) {
     return {
       amountOut: 0n,

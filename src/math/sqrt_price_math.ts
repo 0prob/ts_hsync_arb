@@ -32,17 +32,17 @@ const Q96 = 1n << 96n;
  * @returns {bigint}          Next sqrt price (Q64.96)
  */
 export function getNextSqrtPriceFromAmount0RoundingUp(
-  sqrtPX96: any,
-  liquidity: any,
-  amount: any,
-  add: any
-) {
+  sqrtPX96: bigint,
+  liquidity: bigint,
+  amount: bigint,
+  add: boolean
+): bigint {
   if (amount === 0n) return sqrtPX96;
 
-  const numerator1: bigint = BigInt(liquidity) << 96n;
+  const numerator1 = liquidity << 96n;
 
   if (add) {
-    const product: bigint = BigInt(amount) * BigInt(sqrtPX96);
+    const product = amount * sqrtPX96;
     const denominator = numerator1 + product;
     if (denominator >= numerator1) {
       return mulDivRoundingUp(numerator1, sqrtPX96, denominator);
@@ -50,7 +50,7 @@ export function getNextSqrtPriceFromAmount0RoundingUp(
     // Overflow fallback
     return divRoundingUp(numerator1, numerator1 / sqrtPX96 + amount);
   } else {
-    const product: bigint = BigInt(amount) * BigInt(sqrtPX96);
+    const product = amount * sqrtPX96;
     if (numerator1 <= product) {
       throw new Error("SqrtPriceMath: denominator underflow");
     }
@@ -75,11 +75,11 @@ export function getNextSqrtPriceFromAmount0RoundingUp(
  * @returns {bigint}          Next sqrt price (Q64.96)
  */
 export function getNextSqrtPriceFromAmount1RoundingDown(
-  sqrtPX96: any,
-  liquidity: any,
-  amount: any,
-  add: any
-) {
+  sqrtPX96: bigint,
+  liquidity: bigint,
+  amount: bigint,
+  add: boolean
+): bigint {
   if (add) {
     const quotient = mulDiv(amount, Q96, liquidity);
     return sqrtPX96 + quotient;
@@ -104,11 +104,11 @@ export function getNextSqrtPriceFromAmount1RoundingDown(
  * @returns {bigint}          Next sqrt price
  */
 export function getNextSqrtPriceFromInput(
-  sqrtPX96: any,
-  liquidity: any,
-  amountIn: any,
-  zeroForOne: any
-) {
+  sqrtPX96: bigint,
+  liquidity: bigint,
+  amountIn: bigint,
+  zeroForOne: boolean
+): bigint {
   if (sqrtPX96 <= 0n) throw new Error("SqrtPriceMath: sqrtPX96 must be > 0");
   if (liquidity <= 0n) throw new Error("SqrtPriceMath: liquidity must be > 0");
 
@@ -132,11 +132,11 @@ export function getNextSqrtPriceFromInput(
  * @returns {bigint}          Next sqrt price
  */
 export function getNextSqrtPriceFromOutput(
-  sqrtPX96: any,
-  liquidity: any,
-  amountOut: any,
-  zeroForOne: any
-) {
+  sqrtPX96: bigint,
+  liquidity: bigint,
+  amountOut: bigint,
+  zeroForOne: boolean
+): bigint {
   if (sqrtPX96 <= 0n) throw new Error("SqrtPriceMath: sqrtPX96 must be > 0");
   if (liquidity <= 0n) throw new Error("SqrtPriceMath: liquidity must be > 0");
 
@@ -168,7 +168,7 @@ export function getNextSqrtPriceFromOutput(
  * @param {boolean} roundUp       Whether to round up
  * @returns {bigint}              Amount of token0
  */
-export function getAmount0Delta(sqrtRatioAX96: any, sqrtRatioBX96: any, liquidity: any, roundUp: any) {
+export function getAmount0Delta(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, liquidity: bigint, roundUp: boolean): bigint {
   // Ensure A < B
   if (sqrtRatioAX96 > sqrtRatioBX96) {
     [sqrtRatioAX96, sqrtRatioBX96] = [sqrtRatioBX96, sqrtRatioAX96];
@@ -202,7 +202,7 @@ export function getAmount0Delta(sqrtRatioAX96: any, sqrtRatioBX96: any, liquidit
  * @param {boolean} roundUp       Whether to round up
  * @returns {bigint}              Amount of token1
  */
-export function getAmount1Delta(sqrtRatioAX96: any, sqrtRatioBX96: any, liquidity: any, roundUp: any) {
+export function getAmount1Delta(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, liquidity: bigint, roundUp: boolean): bigint {
   // Ensure A < B
   if (sqrtRatioAX96 > sqrtRatioBX96) {
     [sqrtRatioAX96, sqrtRatioBX96] = [sqrtRatioBX96, sqrtRatioAX96];

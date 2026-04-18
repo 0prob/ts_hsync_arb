@@ -20,6 +20,7 @@
 
 import { simulateCurveSwap } from "../math/curve.ts";
 import { simulateBalancerSwap } from "../math/balancer.ts";
+import { toFiniteNumber } from "../util/bigint.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ export function edgeSpotLogWeight(edge: any) {
     const sqrtFloat = sqrtPriceToFloat(sqrtP); // ≈ sqrtPriceX96 / 2^96
     const price01 = sqrtFloat * sqrtFloat;      // token1 per token0
     if (price01 <= 0 || !isFinite(price01)) return null;
-    const feeFrac = (edge.fee ?? 3000) / 1e6;
+    const feeFrac = toFiniteNumber(edge.fee, 3000) / 1e6;
     const logSpot = edge.zeroForOne ? Math.log(price01) : -Math.log(price01);
     return logSpot + Math.log(1 - feeFrac);
   }

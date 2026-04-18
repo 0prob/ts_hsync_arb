@@ -17,6 +17,7 @@
 import { Worker, isMainThread } from "worker_threads";
 import { WORKER_COUNT } from "../config/index.ts";
 import { logger } from "../utils/logger.ts";
+import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 
 const WORKER_URL = new URL("./persistent_worker.ts", import.meta.url);
 const WORKER_EXEC_ARGV = [...process.execArgv, '--import', 'tsx'];
@@ -270,17 +271,18 @@ class WorkerPool {
       return byKey;
     });
 
-    // When all workers are idle we can target fixed slots and keep a persistent
-    // worker-side state mirror, sending only changed pool states per chunk.
+    // When enough idle workers are available, target fixed slots and keep a
+    // persistent worker-side state mirror, sending only changed pool states.
+    // Only requires as many idle slots as there are chunks, not all slots.
+    const idleEvalSlots = this._slots.filter(s => s && !s.busy);
     const canUsePersistentMirror =
       this._queue.length === 0 &&
-      this._slots.length >= chunks.length &&
-      this._slots.every((slot) => slot && !slot.busy);
+      idleEvalSlots.length >= chunks.length;
 
     const chunkPromises = canUsePersistentMirror
       ? chunks.map((chunk, i) =>
           this._evaluateOnSlot(
-            this._slots[i],
+            idleEvalSlots[i],
             chunk,
             serialisedChunks[i],
             stateCache,
@@ -359,17 +361,17 @@ class WorkerPool {
       chunks.push(startTokens.slice(i, i + chunkSize));
     }
 
+    const idleEnumSlots = this._slots.filter(s => s && !s.busy);
     const canUsePersistentTopology =
       Boolean(topologyKey) &&
       this._queue.length === 0 &&
-      this._slots.length >= chunks.length &&
-      this._slots.every((slot) => slot && !slot.busy);
+      idleEnumSlots.length >= chunks.length;
 
     const results = await Promise.all(
       canUsePersistentTopology
         ? chunks.map((tokenChunk, i) =>
             this._enumerateOnSlot(
-              this._slots[i],
+              idleEnumSlots[i],
               adjacency,
               topologyKey,
               tokenChunk,
@@ -397,7 +399,7 @@ class WorkerPool {
     }
 
     // Sort by logWeight ascending (most negative first)
-    all.sort((a, b) => (a.logWeight || 0) - (b.logWeight || 0));
+    all.sort((a, b) => normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight));
     return all;
   }
 
@@ -571,6 +573,8 @@ class WorkerPool {
     } else {
       this._slots.push(slot);
     }
+    // Pick up any queued work immediately after spawn / respawn.
+    this._drainQueue(slot);
   }
 
   _drainQueue(slot: any) {

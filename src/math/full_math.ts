@@ -18,7 +18,7 @@
  * @param {bigint} denominator
  * @returns {bigint}
  */
-export function mulDiv(a, b, denominator) {
+export function mulDiv(a: bigint, b: bigint, denominator: bigint): bigint {
   if (denominator === 0n) throw new Error("mulDiv: denominator is zero");
   return (a * b) / denominator;
 }
@@ -32,11 +32,10 @@ export function mulDiv(a, b, denominator) {
  * @param {bigint} denominator
  * @returns {bigint}
  */
-export function mulDivRoundingUp(a, b, denominator) {
+export function mulDivRoundingUp(a: bigint, b: bigint, denominator: bigint): bigint {
   if (denominator === 0n) throw new Error("mulDivRoundingUp: denominator is zero");
   const product = a * b;
   const result = product / denominator;
-  // If there's a remainder, round up
   return product % denominator > 0n ? result + 1n : result;
 }
 
@@ -47,7 +46,7 @@ export function mulDivRoundingUp(a, b, denominator) {
  * @param {bigint} b
  * @returns {bigint}
  */
-export function divRoundingUp(a, b) {
+export function divRoundingUp(a: bigint, b: bigint): bigint {
   if (b === 0n) throw new Error("divRoundingUp: divisor is zero");
   const result = a / b;
   return a % b > 0n ? result + 1n : result;

@@ -30,7 +30,7 @@ const MAX_UINT256 =
  * @param {number} tick  Integer tick value, must satisfy |tick| <= MAX_TICK
  * @returns {bigint}     sqrtPriceX96 as Q64.96 BigInt
  */
-export function getSqrtRatioAtTick(tick) {
+export function getSqrtRatioAtTick(tick: number): bigint {
   if (tick < MIN_TICK || tick > MAX_TICK) {
     throw new Error(`TickMath: tick ${tick} out of range [${MIN_TICK}, ${MAX_TICK}]`);
   }
@@ -100,7 +100,7 @@ export function getSqrtRatioAtTick(tick) {
  * @param {bigint} sqrtPriceX96  Q64.96 sqrt price
  * @returns {number}             The tick
  */
-export function getTickAtSqrtRatio(sqrtPriceX96) {
+export function getTickAtSqrtRatio(sqrtPriceX96: bigint): number {
   if (sqrtPriceX96 < MIN_SQRT_RATIO || sqrtPriceX96 >= MAX_SQRT_RATIO) {
     throw new Error(
       `TickMath: sqrtPriceX96 ${sqrtPriceX96} out of range [${MIN_SQRT_RATIO}, ${MAX_SQRT_RATIO})`

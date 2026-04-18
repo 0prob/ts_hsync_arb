@@ -19,6 +19,7 @@ import { parentPort } from "worker_threads";
 import { evaluatePaths } from "./simulator.ts";
 import { findArbPaths } from "./finder.ts";
 import { deserializeTopology } from "./graph.ts";
+import { rehydrateStateData } from "../db/registry_codec.ts";
 
 if (!parentPort) throw new Error("persistent_worker must run in a Worker thread");
 
@@ -30,7 +31,16 @@ parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
   try {
     if (type === "SYNC_STATE") {
       const { stateObj } = payload;
-      for (const [poolAddress, state] of Object.entries(stateObj || {})) {
+      for (const [poolAddress, state] of Object.entries(stateObj || {}) as [string, any][]) {
+        rehydrateStateData(state.protocol, state);
+        if (state.ticks && !(state.ticks instanceof Map)) {
+          state.ticks = new Map(
+            Object.entries(state.ticks).map(([k, v]: [string, any]) => [
+              Number(k),
+              { liquidityGross: BigInt(v.liquidityGross ?? 0), liquidityNet: BigInt(v.liquidityNet ?? 0) },
+            ])
+          );
+        }
         workerStateMap.set(poolAddress, state);
       }
       parentPort!.postMessage({ id, type: "SYNC_STATE" });
@@ -48,6 +58,15 @@ parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
           ? stateObj
           : new Map(Object.entries(stateObj));
         for (const [poolAddress, state] of incoming) {
+          rehydrateStateData(state.protocol, state);
+          if (state.ticks && !(state.ticks instanceof Map)) {
+            state.ticks = new Map(
+              Object.entries(state.ticks).map(([k, v]: [string, any]) => [
+                Number(k),
+                { liquidityGross: BigInt(v.liquidityGross ?? 0), liquidityNet: BigInt(v.liquidityNet ?? 0) },
+              ])
+            );
+          }
           workerStateMap.set(poolAddress, state);
         }
       }
@@ -86,6 +105,6 @@ parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
       parentPort!.postMessage({ id, error: `Unknown message type: ${type}` });
     }
   } catch (err: any) {
-    parentPort!.postMessage({ id, error: err.message });
+    parentPort!.postMessage({ id, error: err?.stack || err?.message || String(err) });
   }
 });

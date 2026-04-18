@@ -19,6 +19,7 @@
  */
 
 import { simulateV3Swap } from "../math/uniswap_v3.ts";
+import { toFiniteNumber } from "../util/bigint.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ function getProtocolKind(protocol: any) {
 
 function getFeeBps(protocolKind: any, fee: any) {
   if (protocolKind === "v2") return 30;
-  if (protocolKind === "v3") return Math.round((fee ?? 3000) / 100);
+  if (protocolKind === "v3") return Math.round(toFiniteNumber(fee, 3000) / 100);
   return 0;
 }
 

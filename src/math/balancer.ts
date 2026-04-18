@@ -54,7 +54,7 @@ const POW_PRECISION = 10n ** 10n; // 1e-8
  * @param {bigint} a  Input in 1e18 fixed-point (must be > 0)
  * @returns {bigint}  ln(a) in 1e18 fixed-point
  */
-function ln(a: any): any {
+function ln(a: bigint): bigint {
   if (a <= 0n) throw new Error("Balancer: ln undefined for non-positive");
   if (a === ONE) return 0n;
 
@@ -104,7 +104,7 @@ function ln(a: any): any {
  * @param {bigint} x  Exponent in 1e18 fixed-point
  * @returns {bigint}  e^x in 1e18 fixed-point
  */
-function exp(x: any): any {
+function exp(x: bigint): bigint {
   if (x === 0n) return ONE;
 
   // Handle negative exponent: e^(-x) = 1/e^x
@@ -131,10 +131,9 @@ function exp(x: any): any {
  * @param {bigint} y  Exponent in 1e18 fixed-point
  * @returns {bigint}  x^y in 1e18 fixed-point
  */
-function powDown(x: any, y: any) {
-  // x^y = exp(y * ln(x))
+function powDown(x: bigint, y: bigint): bigint {
   const lnX = ln(x);
-  return exp((BigInt(y) * BigInt(lnX)) / ONE);
+  return exp((y * lnX) / ONE);
 }
 
 // ─── Swap math ────────────────────────────────────────────────
@@ -151,7 +150,7 @@ function powDown(x: any, y: any) {
  * @param {number} outIdx     Index of output token
  * @returns {bigint}          Output amount (after fees)
  */
-export function getBalancerAmountOut(amountIn: any, poolState: any, inIdx: any, outIdx: any) {
+export function getBalancerAmountOut(amountIn: bigint, poolState: any, inIdx: number, outIdx: number): bigint {
   if (amountIn <= 0n) return 0n;
 
   const { balances, weights, swapFee } = poolState;
@@ -195,7 +194,7 @@ export function getBalancerAmountOut(amountIn: any, poolState: any, inIdx: any, 
  * @param {number} outIdx     Index of output token
  * @returns {bigint}          Required input amount
  */
-export function getBalancerAmountIn(amountOut: any, poolState: any, inIdx: any, outIdx: any) {
+export function getBalancerAmountIn(amountOut: bigint, poolState: any, inIdx: number, outIdx: number): bigint {
   if (amountOut <= 0n) return 0n;
 
   const { balances, weights, swapFee } = poolState;
@@ -213,7 +212,7 @@ export function getBalancerAmountIn(amountOut: any, poolState: any, inIdx: any, 
   const exponent = (wOut * ONE) / wIn;
 
   // base = balOut / (balOut - amountOut)
-  const base = (BigInt(balOut) * ONE) / BigInt(balOut - amountOut);
+  const base = (balOut * ONE) / (balOut - amountOut);
 
   // power = base^exponent
   const power = powDown(base, exponent);
@@ -238,7 +237,7 @@ export function getBalancerAmountIn(amountOut: any, poolState: any, inIdx: any, 
  * @param {boolean} zeroForOne  true = token0→token1
  * @returns {{ amountOut: bigint, gasEstimate: number }}
  */
-export function simulateBalancerSwap(amountIn: any, poolState: any, zeroForOne: any) {
+export function simulateBalancerSwap(amountIn: bigint, poolState: any, zeroForOne: boolean): { amountOut: bigint; gasEstimate: number } {
   if (amountIn <= 0n) return { amountOut: 0n, gasEstimate: 0 };
 
   const inIdx = zeroForOne ? 0 : 1;

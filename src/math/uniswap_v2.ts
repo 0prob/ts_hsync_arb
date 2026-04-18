@@ -28,11 +28,11 @@ const FEE_DENOMINATOR = 1000n;
  * @returns {bigint}            Output amount
  */
 export function getV2AmountOut(
-  amountIn: any,
-  reserveIn: any,
-  reserveOut: any,
-  feeNumerator = DEFAULT_FEE_NUMERATOR
-) {
+  amountIn: bigint,
+  reserveIn: bigint,
+  reserveOut: bigint,
+  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR
+): bigint {
   if (amountIn <= 0n) return 0n;
   if (reserveIn <= 0n || reserveOut <= 0n) return 0n;
 
@@ -55,19 +55,19 @@ export function getV2AmountOut(
  * @returns {bigint}            Required input amount
  */
 export function getV2AmountIn(
-  amountOut: any,
-  reserveIn: any,
-  reserveOut: any,
-  feeNumerator = DEFAULT_FEE_NUMERATOR
-) {
+  amountOut: bigint,
+  reserveIn: bigint,
+  reserveOut: bigint,
+  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR
+): bigint {
   if (amountOut <= 0n) return 0n;
   if (reserveIn <= 0n || reserveOut <= 0n) return 0n;
   if (amountOut >= reserveOut) {
     throw new Error("V2Math: insufficient liquidity for desired output");
   }
 
-  const numerator: bigint = BigInt(reserveIn) * BigInt(amountOut) * FEE_DENOMINATOR;
-  const denominator: bigint = BigInt(reserveOut - amountOut) * feeNumerator;
+  const numerator = reserveIn * amountOut * FEE_DENOMINATOR;
+  const denominator = (reserveOut - amountOut) * feeNumerator;
 
   return numerator / denominator + 1n;
 }
@@ -85,16 +85,16 @@ export function getV2AmountIn(
  */
 export function simulateV2Swap(
   poolState: any,
-  amountIn: any,
-  zeroForOne: any,
-  feeNumerator = DEFAULT_FEE_NUMERATOR
-) {
+  amountIn: bigint,
+  zeroForOne: boolean,
+  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR
+): { amountOut: bigint; gasEstimate: number } {
   if (amountIn <= 0n) {
     return { amountOut: 0n, gasEstimate: 0 };
   }
 
-  const reserveIn = zeroForOne ? poolState.reserve0 : poolState.reserve1;
-  const reserveOut = zeroForOne ? poolState.reserve1 : poolState.reserve0;
+  const reserveIn = BigInt(zeroForOne ? poolState.reserve0 : poolState.reserve1);
+  const reserveOut = BigInt(zeroForOne ? poolState.reserve1 : poolState.reserve0);
 
   if (reserveIn <= 0n || reserveOut <= 0n) {
     return { amountOut: 0n, gasEstimate: 0 };
@@ -114,6 +114,6 @@ export function simulateV2Swap(
  * @param {boolean} zeroForOne Direction
  * @returns {bigint}          Output amount
  */
-export function quoteV2(poolState: any, amountIn: any, zeroForOne: any) {
+export function quoteV2(poolState: any, amountIn: bigint, zeroForOne: boolean): bigint {
   return simulateV2Swap(poolState, amountIn, zeroForOne).amountOut;
 }
