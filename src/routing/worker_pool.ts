@@ -21,11 +21,66 @@ import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 
 const WORKER_URL = new URL("./persistent_worker.ts", import.meta.url);
 const WORKER_EXEC_ARGV = [...process.execArgv, '--import', 'tsx'];
-const workerLogger = logger.child({ component: "worker_pool" });
+const workerLogger: any = logger.child({ component: "worker_pool" });
 
-function buildChunkStateObject(paths: any, stateCache: any) {
+type PathLike = {
+  startToken: string;
+  hopCount: number;
+  logWeight: unknown;
+  cumulativeFeesBps?: number;
+  edges: Array<{
+    poolAddress: string;
+    tokenOut: string;
+    protocol: string;
+    zeroForOne: boolean;
+    fee?: number | null;
+  }>;
+};
+
+type SerializedEvaluationPath = {
+  serialisedKey: string;
+  startToken: string;
+  hopCount: number;
+  logWeight: unknown;
+  cumulativeFeesBps?: number;
+  edges: Array<{
+    poolAddress: string;
+    tokenOut: string;
+    protocol: string;
+    zeroForOne: boolean;
+    fee?: number | null;
+  }>;
+};
+
+type SerializedEnumeratedPath = {
+  startToken: string;
+  hopCount: number;
+  logWeight: unknown;
+  cumulativeFeesBps?: number;
+  poolAddresses: string[];
+  zeroForOnes: boolean[];
+};
+
+type EvaluationResult = { path: SerializedEvaluationPath; result: { profit: bigint | string } };
+type WorkerStateMap = Map<string, Record<string, any>>;
+type WorkerPayload = Record<string, any>;
+type QueueItem = { id: number; data: WorkerPayload };
+type WorkerSlot = {
+  worker: Worker | null;
+  busy: boolean;
+  currentJobId: number | null;
+  syncedStateVersions: Map<string, number>;
+  syncedTopologyKey: string | null;
+};
+type PendingJob = {
+  resolve: (value: any) => void;
+  reject: (reason?: unknown) => void;
+  slot: WorkerSlot | null;
+};
+
+function buildChunkStateObject(paths: PathLike[], stateCache: WorkerStateMap) {
   const stateObj: Record<string, any> = {};
-  const seenPools = new Set();
+  const seenPools = new Set<string>();
 
   for (const path of paths) {
     for (const edge of path.edges) {
@@ -43,32 +98,32 @@ function buildChunkStateObject(paths: any, stateCache: any) {
   return stateObj;
 }
 
-function getStateVersion(state: any) {
+function getStateVersion(state: Record<string, any> | undefined) {
   return Number(state?.timestamp ?? -1);
 }
 
-function buildEvaluationChunks(paths: any[], workerCount: any) {
+function buildEvaluationChunks(paths: PathLike[], workerCount: number): PathLike[][] {
   if (paths.length === 0) return [];
   const chunkCount = Math.max(1, Math.min(workerCount, paths.length));
   if (chunkCount === 1) return [paths];
 
-  const byToken = new Map();
+  const byToken = new Map<string, PathLike[]>();
   for (const path of paths) {
     const token = path.startToken.toLowerCase();
     if (!byToken.has(token)) byToken.set(token, []);
-    byToken.get(token).push(path);
+    byToken.get(token)!.push(path);
   }
 
   const groups = [...byToken.values()]
     .map((group) => ({
       paths: group,
-      pools: new Set(group.flatMap((path) => path.edges.map((edge) => edge.poolAddress))),
+      pools: new Set<string>(group.flatMap((path) => path.edges.map((edge) => edge.poolAddress))),
     }))
     .sort((a, b) => b.paths.length - a.paths.length);
 
-  const chunks: { paths: any[], pools: Set<any> }[] = Array.from({ length: chunkCount }, () => ({
-    paths: [] as any[],
-    pools: new Set(),
+  const chunks: { paths: PathLike[]; pools: Set<string> }[] = Array.from({ length: chunkCount }, () => ({
+    paths: [],
+    pools: new Set<string>(),
   }));
 
   for (const group of groups) {
@@ -98,15 +153,15 @@ function buildEvaluationChunks(paths: any[], workerCount: any) {
     .filter((chunk) => chunk.length > 0);
 }
 
-function summariseChunkPools(chunk: any[]) {
-  const pools = new Set();
+function summariseChunkPools(chunk: PathLike[]) {
+  const pools = new Set<string>();
   for (const path of chunk) {
     for (const edge of path.edges) pools.add(edge.poolAddress);
   }
   return pools;
 }
 
-function summariseEvaluationChunks(chunks: any[]) {
+function summariseEvaluationChunks(chunks: PathLike[][]) {
   const chunkPoolSets = chunks.map((chunk) => summariseChunkPools(chunk));
   const pathCounts = chunks.map((chunk) => chunk.length);
   const uniquePoolCounts = chunkPoolSets.map((poolSet) => poolSet.size);
@@ -137,16 +192,16 @@ function summariseEvaluationChunks(chunks: any[]) {
   };
 }
 
-function serialisedPathKey(path: any) {
+function serialisedPathKey(path: SerializedEnumeratedPath) {
   return [
     path.startToken.toLowerCase(),
-    ...path.poolAddresses.map((poolAddress, i) =>
+    ...path.poolAddresses.map((poolAddress: string, i: number) =>
       `${poolAddress.toLowerCase()}:${path.zeroForOnes[i] ? "1" : "0"}`
     ),
   ].join("|");
 }
 
-function serialiseEvaluationPath(path: any) {
+function serialiseEvaluationPath(path: PathLike): SerializedEvaluationPath {
   return {
     serialisedKey: [
       path.startToken.toLowerCase(),
@@ -163,32 +218,37 @@ function serialiseEvaluationPath(path: any) {
       tokenOut: edge.tokenOut,
       protocol: edge.protocol,
       zeroForOne: edge.zeroForOne,
-      fee: edge.fee,
+      fee: edge.fee ?? null,
     })),
   };
 }
 
-function serialiseEvaluationPaths(paths: any[]) {
+function serialiseEvaluationPaths(paths: PathLike[]) {
   return paths.map((path) => serialiseEvaluationPath(path));
 }
 
-function rehydrateEvaluationResults(results: any[], originalPathsByKey: any) {
+function rehydrateEvaluationResults(
+  results: EvaluationResult[],
+  originalPathsByKey: Map<string, PathLike>
+): Array<{ path: PathLike; result: EvaluationResult["result"] }> {
   return results
     .map(({ path, result }) => {
       const originalPath = originalPathsByKey.get(path.serialisedKey);
       if (!originalPath) return null;
       return { path: originalPath, result };
     })
-    .filter(Boolean);
+    .filter(
+      (entry): entry is { path: PathLike; result: EvaluationResult["result"] } => entry != null
+    );
 }
 
 // ─── WorkerPool ───────────────────────────────────────────────
 
 class WorkerPool {
   private _size: number;
-  private _slots: any[];
-  private _queue: any[];
-  private _pending: Map<number, any>;
+  private _slots: WorkerSlot[];
+  private _queue: QueueItem[];
+  private _pending: Map<number, PendingJob>;
   private _nextId: number;
   private _initialized: boolean;
   private _terminating: boolean;
@@ -224,7 +284,7 @@ class WorkerPool {
   async terminate() {
     this._terminating = true;
     for (const { worker } of this._slots) {
-      await worker.terminate().catch(() => {});
+      if (worker) await worker.terminate().catch(() => {});
     }
     this._slots = [];
     this._queue = [];
@@ -246,7 +306,7 @@ class WorkerPool {
    * @param {object}                           [options]
    * @returns {Promise<Array<{path,result}>>}  Profitable paths, sorted by profit desc
    */
-  async evaluate(paths: any, stateCache: any, testAmount: any, options: any = {}) {
+  async evaluate(paths: PathLike[], stateCache: WorkerStateMap, testAmount: bigint, options: Record<string, any> = {}) {
     if (!this._initialized) this.init();
 
     const chunks = buildEvaluationChunks(paths, this._size);
@@ -264,7 +324,7 @@ class WorkerPool {
     const amountStr = testAmount.toString();
     const serialisedChunks = chunks.map((chunk) => serialiseEvaluationPaths(chunk));
     const originalPathMaps = chunks.map((chunk, index) => {
-      const byKey = new Map();
+      const byKey = new Map<string, PathLike>();
       for (let i = 0; i < chunk.length; i++) {
         byKey.set(serialisedChunks[index][i].serialisedKey, chunk[i]);
       }
@@ -274,7 +334,7 @@ class WorkerPool {
     // When enough idle workers are available, target fixed slots and keep a
     // persistent worker-side state mirror, sending only changed pool states.
     // Only requires as many idle slots as there are chunks, not all slots.
-    const idleEvalSlots = this._slots.filter(s => s && !s.busy);
+    const idleEvalSlots = this._slots.filter((s) => s && !s.busy);
     const canUsePersistentMirror =
       this._queue.length === 0 &&
       idleEvalSlots.length >= chunks.length;
@@ -288,7 +348,7 @@ class WorkerPool {
             stateCache,
             amountStr,
             options
-          ).then((results) => rehydrateEvaluationResults(results, originalPathMaps[i]))
+          ).then((results) => rehydrateEvaluationResults(results as EvaluationResult[], originalPathMaps[i]))
         )
       : chunks.map((chunk, i) =>
           this._submit({
@@ -297,11 +357,11 @@ class WorkerPool {
             stateObj: buildChunkStateObject(chunk, stateCache),
             testAmount: amountStr,
             options,
-          }).then((results) => rehydrateEvaluationResults(results, originalPathMaps[i]))
+          }).then((results) => rehydrateEvaluationResults(results as EvaluationResult[], originalPathMaps[i]))
         );
 
     const chunkResults = await Promise.all(chunkPromises);
-    const all = chunkResults.flat();
+    const all = chunkResults.flat().filter((entry): entry is EvaluationResult => entry != null);
 
     // Re-sort merged results (each chunk is already sorted but merging loses order)
     all.sort((a, b) => {
@@ -331,7 +391,7 @@ class WorkerPool {
    * @param {object}                [options]    findArbPaths options
    * @returns {Promise<Array>}  Serialised path descriptors from all workers
    */
-  async enumerate(adjacency: any, startTokens: any, options: any = {}) {
+  async enumerate(adjacency: Record<string, any[]>, startTokens: string[], options: Record<string, any> = {}) {
     if (!this._initialized) this.init();
 
     if (startTokens.length === 0) return [];
@@ -344,24 +404,24 @@ class WorkerPool {
       const { findArbPaths }        = await import("./finder.ts");
       const graph = deserializeTopology(adjacency);
       const paths = findArbPaths(graph, startTokens, enumerateOptions);
-      return paths.map((p) => ({
+      return paths.map((p: any) => ({
         startToken:        p.startToken,
         hopCount:          p.hopCount,
         logWeight:         p.logWeight,
         cumulativeFeesBps: p.cumulativeFeesBps,
-        poolAddresses:     p.edges.map((e) => e.poolAddress),
-        zeroForOnes:       p.edges.map((e) => e.zeroForOne),
+        poolAddresses:     p.edges.map((e: any) => e.poolAddress),
+        zeroForOnes:       p.edges.map((e: any) => e.zeroForOne),
       }));
     }
 
     // Split tokens across workers
     const chunkSize = Math.ceil(startTokens.length / this._size);
-    const chunks    = [];
+    const chunks: string[][] = [];
     for (let i = 0; i < startTokens.length; i += chunkSize) {
       chunks.push(startTokens.slice(i, i + chunkSize));
     }
 
-    const idleEnumSlots = this._slots.filter(s => s && !s.busy);
+    const idleEnumSlots = this._slots.filter((s) => s && !s.busy);
     const canUsePersistentTopology =
       Boolean(topologyKey) &&
       this._queue.length === 0 &&
@@ -389,8 +449,8 @@ class WorkerPool {
     );
 
     // Merge and deduplicate by ordered route key
-    const seen  = new Set();
-    const all   = [];
+    const seen  = new Set<string>();
+    const all: SerializedEnumeratedPath[]   = [];
     for (const chunk of results) {
       for (const p of chunk) {
         const key = serialisedPathKey(p);
@@ -409,7 +469,7 @@ class WorkerPool {
    * Submit one chunk to an idle worker (or queue if all are busy).
    * @returns {Promise<Array>}
    */
-  _submit(data: any) {
+  _submit(data: WorkerPayload): Promise<any> {
     return new Promise((resolve, reject) => {
       const id = this._nextId++;
       this._pending.set(id, { resolve, reject, slot: null });
@@ -423,7 +483,7 @@ class WorkerPool {
     });
   }
 
-  _submitToSlot(slot: any, data: any) {
+  _submitToSlot(slot: WorkerSlot, data: WorkerPayload): Promise<any> {
     return new Promise((resolve, reject) => {
       const id = this._nextId++;
       this._pending.set(id, { resolve, reject, slot: null });
@@ -431,15 +491,22 @@ class WorkerPool {
     });
   }
 
-  _dispatchToSlot(slot: any, id: any, data: any) {
+  _dispatchToSlot(slot: WorkerSlot, id: number, data: WorkerPayload) {
     const pending = this._pending.get(id);
     if (pending) pending.slot = slot;
     slot.busy = true;
     slot.currentJobId = id;
-    slot.worker.postMessage({ id, ...data });
+    slot.worker?.postMessage({ id, ...data });
   }
 
-  async _evaluateOnSlot(slot: any, chunk: any, serialisedChunk: any, stateCache: any, amountStr: any, options: any) {
+  async _evaluateOnSlot(
+    slot: WorkerSlot,
+    chunk: PathLike[],
+    serialisedChunk: SerializedEvaluationPath[],
+    stateCache: WorkerStateMap,
+    amountStr: string,
+    options: Record<string, any>
+  ) {
     const { delta: stateDeltaObj, count } = this._buildStateDelta(
       chunk,
       stateCache,
@@ -473,7 +540,13 @@ class WorkerPool {
     });
   }
 
-  async _enumerateOnSlot(slot: any, adjacency: any, topologyKey: any, startTokens: any, options: any) {
+  async _enumerateOnSlot(
+    slot: WorkerSlot,
+    adjacency: Record<string, any[]>,
+    topologyKey: string,
+    startTokens: string[],
+    options: Record<string, any>
+  ) {
     if (slot.syncedTopologyKey !== topologyKey) {
       await this._submitToSlot(slot, {
         type: "SYNC_TOPOLOGY",
@@ -490,10 +563,10 @@ class WorkerPool {
     });
   }
 
-  _buildStateDelta(paths: any, stateCache: any, syncedStateVersions: any) {
-    const delta = {};
+  _buildStateDelta(paths: PathLike[], stateCache: WorkerStateMap, syncedStateVersions: Map<string, number>) {
+    const delta: Record<string, Record<string, any>> = {};
     let count = 0;
-    const seenPools = new Set();
+    const seenPools = new Set<string>();
 
     for (const path of paths) {
       for (const edge of path.edges) {
@@ -519,7 +592,7 @@ class WorkerPool {
   /**
    * Spawn (or respawn) a worker at slot index i.
    */
-  _spawnSlot(i: any) {
+  _spawnSlot(i: number) {
     if (this._terminating) return;
 
     const worker = new Worker(WORKER_URL, {
@@ -533,7 +606,7 @@ class WorkerPool {
       syncedTopologyKey: null,
     };
 
-    worker.on("message", ({ id, type, profitable, paths, error }) => {
+    worker.on("message", ({ id, type, profitable, paths, error }: any) => {
       const pending = this._pending.get(id);
       if (pending) {
         this._pending.delete(id);
@@ -549,21 +622,37 @@ class WorkerPool {
       this._drainQueue(slot);
     });
 
-    worker.on("error", (err) => {
+    worker.on("error", (err: Error) => {
       logger.warn(`[worker_pool] Worker ${i} error: ${err.message} — respawning`);
       this._rejectSlotPending(slot);
       // Replace in slots array
       const idx = this._slots.indexOf(slot);
-      if (idx !== -1) this._slots[idx] = { worker: null, busy: false, currentJobId: null }; // placeholder
+      if (idx !== -1) {
+        this._slots[idx] = {
+          worker: null,
+          busy: false,
+          currentJobId: null,
+          syncedStateVersions: new Map(),
+          syncedTopologyKey: null,
+        };
+      }
       this._spawnSlot(i);
     });
 
-    worker.on("exit", (code) => {
+    worker.on("exit", (code: number) => {
       if (code !== 0 && !this._terminating) {
         logger.warn(`[worker_pool] Worker ${i} exited (code ${code}) — respawning`);
         this._rejectSlotPending(slot);
         const idx = this._slots.indexOf(slot);
-        if (idx !== -1) this._slots[idx] = { worker: null, busy: false, currentJobId: null };
+        if (idx !== -1) {
+          this._slots[idx] = {
+            worker: null,
+            busy: false,
+            currentJobId: null,
+            syncedStateVersions: new Map(),
+            syncedTopologyKey: null,
+          };
+        }
         setTimeout(() => this._spawnSlot(i), 50);
       }
     });
@@ -577,13 +666,15 @@ class WorkerPool {
     this._drainQueue(slot);
   }
 
-  _drainQueue(slot: any) {
+  _drainQueue(slot: WorkerSlot) {
     if (this._queue.length === 0) return;
-    const { id, data } = this._queue.shift();
+    const next = this._queue.shift();
+    if (!next) return;
+    const { id, data } = next;
     this._dispatchToSlot(slot, id, data);
   }
 
-  _rejectSlotPending(slot: any) {
+  _rejectSlotPending(slot: WorkerSlot) {
     slot.busy = false;
     const currentJobId = slot.currentJobId;
     slot.currentJobId = null;
@@ -603,6 +694,8 @@ class WorkerPool {
 
   /** Pool size */
   get size() { return this._size; }
+
+  get initialized() { return this._initialized; }
 }
 
 // ─── Singleton ─────────────────────────────────────────────────

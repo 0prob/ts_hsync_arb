@@ -59,14 +59,14 @@ export class PollUniv3 {
     const t0 = Date.now();
 
     const pools = this._registry.getActivePoolsMeta()
-      .filter((p) => V3_PROTOCOLS.has(p.protocol))
+      .filter((p: any) => V3_PROTOCOLS.has(p.protocol))
       .slice(0, this._maxPools);
 
     if (pools.length === 0) {
       return { updated: 0, failed: 0, durationMs: Date.now() - t0 };
     }
 
-    const addresses = pools.map((p) => p.pool_address);
+    const addresses = pools.map((p: any) => p.pool_address);
 
     // Build per-pool metadata so Algebra pools (QuickSwap V3) use globalState()
     // instead of slot0(), while standard Uniswap V3 forks use slot0().
@@ -139,7 +139,7 @@ export class PollUniv3 {
       if (!this._running) return;
       try {
         await this.poll();
-      } catch (err) {
+      } catch (err: any) {
         console.error(`[poll_univ3] Poll error: ${err.message}`);
       }
       if (this._running) {

@@ -31,7 +31,7 @@ const WEI = 1n;
  * @param {bigint} [gasPriceWei] Gas price in wei (default 30 gwei)
  * @returns {bigint}
  */
-export function estimateGasCostWei(gasEstimate, gasPriceWei) {
+export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
   const price = gasPriceWei ?? DEFAULT_GAS_PRICE_GWEI * GWEI;
   return BigInt(gasEstimate) * price;
 }
@@ -57,7 +57,7 @@ export function estimateGasCostWei(gasEstimate, gasPriceWei) {
  * @param {bigint} [options.minNetProfit]    Reject routes with netProfit below this
  * @returns {ScoredRoute|null}    null if route fails minimum thresholds
  */
-export function scoreRoute(path, result, options = {}) {
+export function scoreRoute(path: RouteLike, result: RouteResultLike, options: ScoreOptions = {}): ScoredRoute | null {
   const { gasPriceWei, minNetProfit = 0n } = options;
 
   if (!result.profitable || result.profit <= 0n) return null;
@@ -84,7 +84,7 @@ export function scoreRoute(path, result, options = {}) {
   const hopPenalty = (path.hopCount - 2) * 0.5;
 
   // Protocol diversity bonus: cross-protocol arbs are harder to replicate
-  const protocols = new Set(path.edges.map((e) => e.protocol));
+  const protocols = new Set(path.edges.map((e: { protocol: string }) => e.protocol));
   const diversityBonus = protocols.size > 1 ? 0.2 : 0;
 
   // Composite score: high roi + high netProfit + diversity - hop penalty
@@ -107,8 +107,11 @@ export function scoreRoute(path, result, options = {}) {
  * @param {bigint} [options.minNetProfit]
  * @returns {ScoredRoute[]}  Sorted descending by score
  */
-export function rankRoutes(candidates, options = {}) {
-  const scored = [];
+export function rankRoutes(
+  candidates: Array<{ path: RouteLike; result: RouteResultLike }>,
+  options: ScoreOptions = {}
+): ScoredRoute[] {
+  const scored: ScoredRoute[] = [];
 
   for (const { path, result } of candidates) {
     const s = scoreRoute(path, result, options);
@@ -126,7 +129,34 @@ export function rankRoutes(candidates, options = {}) {
  * @param {Object} [options]
  * @returns {ScoredRoute|null}
  */
-export function selectBestRoute(candidates, options = {}) {
+export function selectBestRoute(
+  candidates: Array<{ path: RouteLike; result: RouteResultLike }>,
+  options: ScoreOptions = {}
+): ScoredRoute | null {
   const ranked = rankRoutes(candidates, options);
   return ranked.length > 0 ? ranked[0] : null;
 }
+type RouteLike = {
+  hopCount: number;
+  edges: Array<{ protocol: string }>;
+};
+
+type RouteResultLike = {
+  profitable: boolean;
+  profit: bigint;
+  amountIn: bigint;
+  totalGas: number;
+};
+
+type ScoreOptions = {
+  gasPriceWei?: bigint;
+  minNetProfit?: bigint;
+};
+
+type ScoredRoute = {
+  path: RouteLike;
+  result: RouteResultLike;
+  netProfit: bigint;
+  score: number;
+  roi: number;
+};

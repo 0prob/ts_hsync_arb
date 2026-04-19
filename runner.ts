@@ -45,6 +45,8 @@ import { fetchAndNormalizeCurvePool } from "./src/state/poll_curve.ts";
 import { throttledMap } from "./src/enrichment/rpc.ts";
 import { logger } from "./src/utils/logger.ts";
 import { pathsEvaluated, arbsFound, startMetricsServer, stopMetricsServer } from "./src/utils/metrics.ts";
+import type { BotState } from "./src/tui/index.tsx";
+import { getPoolMetadata, getPoolTokens } from "./src/util/pool_record.ts";
 import {
   DB_PATH,
   POLYGON_RPC,
@@ -62,7 +64,77 @@ import {
   MAX_SYNC_WARMUP_V3_POOLS,
   ROUTE_STATE_MAX_AGE_MS,
   ROUTE_STATE_MAX_SKEW_MS,
+  CYCLE_REFRESH_INTERVAL_MS,
 } from "./src/config/index.ts";
+
+type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+type LogMeta = Record<string, unknown>;
+type LogMetaInput = LogMeta | (() => LogMeta) | undefined;
+type RouteResultLike = {
+  amountIn: bigint;
+  amountOut: bigint;
+  profit: bigint;
+  profitable?: boolean;
+  totalGas: number;
+  poolPath?: string[];
+  tokenPath?: string[];
+  hopAmounts?: bigint[];
+};
+type AssessmentLike = {
+  shouldExecute: boolean;
+  netProfit: bigint;
+  netProfitAfterGas: bigint;
+  roi?: number;
+  rejectReason?: string;
+};
+type PoolRecord = {
+  pool_address: string;
+  protocol: string;
+  tokens: unknown;
+  metadata?: unknown;
+  status?: string;
+  state?: { data?: Record<string, unknown> };
+};
+type ArbPathLike = {
+  startToken: string;
+  edges: Array<{
+    poolAddress: string;
+    tokenOut: string;
+    protocol: string;
+    zeroForOne: boolean;
+  }>;
+  hopCount: number;
+  logWeight: unknown;
+  cumulativeFeesBps?: number;
+};
+type CandidateEntry = {
+  path: ArbPathLike;
+  result: RouteResultLike;
+  assessment?: AssessmentLike;
+};
+type ExecutableCandidate = CandidateEntry & { assessment: AssessmentLike };
+type WarmupStats = {
+  scheduled: number;
+  fetched: number;
+  normalized: number;
+  disabled: number;
+  failed: number;
+  protocols: Record<string, {
+    scheduled: number;
+    fetched: number;
+    normalized: number;
+    disabled: number;
+    failed: number;
+  }>;
+};
+type SerializedPathLike = {
+  startToken: string;
+  poolAddresses: string[];
+  zeroForOnes: boolean[];
+  hopCount: number;
+  logWeight: unknown;
+  cumulativeFeesBps?: number;
+};
 
 // ─── CLI Arguments ─────────────────────────────────────────────
 
@@ -91,43 +163,45 @@ const HEARTBEAT_INTERVAL_MS = Math.max(POLL_INTERVAL_SEC * 1000, 30_000);
 
 // ─── Globals ───────────────────────────────────────────────────
 
-const stateCache  = new Map();
+const stateCache  = new Map<string, Record<string, any>>();
 const routeCache  = new RouteCache(1_000); // top-1000 profitable routes
-let registry      = null;
-let watcher       = null;
-let priceOracle   = null;
-let nonceManager  = null;
+let registry: RegistryService | null = null;
+let watcher: StateWatcher | null = null;
+let priceOracle: PriceOracle | null = null;
+let nonceManager: NonceManager | null = null;
 let running       = true;
-let cachedCycles  = [];
+let cachedCycles: ArbPathLike[] = [];
 // Two routing graphs: hubGraph (HUB_4_TOKENS only) + fullGraph (all pools).
 // Both are rebuilt when new pools are discovered (topology change).
-let hubGraph      = null;
-let fullGraph     = null;
+let hubGraph: any = null;
+let fullGraph: any = null;
 let topologyVersion = 0;
 let topologyDirty = true;
-let cachedHubTopology = null;
-let cachedFullTopology = null;
-let cachedHubTopologyGraph = null;
-let cachedFullTopologyGraph = null;
+let cachedHubTopology: Record<string, any[]> | null = null;
+let cachedFullTopology: Record<string, any[]> | null = null;
+let cachedHubTopologyGraph: any = null;
+let cachedFullTopologyGraph: any = null;
 
 let passCount          = 0;
 let consecutiveErrors  = 0;
+let executionInFlight  = false;
 
 // Shared live state — the TUI polls this; the hot path never calls into tui/
-const botState = {
-  status: /** @type {'idle'|'running'|'error'} */ ('idle'),
+const botState: BotState = {
+  status: 'idle',
   passCount: 0,
   consecutiveErrors: 0,
   gasPrice: '0',
   maticPrice: 'N/A',
   lastArbMs: 0,
-  opportunities: /** @type {any[]} */ ([]),
-  logs: /** @type {string[]} */ ([]),
+  opportunities: [],
+  logs: [],
 };
 
 // Discovery
 let lastDiscoveryMs    = 0;
 let discoveryInFlight  = false;
+let lastCycleRefreshMs = 0;
 
 // Cycle refresh reentrancy guard
 let cycleRefreshRunning = false;
@@ -140,9 +214,10 @@ let _arbDirty = false;
 
 // ─── TUI Setup ─────────────────────────────────────────────────
 
-const runnerLogger = logger.child({ component: "runner" });
+const runnerLogger: any = logger.child({ component: "runner" });
+const rootLogger: any = logger;
 
-function log(msg, level = "info", meta = undefined) {
+function log(msg: string, level: LogLevel = "info", meta: LogMetaInput = undefined) {
   botState.logs.unshift(`[${level.toUpperCase()}] ${msg}`);
   if (botState.logs.length > 10) botState.logs.length = 10;
 
@@ -158,25 +233,20 @@ function log(msg, level = "info", meta = undefined) {
 
 // ─── Helpers ───────────────────────────────────────────────────
 
-const runnerSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const runnerSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MIN_PROBE_AMOUNT = 1_000n;
 
-function poolTokenList(pool) {
-  try {
-    const tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
-    return Array.isArray(tokens) ? tokens.map((token) => token.toLowerCase()) : [];
-  } catch {
-    return [];
-  }
+function poolTokenList(pool: PoolRecord) {
+  return getPoolTokens(pool);
 }
 
-function uniqueSortedBigInts(values) {
+function uniqueSortedBigInts(values: Array<string | number | bigint>) {
   return [...new Set(values.map(String))]
     .map((value) => BigInt(value))
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-function getProbeAmountsForToken(tokenAddress) {
+function getProbeAmountsForToken(tokenAddress: string) {
   let decimals = registry?.getTokenMeta?.(tokenAddress)?.decimals;
   if (decimals == null) decimals = 18;
 
@@ -192,7 +262,10 @@ function getProbeAmountsForToken(tokenAddress) {
   return probes.filter((amount) => amount >= MIN_PROBE_AMOUNT);
 }
 
-function mergeCandidateBatch(into, batch) {
+function mergeCandidateBatch(
+  into: Map<string, CandidateEntry>,
+  batch: CandidateEntry[]
+) {
   for (const entry of batch) {
     const key = routeKeyFromEdges(entry.path.startToken, entry.path.edges);
     const current = into.get(key);
@@ -202,6 +275,28 @@ function mergeCandidateBatch(into, batch) {
   }
 }
 
+function toRouteResultLike(result: Record<string, any>): RouteResultLike {
+  return {
+    amountIn: BigInt(result.amountIn),
+    amountOut: BigInt(result.amountOut),
+    profit: BigInt(result.profit),
+    profitable: result.profitable,
+    totalGas: Number(result.totalGas ?? 0),
+    poolPath: Array.isArray(result.poolPath) ? result.poolPath : undefined,
+    tokenPath: Array.isArray(result.tokenPath) ? result.tokenPath : undefined,
+    hopAmounts: Array.isArray(result.hopAmounts) ? result.hopAmounts.map((amount) => BigInt(amount)) : undefined,
+  };
+}
+
+function normaliseCandidateBatch(
+  batch: Array<{ path: ArbPathLike; result: Record<string, any> }>
+): CandidateEntry[] {
+  return batch.map(({ path, result }) => ({
+    path,
+    result: toRouteResultLike(result),
+  }));
+}
+
 function invalidateSerializedTopologies() {
   cachedHubTopology = null;
   cachedFullTopology = null;
@@ -209,7 +304,7 @@ function invalidateSerializedTopologies() {
   cachedFullTopologyGraph = null;
 }
 
-function getSerializedTopologyCached(kind, graph) {
+function getSerializedTopologyCached(kind: "hub" | "full", graph: any) {
   if (kind === "hub") {
     if (cachedHubTopologyGraph !== graph || !cachedHubTopology) {
       cachedHubTopology = serializeTopology(graph);
@@ -225,17 +320,17 @@ function getSerializedTopologyCached(kind, graph) {
   return cachedFullTopology;
 }
 
-function roiForCandidate(result) {
+function roiForCandidate(result: RouteResultLike | null | undefined) {
   if (!result?.amountIn || result.amountIn <= 0n) return -Infinity;
   return Number((result.profit * 1_000_000n) / result.amountIn);
 }
 
 
-function selectOptimizationCandidates(candidates, limit) {
+function selectOptimizationCandidates(candidates: CandidateEntry[], limit: number) {
   if (candidates.length <= limit) return candidates;
 
-  const selected = new Map();
-  const addBatch = (batch) => {
+  const selected = new Map<string, CandidateEntry>();
+  const addBatch = (batch: CandidateEntry[]) => {
     for (const entry of batch) {
       const key = routeKeyFromEdges(entry.path.startToken, entry.path.edges);
       if (!selected.has(key)) {
@@ -259,7 +354,7 @@ function selectOptimizationCandidates(candidates, limit) {
   return [...selected.values()].slice(0, limit);
 }
 
-function getOptimizationOptions(quickResult) {
+function getOptimizationOptions(quickResult: RouteResultLike | null | undefined) {
   const amountIn = quickResult?.amountIn ?? TEST_AMOUNT_WEI;
   const minAmount = amountIn > 10n ? amountIn / 10n : MIN_PROBE_AMOUNT;
   const maxAmount = amountIn * 8n > minAmount ? amountIn * 8n : minAmount * 8n;
@@ -270,17 +365,22 @@ function getOptimizationOptions(quickResult) {
   };
 }
 
-function getAssessmentOptimizationOptions(path, quickResult, gasPriceWei, tokenToMaticRate) {
+function getAssessmentOptimizationOptions(
+  path: ArbPathLike,
+  quickResult: RouteResultLike | null | undefined,
+  gasPriceWei: bigint,
+  tokenToMaticRate: bigint
+) {
   return {
     ...getOptimizationOptions(quickResult),
-    scorer: (routeResult) =>
+    scorer: (routeResult: RouteResultLike) =>
       assessRouteResult(path, routeResult, gasPriceWei, tokenToMaticRate).netProfitAfterGas,
-    accept: (routeResult) =>
+    accept: (routeResult: RouteResultLike) =>
       assessRouteResult(path, routeResult, gasPriceWei, tokenToMaticRate).shouldExecute,
   };
 }
 
-function shouldOptimizeCandidate(entry, index, total, bestQuickProfit) {
+function shouldOptimizeCandidate(entry: CandidateEntry, index: number, total: number, bestQuickProfit: bigint) {
   const quickProfit = entry?.result?.profit ?? 0n;
   if (quickProfit <= 0n) return false;
 
@@ -292,7 +392,7 @@ function shouldOptimizeCandidate(entry, index, total, bestQuickProfit) {
   return quickProfit * 100n >= bestQuickProfit * 25n;
 }
 
-function assessRouteResult(path, routeResult, gasPriceWei, tokenToMaticRate) {
+function assessRouteResult(path: ArbPathLike, routeResult: RouteResultLike, gasPriceWei: bigint, tokenToMaticRate: bigint) {
   return computeProfit(routeResult, {
     gasPriceWei,
     tokenToMaticRate,
@@ -318,11 +418,11 @@ async function getCurrentFeeSnapshot() {
   }
 }
 
-function getFreshTokenToMaticRate(tokenAddress) {
+function getFreshTokenToMaticRate(tokenAddress: string) {
   return priceOracle?.getFreshRate?.(tokenAddress, MAX_PRICE_AGE_MS) ?? 0n;
 }
 
-function getPathFreshness(path) {
+function getPathFreshness(path: ArbPathLike) {
   let oldest = Infinity;
   let newest = -Infinity;
 
@@ -361,23 +461,36 @@ function getPathFreshness(path) {
   return { ok: true, ageMs, skewMs };
 }
 
-function deriveOnChainMinProfit(assessment) {
-  const modeledNet = assessment?.netProfitAfterGas > 0n
+function deriveOnChainMinProfit(assessment: AssessmentLike | null | undefined) {
+  const modeledNet = assessment && assessment.netProfitAfterGas > 0n
     ? assessment.netProfitAfterGas
     : assessment?.netProfit ?? 0n;
   const buffered = modeledNet > 0n ? (modeledNet * 50n) / 100n : 0n;
   return buffered > MIN_PROFIT_WEI ? buffered : MIN_PROFIT_WEI;
 }
 
-async function evaluateCandidatesMultiProbe(paths) {
-  const byStartToken = new Map();
+function assessmentNetProfit(assessment: AssessmentLike | null | undefined) {
+  if (assessment?.netProfitAfterGas != null) return assessment.netProfitAfterGas;
+  return assessment?.netProfit ?? 0n;
+}
+
+function compareAssessmentProfit(a: CandidateEntry, b: CandidateEntry) {
+  const profitA = assessmentNetProfit(a?.assessment);
+  const profitB = assessmentNetProfit(b?.assessment);
+  if (profitB > profitA) return 1;
+  if (profitB < profitA) return -1;
+  return 0;
+}
+
+async function evaluateCandidatesMultiProbe(paths: ArbPathLike[]) {
+  const byStartToken = new Map<string, ArbPathLike[]>();
   for (const path of paths) {
     const token = path.startToken.toLowerCase();
     if (!byStartToken.has(token)) byStartToken.set(token, []);
-    byStartToken.get(token).push(path);
+    byStartToken.get(token)!.push(path);
   }
 
-  const merged = new Map();
+  const merged = new Map<string, CandidateEntry>();
   let totalProbeRuns = 0;
   let skippedProbeRuns = 0;
 
@@ -394,7 +507,10 @@ async function evaluateCandidatesMultiProbe(paths) {
         probeAmount,
         { workerCount: WORKER_COUNT }
       );
-      mergeCandidateBatch(merged, batch);
+      mergeCandidateBatch(
+        merged,
+        normaliseCandidateBatch(batch as Array<{ path: ArbPathLike; result: Record<string, any> }>)
+      );
       tokenHits += batch.length;
 
       // Tokens that produce no profitable quick-pass results in the smallest
@@ -421,32 +537,32 @@ async function evaluateCandidatesMultiProbe(paths) {
   });
 }
 
-function formatDuration(ms) {
+function formatDuration(ms: number) {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60_000).toFixed(1)}m`;
 }
 
-function fmtSym(addr) {
+function fmtSym(addr: string) {
   return registry?.getTokenMeta?.(addr)?.symbol ?? addr.slice(2, 8).toUpperCase();
 }
 
-function fmtPath(path) {
+function fmtPath(path: ArbPathLike) {
   const tokens = [path.startToken, ...path.edges.map(e => e.tokenOut)];
   const prots  = path.edges.map(e => e.protocol);
   return `${tokens.map(fmtSym).join('→')}  [${prots.join('/')}]`;
 }
 
-function fmtProfit(netWei, tokenAddr) {
+function fmtProfit(netWei: bigint, tokenAddr: string) {
   const meta = registry?.getTokenMeta?.(tokenAddr);
   const dec  = meta?.decimals ?? 18;
   const sym  = meta?.symbol   ?? tokenAddr.slice(2, 8).toUpperCase();
   return `${(Number(netWei) / 10 ** dec).toFixed(6)} ${sym}`;
 }
 
-function partitionChangedPools(changedPools) {
-  const valid = new Set();
-  const invalid = new Set();
+function partitionChangedPools(changedPools: Set<string>) {
+  const valid = new Set<string>();
+  const invalid = new Set<string>();
 
   for (const addr of changedPools) {
     const state = stateCache.get(addr);
@@ -455,7 +571,7 @@ function partitionChangedPools(changedPools) {
       valid.add(addr);
     } else {
       invalid.add(addr);
-      logger.debug(
+      rootLogger.debug(
         `[runner] Pool ${addr} is currently unroutable: ${verdict.reason ?? "invalid state"}`
       );
     }
@@ -464,27 +580,27 @@ function partitionChangedPools(changedPools) {
   return { valid, invalid };
 }
 
-function getRoutablePools(pools) {
-  return pools.filter((pool) => {
+function getRoutablePools(pools: PoolRecord[]) {
+  return pools.filter((pool: PoolRecord) => {
     const addr = pool.pool_address.toLowerCase();
     return validatePoolState(stateCache.get(addr)).valid;
   });
 }
 
-function poolTouchesHubTokens(pool, hubTokens = HUB_4_TOKENS) {
+function poolTouchesHubTokens(pool: PoolRecord, hubTokens: Set<string> = HUB_4_TOKENS) {
   const tokens = poolTokenList(pool);
   if (!tokens || tokens.length < 2) return false;
   return tokens.slice(0, 2).some((token) => hubTokens.has(token));
 }
 
-function admitPoolsToGraphs(poolAddresses) {
+function admitPoolsToGraphs(poolAddresses: Set<string>) {
   if (!fullGraph || !hubGraph || !poolAddresses || poolAddresses.size === 0) return 0;
 
   let admitted = 0;
   for (const addr of poolAddresses) {
     if (fullGraph._edgesByPool.has(addr)) continue;
 
-    const pool = registry.getPoolMeta(addr);
+    const pool = registry?.getPoolMeta(addr);
     if (!pool || pool.status !== "active") continue;
 
     fullGraph.addPool(pool, stateCache);
@@ -499,7 +615,7 @@ function admitPoolsToGraphs(poolAddresses) {
   return admitted;
 }
 
-function removePoolsFromGraphs(poolAddresses) {
+function removePoolsFromGraphs(poolAddresses: Set<string>) {
   if (!fullGraph || !hubGraph || !poolAddresses || poolAddresses.size === 0) return 0;
 
   let removed = 0;
@@ -519,7 +635,7 @@ function removePoolsFromGraphs(poolAddresses) {
  * so the watcher can write events into them on first arrival.
  */
 function seedStateCache() {
-  const pools = registry.getPools({ status: "active" });
+  const pools = registry?.getPools({ status: "active" }) ?? [];
   let withState = 0;
 
   for (const pool of pools) {
@@ -531,14 +647,11 @@ function seedStateCache() {
       // Placeholder includes identity fields so validatePoolState can progress
       // past the poolId/protocol/tokens checks once the watcher populates the
       // protocol-specific numeric fields (reserve0/reserve1, sqrtPriceX96, etc.).
-      let tokens;
-      try {
-        tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
-      } catch { tokens = []; }
+      const tokens = getPoolTokens(pool);
       stateCache.set(addr, {
         poolId: addr,
         protocol: pool.protocol,
-        tokens: Array.isArray(tokens) ? tokens.map((t) => t.toLowerCase()) : [],
+        tokens,
         timestamp: 0,
       });
     }
@@ -573,7 +686,7 @@ const _WARMUP_CRV = new Set([
 ]);
 const WARMUP_PROGRESS_LOG_EVERY = 25;
 
-function warmupProgressSnapshot(stats) {
+function warmupProgressSnapshot(stats: WarmupStats) {
   const protocolStats = stats.protocols || {};
   return {
     scheduled: stats.scheduled,
@@ -601,7 +714,7 @@ function warmupProgressSnapshot(stats) {
   };
 }
 
-function logWarmupProgress(stats, phase, meta = undefined) {
+function logWarmupProgress(stats: WarmupStats, phase: string, meta: LogMeta = {}) {
   log(`State warmup progress: ${phase}.`, "info", {
     event: "warmup_progress",
     phase,
@@ -611,13 +724,13 @@ function logWarmupProgress(stats, phase, meta = undefined) {
 }
 
 function resolveWarmupPersistBlock() {
-  const watcherCheckpoint = registry.getCheckpoint("HYPERSYNC_WATCHER");
+  const watcherCheckpoint = registry?.getCheckpoint("HYPERSYNC_WATCHER");
   const watcherBlock = Number(watcherCheckpoint?.last_block);
   if (Number.isFinite(watcherBlock) && watcherBlock >= 0) {
     return watcherBlock;
   }
 
-  const globalCheckpoint = registry.getGlobalCheckpoint();
+  const globalCheckpoint = registry?.getGlobalCheckpoint();
   const globalBlock = Number(globalCheckpoint);
   if (Number.isFinite(globalBlock) && globalBlock >= 0) {
     return globalBlock;
@@ -636,7 +749,7 @@ function resolveWarmupPersistBlock() {
  *
  * @param {Array<Object>} pools  Registry pool records to warm up
  */
-async function _fetchAndCacheStates(pools) {
+async function _fetchAndCacheStates(pools: PoolRecord[]) {
   if (!pools.length) {
     return {
       scheduled: 0,
@@ -650,7 +763,7 @@ async function _fetchAndCacheStates(pools) {
 
   const persistBlock = resolveWarmupPersistBlock();
   const persistBatch = (states: Array<{ pool_address: string; block: number; data: object }>) => {
-    if (states.length > 0) registry.batchUpdateStates(states);
+    if (states.length > 0) registry?.batchUpdateStates(states);
   };
   const v2  = pools.filter((p) => _WARMUP_V2.has(p.protocol));
   const v3  = pools.filter((p) => _WARMUP_V3.has(p.protocol));
@@ -671,15 +784,15 @@ async function _fetchAndCacheStates(pools) {
   };
   logWarmupProgress(stats, "rpc_fetch_started");
 
-  const disableNoDataFailures = (poolGroup, statesMap, sourceLabel, groupStats) => {
-    const failures = statesMap?.noDataFailures;
+  const disableNoDataFailures = (poolGroup: PoolRecord[], statesMap: any, sourceLabel: string, groupStats: WarmupStats["protocols"][string]) => {
+    const failures = statesMap?.noDataFailures as Set<string> | undefined;
     if (!(failures instanceof Set) || failures.size === 0) return;
 
     for (const pool of poolGroup) {
       const addr = pool.pool_address.toLowerCase();
       if (!failures.has(addr)) continue;
 
-      registry.disablePool(
+      registry?.disablePool(
         addr,
         `${sourceLabel}: readContract returned no data`
       );
@@ -710,9 +823,8 @@ async function _fetchAndCacheStates(pools) {
         if (!raw) continue;
         stats.protocols.v2.fetched++;
         stats.fetched++;
-        let tokens;
-        try { tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens; }
-        catch { continue; }
+        const tokens = getPoolTokens(pool);
+        if (tokens.length === 0) continue;
         const normalized = normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata);
         if (normalized) {
           stateCache.set(addr, normalized);
@@ -733,19 +845,17 @@ async function _fetchAndCacheStates(pools) {
       if (!v3.length) return;
       const poolMeta = new Map();
       for (const pool of v3) {
-        const meta = typeof pool.metadata === "string"
-          ? JSON.parse(pool.metadata || "{}")
-          : (pool.metadata || {});
+        const meta = getPoolMetadata(pool);
         if (meta.isAlgebra) {
           poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
         }
       }
       let lastV3ProgressLogAt = 0;
-      const statesMap = await fetchMultipleV3States(
+      const statesMap = await (fetchMultipleV3States as any)(
         v3.map((p) => p.pool_address),
         V3_POLL_CONCURRENCY,
         poolMeta,
-        (completed, total) => {
+        (completed: number, total: number) => {
           const now = Date.now();
           if (
             completed === total ||
@@ -771,9 +881,8 @@ async function _fetchAndCacheStates(pools) {
         if (!raw) continue;
         stats.protocols.v3.fetched++;
         stats.fetched++;
-        let tokens;
-        try { tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens; }
-        catch { continue; }
+        const tokens = getPoolTokens(pool);
+        if (tokens.length === 0) continue;
         const normalized = normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata);
         if (normalized) {
           stateCache.set(addr, normalized);
@@ -793,8 +902,8 @@ async function _fetchAndCacheStates(pools) {
     (async () => {
       if (!bal.length) return;
       let completed = 0;
-      const balPersisted = [];
-      await throttledMap(bal, async (pool) => {
+      const balPersisted: Array<{ pool_address: string; block: number; data: object }> = [];
+      await throttledMap(bal, async (pool: PoolRecord) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool);
           stateCache.set(addr, normalized);
@@ -827,8 +936,8 @@ async function _fetchAndCacheStates(pools) {
     (async () => {
       if (!crv.length) return;
       let completed = 0;
-      const crvPersisted = [];
-      await throttledMap(crv, async (pool) => {
+      const crvPersisted: Array<{ pool_address: string; block: number; data: object }> = [];
+      await throttledMap(crv, async (pool: PoolRecord) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeCurvePool(pool);
           stateCache.set(addr, normalized);
@@ -875,13 +984,13 @@ async function _fetchAndCacheStates(pools) {
  * @param {Set<string>} hubTokens  Lowercase hub-token addresses
  * @returns {boolean}
  */
-function poolBothTokensAreHubs(pool, hubTokens) {
+function poolBothTokensAreHubs(pool: PoolRecord, hubTokens: Set<string>) {
   const tokens = poolTokenList(pool);
   if (!tokens || tokens.length < 2) return false;
   return hubTokens.has(tokens[0]) && hubTokens.has(tokens[1]);
 }
 
-function warmupPriority(pool) {
+function warmupPriority(pool: PoolRecord) {
   const tokens = poolTokenList(pool);
   const bothCoreHubs =
     tokens.length >= 2 &&
@@ -896,7 +1005,7 @@ function warmupPriority(pool) {
   return [bothCoreHubs ? 0 : 1, protocolRank, pool.pool_address.toLowerCase()];
 }
 
-function compareWarmupPriority(a, b) {
+function compareWarmupPriority(a: PoolRecord, b: PoolRecord) {
   const left = warmupPriority(a);
   const right = warmupPriority(b);
   for (let i = 0; i < left.length; i++) {
@@ -921,9 +1030,9 @@ function compareWarmupPriority(a, b) {
  *      update.  No background RPC fetch is needed for this tier.
  */
 async function warmupStateCache() {
-  const activePools = registry.getActivePoolsMeta();
+  const activePools = registry?.getActivePoolsMeta() ?? [];
   const needsState  = activePools.filter(
-    (p) => !validatePoolState(stateCache.get(p.pool_address.toLowerCase())).valid
+    (p: PoolRecord) => !validatePoolState(stateCache.get(p.pool_address.toLowerCase())).valid
   );
 
   if (needsState.length === 0) {
@@ -935,7 +1044,7 @@ async function warmupStateCache() {
   }
 
   // Only the direct hub↔hub pairs are fetched synchronously.
-  const hubPairPools = needsState.filter((p) => poolBothTokensAreHubs(p, POLYGON_HUB_TOKENS));
+  const hubPairPools = needsState.filter((p: PoolRecord) => poolBothTokensAreHubs(p, POLYGON_HUB_TOKENS));
 
   if (hubPairPools.length === 0) {
     log("State warmup: no hub-pair pools without state — watcher will populate the rest.", "info", {
@@ -1011,7 +1120,7 @@ async function warmupStateCache() {
 
 // ─── Background discovery ──────────────────────────────────────
 
-async function maybeRunDiscovery(force = false) {
+async function maybeRunDiscovery(force = false): Promise<any> {
   const now = Date.now();
   if (discoveryInFlight) return null;
   if (!force && now - lastDiscoveryMs < DISCOVERY_INTERVAL_MS) return null;
@@ -1032,7 +1141,7 @@ async function maybeRunDiscovery(force = false) {
       activePools: result.activePools,
     });
     return result;
-  } catch (err) {
+  } catch (err: any) {
     log(`Background discovery failed: ${err.message}`, "warn", {
       event: "discovery_failed",
       forced: force,
@@ -1049,7 +1158,10 @@ async function maybeRunDiscovery(force = false) {
 async function refreshCycles(force = false) {
   // Skip if already built and not forced — graph state stays live via stateRefs.
   // Only rebuild topology (force=true) when new pools are discovered.
-  if (!force && !topologyDirty && cachedCycles.length > 0) return;
+  const now = Date.now();
+  const intervalElapsed =
+    lastCycleRefreshMs <= 0 || now - lastCycleRefreshMs >= CYCLE_REFRESH_INTERVAL_MS;
+  if (!force && !topologyDirty && cachedCycles.length > 0 && !intervalElapsed) return;
 
   // Prevent concurrent rebuilds: a second caller would clobber cachedCycles /
   // hubGraph mid-iteration.  The forced flag is preserved so the next call
@@ -1066,7 +1178,7 @@ async function refreshCycles(force = false) {
     forced: force,
     topologyVersion: topologyVersion + 1,
   });
-  const activePools = registry.getActivePoolsMeta();
+  const activePools = registry?.getActivePoolsMeta() ?? [];
   const pools = getRoutablePools(activePools);
   log(
     `Routing universe: ${pools.length} routable / ${activePools.length} active pools`,
@@ -1078,7 +1190,7 @@ async function refreshCycles(force = false) {
     }
   );
 
-  const rebuildGraphs = force || !fullGraph || !hubGraph;
+  const rebuildGraphs = force || !fullGraph || !hubGraph || intervalElapsed;
 
   // Build graphs only when absent or explicitly forced. For watcher-driven
   // admissions/removals we mutate the live graphs in place and only need
@@ -1095,10 +1207,10 @@ async function refreshCycles(force = false) {
 
   // getRateWei bridges priceOracle into the enumerate options
   const getRateWei = priceOracle
-    ? (addr) => priceOracle.getRate(addr)
+    ? ((oracle: PriceOracle) => (addr: string) => oracle.getRate(addr))(priceOracle)
     : null;
 
-  if (WORKER_COUNT >= 2 && workerPool._initialized) {
+  if (WORKER_COUNT >= 2 && (workerPool as any)._initialized) {
     // Offload enumeration to workers: split HUB_4_TOKENS tokens across threads
     const hubTopo    = getSerializedTopologyCached("hub", hubGraph);
     const fullTopo   = getSerializedTopologyCached("full", fullGraph);
@@ -1138,6 +1250,7 @@ async function refreshCycles(force = false) {
   // Prune stale cached routes after topology rebuild
   routeCache.prune(stateCache);
   topologyDirty = false;
+  lastCycleRefreshMs = Date.now();
 
   log(`Cycle refresh: ${cachedCycles.length} paths (hub+full, max ${MAX_TOTAL_PATHS}).`, "info", {
     event: "cycle_refresh_complete",
@@ -1145,7 +1258,7 @@ async function refreshCycles(force = false) {
     topologyVersion,
     cachedPaths: cachedCycles.length,
     maxTotalPaths: MAX_TOTAL_PATHS,
-    routeCacheSize: routeCache._routes?.length,
+    routeCacheSize: routeCache.routes.length,
   });
   } finally {
     cycleRefreshRunning = false;
@@ -1161,9 +1274,9 @@ async function refreshCycles(force = false) {
  * @param {import('./src/routing/graph.ts').RoutingGraph} full
  * @returns {import('./src/routing/finder.ts').ArbPath[]}
  */
-function _hydratePaths(serialised, hub, full) {
-  const paths = [];
-  const seen  = new Set();
+function _hydratePaths(serialised: SerializedPathLike[], hub: any, full: any) {
+  const paths: ArbPathLike[] = [];
+  const seen  = new Set<string>();
 
   for (const s of serialised) {
     const key = [
@@ -1207,7 +1320,7 @@ function _hydratePaths(serialised, hub, full) {
 
 // ─── Arb search ────────────────────────────────────────────────
 
-async function findArbs() {
+async function findArbs(): Promise<ExecutableCandidate[]> {
   if (topologyDirty || cachedCycles.length === 0) await refreshCycles();
   if (cachedCycles.length === 0) return [];
 
@@ -1228,7 +1341,7 @@ async function findArbs() {
   const feeSnapshot = await getCurrentFeeSnapshot();
   const gasPriceWei = feeSnapshot?.maxFee ?? 50n * 10n ** 9n;
 
-  const profitable = [];
+  const profitable: ExecutableCandidate[] = [];
   const topCandidates = selectOptimizationCandidates(candidates, MAX_PATHS_TO_OPTIMIZE);
   const bestQuickProfit = topCandidates[0]?.result?.profit ?? 0n;
   let optimizedCandidates = 0;
@@ -1240,11 +1353,11 @@ async function findArbs() {
     let optimized = quickResult;
     if (shouldOptimizeCandidate(topCandidates[i], i, topCandidates.length, bestQuickProfit)) {
       optimizedCandidates++;
-      optimized = optimizeInputAmount(
+      optimized = (optimizeInputAmount(
         path,
         stateCache,
         getAssessmentOptimizationOptions(path, quickResult, gasPriceWei, tokenToMaticRate)
-      ) || quickResult;
+      ) as RouteResultLike | null) || quickResult;
     }
     const assessment = computeProfit(optimized, {
       gasPriceWei,
@@ -1287,7 +1400,7 @@ async function findArbs() {
     profitableRoutes: profitable.length,
   });
 
-  profitable.sort((a, b) => (b.assessment.netProfit > a.assessment.netProfit ? 1 : -1));
+  profitable.sort(compareAssessmentProfit);
   return profitable;
 }
 
@@ -1300,8 +1413,8 @@ async function findArbs() {
  *
  * @param {Set<string>} changedPools  Lowercase pool addresses from watcher batch
  */
-async function revalidateCachedRoutes(changedPools) {
-  const affected = routeCache.getByPools(changedPools);
+async function revalidateCachedRoutes(changedPools: Set<string>) {
+  const affected = routeCache.getByPools(changedPools) as unknown as Array<{ path: ArbPathLike; result: RouteResultLike }>;
   if (affected.length === 0) return;
 
   log(`[fast-revalidate] ${affected.length} cached route(s) for ${changedPools.size} changed pool(s)`, "debug", {
@@ -1313,7 +1426,7 @@ async function revalidateCachedRoutes(changedPools) {
   const feeSnapshot = await getCurrentFeeSnapshot();
   const gasPriceWei = feeSnapshot?.maxFee ?? 50n * 10n ** 9n;
 
-  const profitable = [];
+  const profitable: ExecutableCandidate[] = [];
   let quickRejected = 0;
   let optimizedRoutes = 0;
   for (const { path, result: prev } of affected) {
@@ -1326,7 +1439,7 @@ async function revalidateCachedRoutes(changedPools) {
       path,
       prev?.amountIn ?? TEST_AMOUNT_WEI,
       stateCache
-    );
+    ) as unknown as RouteResultLike;
     const quickAssessment = assessRouteResult(
       path,
       quickResult,
@@ -1349,11 +1462,11 @@ async function revalidateCachedRoutes(changedPools) {
     }
 
     optimizedRoutes++;
-    const optimized = optimizeInputAmount(
+    const optimized = (optimizeInputAmount(
       path,
       stateCache,
       getAssessmentOptimizationOptions(path, prev, gasPriceWei, tokenToMaticRate)
-    ) || quickResult;
+    ) as RouteResultLike | null) || quickResult;
     if (!optimized?.profitable) continue;
 
     const assessment = assessRouteResult(
@@ -1374,18 +1487,39 @@ async function revalidateCachedRoutes(changedPools) {
   });
 
   if (profitable.length > 0) {
-    profitable.sort((a, b) => (b.assessment.netProfit > a.assessment.netProfit ? 1 : -1));
+    profitable.sort(compareAssessmentProfit);
     log(`[fast-revalidate] ${profitable.length} opportunity(ies) — executing best`, "info", {
       event: "fast_revalidate_execute",
       profitableRoutes: profitable.length,
     });
-    await execute(profitable[0]);
+    await executeIfIdle(profitable[0], "fast_revalidate");
   }
 }
 
 // ─── Execution ────────────────────────────────────────────────
 
-async function execute(best) {
+async function executeIfIdle(best: ExecutableCandidate, source = "unknown") {
+  if (executionInFlight) {
+    log("[runner] Skipping execution while another transaction is in flight", "warn", {
+      event: "execute_skip",
+      reason: "execution_in_flight",
+      source,
+    });
+    return {
+      submitted: false,
+      error: "execution already in flight",
+    };
+  }
+
+  executionInFlight = true;
+  try {
+    return await execute(best);
+  } finally {
+    executionInFlight = false;
+  }
+}
+
+async function execute(best: ExecutableCandidate) {
   if (!LIVE_MODE) {
     log(`[DRY-RUN] Would execute: profit=${best.assessment.netProfit} net`, "info", () => ({
       event: "execute_dry_run",
@@ -1406,7 +1540,7 @@ async function execute(best) {
 
   try {
     const { privateKeyToAccount } = await import("viem/accounts");
-    const account = privateKeyToAccount(PRIVATE_KEY);
+    const account = privateKeyToAccount(PRIVATE_KEY as `0x${string}`);
 
     const onChainMinProfit = deriveOnChainMinProfit(best.assessment);
     const builtTx = await buildArbTx(
@@ -1472,7 +1606,7 @@ async function execute(best) {
       rpcUrl:       POLYGON_RPC,
       nonceManager,
     });
-  } catch (err) {
+  } catch (err: any) {
     log(`Execution error: ${err.message}`, "error", {
       event: "execute_error",
       err,
@@ -1495,12 +1629,12 @@ async function runPass() {
 
   try {
     // Background discovery (non-blocking, self-throttled)
-    maybeRunDiscovery().then(async (result) => {
+    maybeRunDiscovery().then(async (result: any) => {
       if (result?.totalDiscovered > 0) {
         // Seed stateCache for new pools and extend the HyperSync stream filter
-        const allPools = registry.getActivePoolsMeta();
+        const allPools = registry?.getActivePoolsMeta() ?? [];
         const newPools = allPools.filter(
-          (p) => !stateCache.has(p.pool_address.toLowerCase())
+          (p: PoolRecord) => !stateCache.has(p.pool_address.toLowerCase())
         );
         if (newPools.length > 0) {
           for (const p of newPools) {
@@ -1517,7 +1651,7 @@ async function runPass() {
             });
           }
           if (watcher) {
-            watcher.addPools(newPools.map((p) => p.pool_address.toLowerCase()));
+            watcher.addPools(newPools.map((p: PoolRecord) => p.pool_address.toLowerCase()));
           }
           // Fetch live state for newly discovered pools before rebuilding topology
           await _fetchAndCacheStates(newPools);
@@ -1526,7 +1660,7 @@ async function runPass() {
         topologyDirty = true;
         await refreshCycles(true);
       }
-    }).catch((err) => {
+    }).catch((err: any) => {
       log(`Background discovery error: ${err?.message ?? err}`, "warn", {
         event: "discovery_bg_error",
         err,
@@ -1536,13 +1670,15 @@ async function runPass() {
     // Refresh cycles if not yet built
     await refreshCycles();
 
-    // Update price oracle from live state
-    priceOracle.update();
+    // Update price oracle from live state only when stale; watcher batches do incremental refreshes.
+    if (priceOracle && !priceOracle.isFresh(MAX_PRICE_AGE_MS)) {
+      priceOracle.update();
+    }
 
     const opportunities = await findArbs();
     botState.passCount         = passCount;
     botState.consecutiveErrors = consecutiveErrors;
-    botState.opportunities     = opportunities.slice(0, 5).map(o => ({
+    botState.opportunities     = opportunities.slice(0, 5).map((o: CandidateEntry) => ({
       Route:  o.path.edges.map(e => e.protocol).join(' -> '),
       Profit: `${(Number(o.result.profit) / 1e18).toFixed(4)} MATIC`,
       ROI:    `${(roiForCandidate(o.result) / 10000).toFixed(2)}%`,
@@ -1561,7 +1697,7 @@ async function runPass() {
         event: "pass_execute_best",
         pass: passCount,
       });
-      await execute(opportunities[0]);
+      await executeIfIdle(opportunities[0], "run_pass");
     }
 
     log(`Pass #${passCount} complete in ${formatDuration(Date.now() - t0)}`, "info", {
@@ -1571,7 +1707,7 @@ async function runPass() {
       opportunities: opportunities.length,
     });
     consecutiveErrors = 0;
-  } catch (err) {
+  } catch (err: any) {
     log(`Pass #${passCount} failed: ${err.message}`, "error", {
       event: "pass_failed",
       pass: passCount,
@@ -1677,7 +1813,7 @@ async function main() {
     const result = await discoverPools();
     lastDiscoveryMs = Date.now();
     log(`Discovery: ${result.totalDiscovered} new, ${result.activePools} active`);
-  } catch (err) {
+  } catch (err: any) {
     log(`Initial discovery failed: ${err.message} — using cached state`, "warn");
   }
 
@@ -1722,7 +1858,7 @@ async function main() {
   // Wire real-time event trigger:
   //   1. Fast revalidation — re-simulate cached routes for changed pools (sync, cheap)
   //   2. Debounced full scan — full cycle evaluation coalescing rapid batches
-  watcher.onBatch = (changedAddrs) => {
+  watcher.onBatch = (changedAddrs: Set<string>) => {
     const { valid: validChangedAddrs, invalid: invalidChangedAddrs } =
       partitionChangedPools(changedAddrs);
     if (validChangedAddrs.size === 0 && invalidChangedAddrs.size === 0) {
@@ -1783,8 +1919,9 @@ async function main() {
           admittedPools: admitted,
         });
       }
+      priceOracle?.update(validChangedAddrs);
       // Fast path: re-evaluate cached profitable routes touching changed pools
-      revalidateCachedRoutes(validChangedAddrs).catch((err) => {
+      revalidateCachedRoutes(validChangedAddrs).catch((err: any) => {
         log(`Route revalidation error: ${err?.message ?? err}`, "warn", {
           event: "revalidate_error",
           err,
@@ -1796,7 +1933,7 @@ async function main() {
     scheduleArb();
   };
 
-  watcher.onReorg = ({ reorgBlock, changedAddrs }) => {
+  watcher.onReorg = ({ reorgBlock, changedAddrs }: { reorgBlock: number; changedAddrs?: Set<string> }) => {
     log(
       `[runner] Reorg rollback to block ${reorgBlock}; clearing cached routes and topology`,
       "warn",
@@ -1826,7 +1963,7 @@ async function main() {
     debounceMs: ARB_DEBOUNCE_MS,
     heartbeatMs: HEARTBEAT_INTERVAL_MS,
   });
-  await watcher.start();
+      await watcher.start(undefined);
 
   // Heartbeat: guarantee a scan even if the market is quiet
   const heartbeat = setInterval(scheduleArb, HEARTBEAT_INTERVAL_MS);
@@ -1839,7 +1976,7 @@ async function main() {
   clearInterval(heartbeat);
 }
 
-main().catch((err) => {
+main().catch((err: any) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });

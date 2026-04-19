@@ -26,6 +26,7 @@
  */
 
 import { logger } from "../utils/logger.ts";
+import { getPoolTokens } from "../util/pool_record.ts";
 
 /** 1 MATIC in wei (used for V3 sqrtPriceX96 math only) */
 const WEI = 10n ** 18n;
@@ -44,6 +45,12 @@ export const TOKENS = {
   WETH:   "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
   DAI:    "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063",
   WBTC:   "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6",
+};
+
+type PoolStateLike = {
+  reserve0?: bigint;
+  reserve1?: bigint;
+  sqrtPriceX96?: bigint;
 };
 
 /**
@@ -97,13 +104,19 @@ export class PriceOracle {
    * decimal-adjusted prices. Prefers V2 pools (lower state complexity);
    * updates only improve on previous rate (never zeroes it out).
    */
-  update() {
+  update(changedPools?: Iterable<string>) {
     let updatedCount = 0;
+    let inspectedCount = 0;
 
     // WMATIC is always 1:1 with MATIC (rate = 1)
     this._rates.set(TOKENS.WMATIC, 1n);
 
-    for (const [addr, state] of this._cache.entries()) {
+    const entries = changedPools
+      ? [...changedPools].map((addr) => [addr.toLowerCase(), this._cache.get(addr.toLowerCase())] as const)
+      : this._cache.entries();
+
+    for (const [addr, state] of entries) {
+      if (!state) continue;
       let pool = this._poolMeta.get(addr);
       if (!pool) {
         pool = this._registry.getPoolMeta(addr);
@@ -111,8 +124,9 @@ export class PriceOracle {
       }
       if (!pool) continue;
 
-      const tokens = pool.tokens;
+      const tokens = getPoolTokens(pool);
       if (!tokens || tokens.length !== 2) continue;
+      inspectedCount++;
 
       const t0 = tokens[0].toLowerCase();
       const t1 = tokens[1].toLowerCase();
@@ -133,8 +147,10 @@ export class PriceOracle {
       }
     }
 
-    if (updatedCount > 0) {
+    if (updatedCount > 0 || !changedPools || inspectedCount > 0) {
       this._updatedAt = Date.now();
+    }
+    if (updatedCount > 0) {
       logger.debug(`[price_oracle] Updated ${updatedCount} rates from state cache`);
     }
 
@@ -147,15 +163,19 @@ export class PriceOracle {
    * @param {string} tokenAddress  Lowercase token address
    * @returns {bigint}  MATIC wei per 1 raw token unit (0 if unknown)
    */
-  getRate(tokenAddress) {
+  getRate(tokenAddress: string) {
     return this._rates.get(tokenAddress.toLowerCase()) ?? 0n;
   }
 
-  getFreshRate(tokenAddress, maxAgeMs = 30_000) {
+  getFreshRate(tokenAddress: string, maxAgeMs = 30_000) {
     if (this._updatedAt <= 0 || Date.now() - this._updatedAt > maxAgeMs) {
       return 0n;
     }
     return this.getRate(tokenAddress);
+  }
+
+  isFresh(maxAgeMs = 30_000) {
+    return this._updatedAt > 0 && Date.now() - this._updatedAt <= maxAgeMs;
   }
 
   /**
@@ -165,7 +185,7 @@ export class PriceOracle {
    * @param {bigint} amount  Raw token units (e.g. USDC in 1e-6 units)
    * @returns {bigint}  MATIC wei equivalent
    */
-  toMatic(tokenAddress, amount) {
+  toMatic(tokenAddress: string, amount: bigint) {
     const rate = this.getRate(tokenAddress);
     if (rate === 0n || amount === 0n) return 0n;
     return amount * rate;
@@ -180,7 +200,7 @@ export class PriceOracle {
    * @param {bigint} maticWei
    * @returns {bigint}  Raw token units (floor division)
    */
-  fromMatic(tokenAddress, maticWei) {
+  fromMatic(tokenAddress: string, maticWei: bigint) {
     const rate = this.getRate(tokenAddress);
     if (rate === 0n || maticWei === 0n) return 0n;
     return maticWei / rate;
@@ -195,7 +215,7 @@ export class PriceOracle {
    * @param {string} tokenAddress  Lowercase address
    * @returns {number|null}
    */
-  _getDecimals(tokenAddress) {
+  _getDecimals(tokenAddress: string) {
     if (KNOWN_DECIMALS.has(tokenAddress)) {
       return KNOWN_DECIMALS.get(tokenAddress);
     }
@@ -230,7 +250,7 @@ export class PriceOracle {
    * @param {number}  _otherDec    Decimals of the other token (unused — for docs)
    * @returns {bigint}  Rate or 0n if not derivable
    */
-  _deriveRate(state, isWmatic0, _otherDec) {
+  _deriveRate(state: PoolStateLike, isWmatic0: boolean, _otherDec: number | null) {
     try {
       // ── Uniswap V2 ──────────────────────────────────────────
       if (state.reserve0 !== undefined && state.reserve1 !== undefined) {
@@ -250,7 +270,7 @@ export class PriceOracle {
       // sqrtPriceX96 encodes: sqrt(rawToken1 / rawToken0) * 2^96
       // priceX192 = rawToken1 / rawToken0  (as a Q192 fixed-point integer)
       if (state.sqrtPriceX96 !== undefined) {
-        const sqrtP = state.sqrtPriceX96;
+        const sqrtP = BigInt(state.sqrtPriceX96);
         if (sqrtP === 0n) return 0n;
         const priceX192 = sqrtP * sqrtP; // = (token1/token0) * 2^192
 

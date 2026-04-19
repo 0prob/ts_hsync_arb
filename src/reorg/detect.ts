@@ -27,11 +27,13 @@ export function detectReorg(registry: any, newGuard: any) {
 
   const storedHash = stored.block_hash;
   const storedBlock = Number(stored.block_number);
+  const storedFirstBlock = Number(pick(stored, "firstBlockNumber", "first_block_number"));
+  const storedFirstParent = pick(stored, "firstParentHash", "first_parent_hash");
   const newFirstParent = pick(newGuard, "firstParentHash", "first_parent_hash");
   const newFirstBlockRaw = pick(newGuard, "firstBlockNumber", "first_block_number");
   const newFirstBlock = Number(newFirstBlockRaw);
 
-  if (!Number.isFinite(newFirstBlock)) {
+  if (!Number.isFinite(newFirstBlock) || !newFirstParent) {
     return false;
   }
 
@@ -39,6 +41,16 @@ export function detectReorg(registry: any, newGuard: any) {
     if (newFirstBlock === storedBlock && newFirstParent !== storedHash) {
       return storedBlock;
     }
+  }
+
+  if (
+    Number.isFinite(storedFirstBlock) &&
+    newFirstBlock <= storedBlock &&
+    newFirstBlock <= storedFirstBlock &&
+    storedFirstParent &&
+    newFirstParent !== storedFirstParent
+  ) {
+    return newFirstBlock;
   }
 
   return false;

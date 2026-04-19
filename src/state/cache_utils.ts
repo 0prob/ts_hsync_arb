@@ -6,6 +6,8 @@
  * HyperSync client.
  */
 
+import { getPoolTokens } from "../util/pool_record.ts";
+
 export function mergeStateIntoCache(cache: any, addr: any, nextState: any) {
   const current = cache.get(addr);
   if (!current) {
@@ -40,14 +42,11 @@ export function reloadCacheFromRegistry(registry: any, cache: any, pendingEnrich
     } else {
       // Use an identity-field placeholder so validatePoolState can progress past
       // poolId/protocol/tokens checks once the watcher re-populates numeric fields.
-      let tokens;
-      try {
-        tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
-      } catch { tokens = []; }
+      const tokens = getPoolTokens(pool);
       nextState = {
         poolId: addr,
         protocol: pool.protocol,
-        tokens: Array.isArray(tokens) ? tokens.map((t) => t.toLowerCase()) : [],
+        tokens,
         timestamp: 0,
       };
     }

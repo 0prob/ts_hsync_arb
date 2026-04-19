@@ -24,10 +24,12 @@ import { executionClient } from "./gas.ts";
 export class NonceManager {
   private _client: any;
   private _state: Map<string, any>;
+  private _syncing: Map<string, Promise<void>>;
 
   constructor(_rpcUrl?: string) {
     this._client = executionClient;
     this._state = new Map();
+    this._syncing = new Map();
   }
 
   // ─── Helpers ─────────────────────────────────────────────────
@@ -42,6 +44,27 @@ export class NonceManager {
       blockTag: "pending", // Include mempool txs in count
     });
     return BigInt(count);
+  }
+
+  async _ensureSynced(address: any, key: any) {
+    const existing = this._syncing.get(key);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const syncPromise = (async () => {
+      const onchain = await this._fetchOnchain(address);
+      this._state.set(key, { nonce: onchain, pending: 0, dirty: false });
+      console.log(`[nonce_manager] ${address}: synced nonce=${onchain}`);
+    })();
+
+    this._syncing.set(key, syncPromise);
+    try {
+      await syncPromise;
+    } finally {
+      this._syncing.delete(key);
+    }
   }
 
   // ─── Public API ──────────────────────────────────────────────
@@ -59,9 +82,7 @@ export class NonceManager {
     const key = this._key(address);
 
     if (!this._state.has(key) || this._state.get(key).dirty) {
-      const onchain = await this._fetchOnchain(address);
-      this._state.set(key, { nonce: onchain, pending: 0, dirty: false });
-      console.log(`[nonce_manager] ${address}: synced nonce=${onchain}`);
+      await this._ensureSynced(address, key);
     }
 
     const entry = this._state.get(key);

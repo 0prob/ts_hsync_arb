@@ -26,6 +26,6 @@ try {
   );
 
   parentPort.postMessage({ profitable });
-} catch (err) {
+} catch (err: any) {
   parentPort.postMessage({ error: err.message });
 }

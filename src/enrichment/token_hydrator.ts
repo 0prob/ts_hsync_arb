@@ -18,6 +18,7 @@ import { HYPERRPC_URL } from "../config/index.ts";
 import { dynamicPublicClient } from "../utils/rpc_manager.ts";
 import { logger } from "../utils/logger.ts";
 import { isEndpointCapabilityError } from "../utils/rpc_manager.ts";
+import { getPoolTokens } from "../util/pool_record.ts";
 
 // ─── HyperRPC client ──────────────────────────────────────────
 //
@@ -190,7 +191,7 @@ export async function hydrateTokens(tokenAddresses: any, registry: any) {
 export async function hydrateNewTokens(pools: any, registry: any) {
   const seen = new Set();
   for (const pool of pools) {
-    const tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
+    const tokens = getPoolTokens(pool);
     if (!Array.isArray(tokens)) continue;
     for (const t of tokens) {
       if (t && t !== "0x0000000000000000000000000000000000000000") {

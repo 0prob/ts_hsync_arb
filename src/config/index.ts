@@ -66,9 +66,14 @@ const _perf = _loadPerfJson();
 function _num(envKey: string, perfKey: string, def: number): number {
   if (process.env[envKey] != null && process.env[envKey] !== "") {
     const n = Number(process.env[envKey]);
-    if (!Number.isNaN(n)) return n;
+    if (Number.isFinite(n)) return n;
+    console.warn(`[config] Invalid numeric env ${envKey}=${process.env[envKey]} — using fallback`);
   }
-  if (_perf[perfKey] != null) return Number(_perf[perfKey]);
+  if (_perf[perfKey] != null) {
+    const n = Number(_perf[perfKey]);
+    if (Number.isFinite(n)) return n;
+    console.warn(`[config] Invalid numeric perf.json value for ${perfKey}=${_perf[perfKey]} — using fallback`);
+  }
   return def;
 }
 

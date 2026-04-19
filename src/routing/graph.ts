@@ -20,6 +20,7 @@
 
 import { simulateV3Swap } from "../math/uniswap_v3.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
+import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/pool_record.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
@@ -200,28 +201,19 @@ export class RoutingGraph {
   addPool(pool: any, stateMap = new Map()) {
     if (pool.status !== "active") return;
 
-    let tokens;
-    try {
-      tokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
-    } catch { return; }
+    const tokens = getPoolTokens(pool);
     if (!tokens || tokens.length < 2) return;
 
     const poolAddress = pool.pool_address.toLowerCase();
     const token0 = tokens[0].toLowerCase();
     const token1 = tokens[1].toLowerCase();
 
-    if (
-      token0 === "0x0000000000000000000000000000000000000000" ||
-      token1 === "0x0000000000000000000000000000000000000000"
-    ) return;
+    if (hasZeroAddressToken(tokens)) return;
 
     // Skip if this pool is already in the graph
     if (this._edgesByPool.has(poolAddress)) return;
 
-    let metadata = null;
-    try {
-      metadata = typeof pool.metadata === "string" ? JSON.parse(pool.metadata) : pool.metadata;
-    } catch { metadata = null; }
+    const metadata = getPoolMetadata(pool);
 
     const isV3     = V3_PROTOCOLS.has(pool.protocol);
     const fee      = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
@@ -344,13 +336,7 @@ export function buildGraph(pools: any, stateMap = new Map()) {
   for (const pool of pools) {
     if (pool.status !== "active") continue;
 
-    let tokens;
-    try {
-      tokens =
-        typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
-    } catch {
-      continue;
-    }
+    const tokens = getPoolTokens(pool);
 
     if (!tokens || tokens.length < 2) continue;
 
@@ -358,22 +344,9 @@ export function buildGraph(pools: any, stateMap = new Map()) {
     const token0 = tokens[0].toLowerCase();
     const token1 = tokens[1].toLowerCase();
 
-    if (
-      token0 === "0x0000000000000000000000000000000000000000" ||
-      token1 === "0x0000000000000000000000000000000000000000"
-    ) {
-      continue;
-    }
+    if (hasZeroAddressToken(tokens)) continue;
 
-    let metadata = null;
-    try {
-      metadata =
-        typeof pool.metadata === "string"
-          ? JSON.parse(pool.metadata)
-          : pool.metadata;
-    } catch {
-      metadata = null;
-    }
+    const metadata = getPoolMetadata(pool);
 
     const isV3 = V3_PROTOCOLS.has(pool.protocol);
     const fee  = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
@@ -431,13 +404,7 @@ export function buildHubGraph(pools: any, hubTokens: any, stateMap = new Map()) 
   for (const pool of pools) {
     if (pool.status !== "active") continue;
 
-    let tokens;
-    try {
-      tokens =
-        typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
-    } catch {
-      continue;
-    }
+    const tokens = getPoolTokens(pool);
 
     if (!tokens || tokens.length < 2) continue;
 
@@ -448,15 +415,7 @@ export function buildHubGraph(pools: any, hubTokens: any, stateMap = new Map()) 
 
     const poolAddress = pool.pool_address.toLowerCase();
 
-    let metadata = null;
-    try {
-      metadata =
-        typeof pool.metadata === "string"
-          ? JSON.parse(pool.metadata)
-          : pool.metadata;
-    } catch {
-      metadata = null;
-    }
+    const metadata = getPoolMetadata(pool);
 
     const isV3     = V3_PROTOCOLS.has(pool.protocol);
     const fee      = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
@@ -566,7 +525,7 @@ export const HUB_4_TOKENS = new Set([
 export function serializeTopology(graph: any) {
   const adjacency: Record<string, any[]> = {};
   for (const [token, edges] of graph.adjacency) {
-    adjacency[token] = edges.map(({ protocol, poolAddress, tokenIn, tokenOut, zeroForOne, fee }) => ({
+    adjacency[token] = edges.map(({ protocol, poolAddress, tokenIn, tokenOut, zeroForOne, fee }: any) => ({
       protocol, poolAddress, tokenIn, tokenOut, zeroForOne, fee: fee ?? null,
     }));
   }

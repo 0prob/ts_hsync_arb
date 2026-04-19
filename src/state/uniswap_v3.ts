@@ -140,12 +140,46 @@ const TICKS_ABI = [
 const MIN_TICK = -887272;
 const MAX_TICK = 887272;
 
+type PoolCoreState = {
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+  fee: number;
+  tickSpacing: number;
+};
+
+type TickLiquidity = {
+  liquidityGross: bigint;
+  liquidityNet: bigint;
+};
+
+type TickBitmapResult = {
+  bitmaps: Map<number, bigint>;
+  tickIndices: number[];
+};
+
+type V3PoolState = PoolCoreState & {
+  address: string;
+  bitmaps: Map<number, bigint>;
+  ticks: Map<number, TickLiquidity>;
+  fetchedAt: number;
+  initialized: boolean;
+};
+
+type V3PoolMeta = {
+  isAlgebra?: boolean;
+};
+
+type V3StateMap = Map<string, V3PoolState> & {
+  noDataFailures?: Set<string>;
+};
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 /**
  * Determine the range of word positions that cover all possible ticks.
  */
-function wordRange(tickSpacing) {
+function wordRange(tickSpacing: number): { minWord: number; maxWord: number } {
   const minWord = Math.floor(Math.floor(MIN_TICK / tickSpacing) / 256);
   const maxWord = Math.floor(Math.floor(MAX_TICK / tickSpacing) / 256);
   return { minWord, maxWord };
@@ -159,8 +193,8 @@ function wordRange(tickSpacing) {
  * @param {number} tickSpacing The pool's tick spacing
  * @returns {number[]}        Array of initialized tick values
  */
-function extractTicksFromWord(word, wordPos, tickSpacing) {
-  const ticks = [];
+function extractTicksFromWord(word: bigint, wordPos: number, tickSpacing: number): number[] {
+  const ticks: number[] = [];
   if (word === 0n) return ticks;
 
   for (let bit = 0; bit < 256; bit++) {
@@ -189,7 +223,10 @@ function extractTicksFromWord(word, wordPos, tickSpacing) {
  * @param {boolean} [options.isAlgebra=false]  Use Algebra globalState() instead of slot0()
  * @returns {{ sqrtPriceX96: bigint, tick: number, liquidity: bigint, fee: number, tickSpacing: number }}
  */
-export async function fetchPoolCore(poolAddress, { isAlgebra = false } = {}) {
+export async function fetchPoolCore(
+  poolAddress: string,
+  { isAlgebra = false }: V3PoolMeta = {}
+): Promise<PoolCoreState> {
   if (isAlgebra) {
     // Algebra: globalState() returns (sqrtPriceX96, tick, fee, ...) in one call
     const [globalStateResult, liquidityResult, tickSpacingResult] =
@@ -265,9 +302,12 @@ export async function fetchPoolCore(poolAddress, { isAlgebra = false } = {}) {
  * @param {number} tickSpacing  Pool tick spacing
  * @returns {Promise<{ bitmaps: Map<number, bigint>, tickIndices: number[] }>}
  */
-export async function fetchTickBitmap(poolAddress, tickSpacing) {
+export async function fetchTickBitmap(
+  poolAddress: string,
+  tickSpacing: number
+): Promise<TickBitmapResult> {
   const { minWord, maxWord } = wordRange(tickSpacing);
-  const wordPositions = [];
+  const wordPositions: number[] = [];
   for (let w = minWord; w <= maxWord; w++) {
     wordPositions.push(w);
   }
@@ -275,7 +315,7 @@ export async function fetchTickBitmap(poolAddress, tickSpacing) {
   // Fetch all bitmap words with concurrency throttling
   const words = await throttledMap(
     wordPositions,
-    async (wordPos) => {
+    async (wordPos: number) => {
       try {
         const result = await readContractWithRetry({
           address: poolAddress,
@@ -292,8 +332,8 @@ export async function fetchTickBitmap(poolAddress, tickSpacing) {
     ENRICH_CONCURRENCY
   );
 
-  const bitmaps = new Map();
-  const tickIndices = [];
+  const bitmaps = new Map<number, bigint>();
+  const tickIndices: number[] = [];
 
   for (const { wordPos, word } of words) {
     if (word !== 0n) {
@@ -312,14 +352,17 @@ export async function fetchTickBitmap(poolAddress, tickSpacing) {
  * @param {number[]} tickIndices   Array of initialized tick values
  * @returns {Map<number, { liquidityGross: bigint, liquidityNet: bigint }>}
  */
-export async function fetchTickData(poolAddress, tickIndices) {
-  const tickMap = new Map();
+export async function fetchTickData(
+  poolAddress: string,
+  tickIndices: number[]
+): Promise<Map<number, TickLiquidity>> {
+  const tickMap = new Map<number, TickLiquidity>();
 
   if (tickIndices.length === 0) return tickMap;
 
   const results = await throttledMap(
     tickIndices,
-    async (tick) => {
+    async (tick: number) => {
       try {
         const result = await readContractWithRetry({
           address: poolAddress,
@@ -363,7 +406,10 @@ export async function fetchTickData(poolAddress, tickIndices) {
  * @param {boolean} [options.isAlgebra=false]  Use Algebra globalState() interface
  * @returns {Promise<Object>}
  */
-export async function fetchV3PoolState(poolAddress, { isAlgebra = false } = {}) {
+export async function fetchV3PoolState(
+  poolAddress: string,
+  { isAlgebra = false }: V3PoolMeta = {}
+): Promise<V3PoolState> {
   // Step 1: Core state (dispatches to Algebra or Uniswap V3 interface)
   const core = await fetchPoolCore(poolAddress, { isAlgebra });
 
@@ -408,24 +454,24 @@ export async function fetchV3PoolState(poolAddress, { isAlgebra = false } = {}) 
  * @returns {Promise<Map<string, Object>>}
  */
 export async function fetchMultipleV3States(
-  poolAddresses,
+  poolAddresses: string[],
   concurrency = 2,
-  poolMeta = new Map(),
-  onProgress = null
-) {
-  const states = new Map();
-  const noDataFailures = new Set();
+  poolMeta: Map<string, V3PoolMeta> = new Map(),
+  onProgress: ((completed: number, total: number, addr: string) => void) | null = null
+): Promise<V3StateMap> {
+  const states: V3StateMap = new Map();
+  const noDataFailures = new Set<string>();
   let completed = 0;
   const total = poolAddresses.length;
 
   const results = await throttledMap(
     poolAddresses,
-    async (addr) => {
+    async (addr: string) => {
       try {
         const meta = poolMeta.get(addr.toLowerCase()) || {};
         const state = await fetchV3PoolState(addr, { isAlgebra: meta.isAlgebra || false });
         return { addr, state, error: null };
-      } catch (error) {
+      } catch (error: any) {
         if (isNoDataReadContractError(error)) {
           noDataFailures.add(addr.toLowerCase());
         }

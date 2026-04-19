@@ -205,6 +205,7 @@ export async function sendTx(builtTx: any, config: any, options: any = {}) {
       dryRun: dryRunResult,
     };
   } catch (err: any) {
+    if (nonceManager) nonceManager.resync(fromAddress);
     console.warn(`[send_tx] Receipt wait failed: ${err.message}`);
     return {
       submitted: true,

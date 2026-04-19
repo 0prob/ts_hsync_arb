@@ -53,14 +53,14 @@ export class PollUniv2 {
 
     // Load active V2 pools from registry
     const pools = this._registry.getActivePoolsMeta().filter(
-      (p) => V2_PROTOCOLS.has(p.protocol)
+      (p: any) => V2_PROTOCOLS.has(p.protocol)
     );
 
     if (pools.length === 0) {
       return { updated: 0, failed: 0, durationMs: Date.now() - t0 };
     }
 
-    const addresses = pools.map((p) => p.pool_address);
+    const addresses = pools.map((p: any) => p.pool_address);
 
     // Batch-fetch reserves
     const statesMap = await fetchMultipleV2States(addresses, this._concurrency);
@@ -121,7 +121,7 @@ export class PollUniv2 {
       if (!this._running) return;
       try {
         await this.poll();
-      } catch (err) {
+      } catch (err: any) {
         console.error(`[poll_univ2] Poll error: ${err.message}`);
       }
       if (this._running) {

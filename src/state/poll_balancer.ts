@@ -83,7 +83,7 @@ async function readContractWithTimeout(params: any, label: any) {
   return withTimeout(readContractWithRetry(params), label, BALANCER_READ_TIMEOUT_MS);
 }
 
-export async function fetchBalancerPoolState(poolAddress, poolId) {
+export async function fetchBalancerPoolState(poolAddress: string, poolId: string | null | undefined) {
   const ONE = 10n ** 18n;
 
   let resolvedPoolId = poolId;

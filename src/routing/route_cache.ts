@@ -22,9 +22,14 @@
 
 import { routeKeyFromEdges } from "./finder.ts";
 
+type CachedEdge = { poolAddress: string };
+type CachedPath = { startToken: string; edges: CachedEdge[] };
+type CachedResult = { profit: bigint | string };
+type CachedEntry = { path: CachedPath; result: CachedResult; profit: bigint };
+
 export class RouteCache {
   private _maxSize: number;
-  private _routes: any[];
+  private _routes: CachedEntry[];
   private _poolIndex: Map<string, Set<number>>;
 
   constructor(maxSize = 1_000) {
@@ -44,7 +49,7 @@ export class RouteCache {
    * @param {Array<{ path: object, result: object }>} profitable
    *   Profitable routes from evaluatePaths / evaluatePathsParallel.
    */
-  update(profitable) {
+  update(profitable: Array<{ path: CachedPath; result: CachedResult }>) {
     if (!profitable || profitable.length === 0) return;
 
     // Normalise profit to BigInt (workers deserialise as strings)
@@ -61,7 +66,7 @@ export class RouteCache {
     // Deduplicate by ordered route key. Pool-set-only dedup drops
     // order-sensitive cyclic routes that can still execute differently.
     const seen = new Set();
-    const deduped = [];
+    const deduped: CachedEntry[] = [];
     for (const entry of merged) {
       const key = routeKeyFromEdges(entry.path.startToken, entry.path.edges);
       if (!seen.has(key)) {
@@ -86,8 +91,8 @@ export class RouteCache {
    * @param {Set<string>|string[]} changedPools  Lowercase pool addresses
    * @returns {Array<{ path: object, result: object }>}
    */
-  getByPools(changedPools) {
-    const idxSet = new Set();
+  getByPools(changedPools: Set<string> | string[]) {
+    const idxSet = new Set<number>();
     for (const pool of changedPools) {
       const hits = this._poolIndex.get(pool.toLowerCase());
       if (hits) for (const i of hits) idxSet.add(i);
@@ -120,7 +125,7 @@ export class RouteCache {
    *
    * @param {Map<string, object>} stateCache
    */
-  prune(stateCache) {
+  prune(stateCache: Map<string, object>) {
     const before = this._routes.length;
     this._routes = this._routes.filter((entry) =>
       entry.path.edges.every((e) => stateCache.has(e.poolAddress))
@@ -137,7 +142,7 @@ export class RouteCache {
    * @param {Set<string>|string[]} poolAddresses
    * @returns {number} number of removed routes
    */
-  removeByPools(poolAddresses) {
+  removeByPools(poolAddresses: Set<string> | string[]) {
     const blocked = new Set([...poolAddresses].map((pool) => pool.toLowerCase()));
     if (blocked.size === 0 || this._routes.length === 0) return 0;
 
@@ -157,6 +162,10 @@ export class RouteCache {
     this._poolIndex.clear();
   }
 
+  get routes() {
+    return this._routes;
+  }
+
   // ─── Internal ──────────────────────────────────────────────
 
   _rebuildIndex() {
@@ -165,7 +174,7 @@ export class RouteCache {
       for (const edge of this._routes[i].path.edges) {
         const pool = edge.poolAddress;
         if (!this._poolIndex.has(pool)) this._poolIndex.set(pool, new Set());
-        this._poolIndex.get(pool).add(i);
+        this._poolIndex.get(pool)?.add(i);
       }
     }
   }

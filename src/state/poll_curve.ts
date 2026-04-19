@@ -47,7 +47,7 @@ const GET_BALANCES_ABI = [
 ];
 
 // Individual balance query (for pools without get_balances)
-const BALANCE_ABI = (idx) => [
+const BALANCE_ABI = (idx: number) => [
   {
     name: "balances",
     type: "function",
@@ -106,20 +106,20 @@ const N_COINS_ABI = [
  * @param {number}   nCoins       Number of coins in the pool
  * @returns {Promise<Object>}     Raw Curve state
  */
-export async function fetchCurvePoolState(poolAddress, nCoins) {
+export async function fetchCurvePoolState(poolAddress: string, nCoins: number) {
   const PRECISION = 10n ** 18n;
 
   // Try get_balances() first; fall back to per-index balances()
-  let balances = [];
+  let balances: bigint[] = [];
   try {
     const raw = await readContractWithRetry({
       address: poolAddress,
       abi: GET_BALANCES_ABI,
       functionName: "get_balances",
     });
-    balances = Array.from(raw)
+    balances = Array.from(raw as ArrayLike<string | number | bigint | boolean>)
       .slice(0, nCoins)
-      .map(BigInt);
+      .map((value) => BigInt(value));
   } catch {
     // Fall back: query balances(i) for each coin
     for (let i = 0; i < nCoins; i++) {
@@ -160,7 +160,7 @@ export async function fetchCurvePoolState(poolAddress, nCoins) {
   };
 }
 
-export async function fetchAndNormalizeCurvePool(pool) {
+export async function fetchAndNormalizeCurvePool(pool: any) {
   const addr = pool.pool_address.toLowerCase();
   const tokens = parsePoolTokens(pool.tokens);
   const nCoins = tokens.length || 2;
@@ -202,7 +202,7 @@ export class PollCurve {
     const t0 = Date.now();
 
     const pools = this._registry.getActivePoolsMeta().filter(
-      (p) => CURVE_PROTOCOLS.has(p.protocol)
+      (p: any) => CURVE_PROTOCOLS.has(p.protocol)
     );
 
     if (pools.length === 0) {
@@ -211,11 +211,11 @@ export class PollCurve {
 
     const results = await throttledMap(
       pools,
-      async (pool) => {
+      async (pool: any) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeCurvePool(pool);
           return { addr, normalized, error: null };
-        } catch (err) {
+        } catch (err: any) {
           const addr = pool.pool_address.toLowerCase();
           return { addr, normalized: null, error: err };
         }
@@ -258,7 +258,7 @@ export class PollCurve {
       if (!this._running) return;
       try {
         await this.poll();
-      } catch (err) {
+      } catch (err: any) {
         console.error(`[poll_curve] Poll error: ${err.message}`);
       }
       if (this._running) {

@@ -56,7 +56,7 @@ const DEFAULT_MIN_PROFIT = 0n;
  * @param {bigint} gasPriceWei  Current gas price in wei
  * @returns {bigint}            Gas cost in wei
  */
-export function gasCostWei(gasUnits, gasPriceWei = DEFAULT_GAS_PRICE_WEI) {
+export function gasCostWei(gasUnits: number, gasPriceWei: bigint = DEFAULT_GAS_PRICE_WEI) {
   return BigInt(gasUnits) * gasPriceWei;
 }
 
@@ -71,7 +71,7 @@ export function gasCostWei(gasUnits, gasPriceWei = DEFAULT_GAS_PRICE_WEI) {
  * @param {bigint} slippageBps Slippage in basis points (0-10000)
  * @returns {bigint}           Slippage-adjusted amountOut
  */
-export function applySlippage(amountOut, slippageBps = DEFAULT_SLIPPAGE_BPS) {
+export function applySlippage(amountOut: bigint, slippageBps: bigint = DEFAULT_SLIPPAGE_BPS) {
   const complement = BPS_DENOM - slippageBps;
   return (amountOut * complement) / BPS_DENOM;
 }
@@ -95,9 +95,9 @@ export function applySlippage(amountOut, slippageBps = DEFAULT_SLIPPAGE_BPS) {
  * @returns {bigint}             Revert risk penalty
  */
 export function revertRiskPenalty(
-  grossProfit,
-  hopCount,
-  revertRiskBps = DEFAULT_REVERT_RISK_BPS
+  grossProfit: bigint,
+  hopCount: number,
+  revertRiskBps: bigint = DEFAULT_REVERT_RISK_BPS
 ) {
   // Increase risk for more hops: +200 bps per extra hop beyond 2
   const extraHops = BigInt(Math.max(0, hopCount - 2));
@@ -143,7 +143,7 @@ export function revertRiskPenalty(
  *
  * @returns {ProfitAssessment}
  */
-export function computeProfit(routeResult, options = {}) {
+export function computeProfit(routeResult: RouteResultLike, options: ProfitOptions = {}): ProfitAssessment {
   const {
     gasPriceWei = DEFAULT_GAS_PRICE_WEI,
     tokenToMaticRate = null,
@@ -195,15 +195,20 @@ export function computeProfit(routeResult, options = {}) {
   let shouldExecute = true;
   let rejectReason = "";
 
+  const thresholdProfit =
+    tokenToMaticRate != null && tokenToMaticRate > 0n
+      ? netProfitAfterGas
+      : netProfit;
+
   if (grossProfit <= 0n) {
     shouldExecute = false;
     rejectReason = "gross profit <= 0";
   } else if (profitAfterSlippage <= 0n) {
     shouldExecute = false;
     rejectReason = "profit wiped by slippage";
-  } else if (netProfit < minNetProfit) {
+  } else if (thresholdProfit < minNetProfit) {
     shouldExecute = false;
-    rejectReason = `net profit ${netProfit} < minimum ${minNetProfit}`;
+    rejectReason = `net profit ${thresholdProfit} < minimum ${minNetProfit}`;
   } else if (tokenToMaticRate != null && netProfitAfterGas <= 0n) {
     shouldExecute = false;
     rejectReason = "gas cost exceeds net profit";
@@ -233,7 +238,35 @@ export function computeProfit(routeResult, options = {}) {
  * @param {bigint} [marketContext.minNetProfit]
  * @returns {boolean}
  */
-export function isProfitable(routeResult, marketContext = {}) {
+export function isProfitable(routeResult: RouteResultLike, marketContext: ProfitOptions = {}) {
   const assessment = computeProfit(routeResult, marketContext);
   return assessment.shouldExecute;
 }
+type RouteResultLike = {
+  amountIn: bigint;
+  amountOut: bigint;
+  profit: bigint;
+  totalGas: number;
+};
+
+type ProfitOptions = {
+  gasPriceWei?: bigint;
+  tokenToMaticRate?: bigint | null;
+  slippageBps?: bigint;
+  revertRiskBps?: bigint;
+  minNetProfit?: bigint;
+  hopCount?: number;
+};
+
+type ProfitAssessment = {
+  shouldExecute: boolean;
+  grossProfit: bigint;
+  gasCostWei: bigint;
+  gasCostInTokens: bigint;
+  slippageDeduction: bigint;
+  revertPenalty: bigint;
+  netProfit: bigint;
+  netProfitAfterGas: bigint;
+  roi: number;
+  rejectReason: string;
+};
