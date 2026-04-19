@@ -32,11 +32,26 @@ function discoveryCheckpointFromNextBlock(nextBlock: any, fallbackFromBlock: any
 
 async function discoverProtocol(key: any, protocol: any, registry: any) {
   const checkpoint = registry.getCheckpoint(key);
-  const fromBlock = checkpoint ? checkpoint.last_block + 1 : GENESIS_START_BLOCK;
+  const existingPools = registry.getPools({ protocol: key });
+  const shouldBackfillEmptyProtocol =
+    !!checkpoint &&
+    Array.isArray(existingPools) &&
+    existingPools.length === 0 &&
+    checkpoint.last_block >= GENESIS_START_BLOCK;
+
+  const fromBlock = shouldBackfillEmptyProtocol
+    ? GENESIS_START_BLOCK
+    : checkpoint
+      ? checkpoint.last_block + 1
+      : GENESIS_START_BLOCK;
 
   console.log(
     `\n[${protocol.name}] Discovering from block ${fromBlock}` +
-      (checkpoint ? ` (resumed from checkpoint)` : ` (genesis start)`) +
+      (shouldBackfillEmptyProtocol
+        ? ` (protocol empty at checkpoint tip — replaying from genesis)`
+        : checkpoint
+          ? ` (resumed from checkpoint)`
+          : ` (genesis start)`) +
       `...`
   );
 
