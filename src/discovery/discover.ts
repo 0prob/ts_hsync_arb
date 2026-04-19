@@ -30,7 +30,10 @@ function discoveryCheckpointFromNextBlock(nextBlock: any, fallbackFromBlock: any
 
 // ─── Per-protocol discovery ────────────────────────────────────
 
-async function discoverProtocol(key: any, protocol: any, registry: any) {
+async function discoverProtocol(key: any, protocol: any, registry: any, context: any = {}) {
+  if (typeof protocol.discover === "function") {
+    return protocol.discover({ key, protocol, registry, ...context });
+  }
   const checkpoint = registry.getCheckpoint(key);
   const existingPools = registry.getPools({ protocol: key });
   const shouldBackfillEmptyProtocol =
@@ -263,13 +266,14 @@ async function discoverCurveRemovals(registry: any) {
 export async function discoverPools() {
   const registry = new RegistryService(DB_PATH);
   const pendingHydrations: Promise<number>[] = [];
+  let chainHeight: number | null = null;
 
   console.log("=== Polygon Pool Discovery (HyperSync) ===");
   console.log(`HyperSync URL: ${HYPERSYNC_URL}`);
   console.log(`API Token: ${ENVIO_API_TOKEN ? "configured" : "NOT SET"}`);
 
   try {
-    const chainHeight = await client.getHeight();
+    chainHeight = await client.getHeight();
     console.log(`Chain height: ${chainHeight}`);
   } catch (e: any) {
     console.warn(`Could not fetch chain height: ${e.message}`);
@@ -279,7 +283,7 @@ export async function discoverPools() {
 
   for (const [key, protocol] of Object.entries(PROTOCOLS)) {
     try {
-      const result = await discoverProtocol(key, protocol, registry);
+      const result = await discoverProtocol(key, protocol, registry, { chainHeight });
       totalDiscovered += result.discovered;
       if (result.hydrationPromise) pendingHydrations.push(result.hydrationPromise);
 

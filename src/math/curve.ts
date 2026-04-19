@@ -229,14 +229,17 @@ export function getCurveAmountIn(amountOut: bigint, poolState: any, tokenInIdx: 
  *
  * @param {bigint}  amountIn    Input amount
  * @param {Object}  poolState   Normalized Curve pool state (from normalizer)
- * @param {boolean} zeroForOne  true = token0→token1, false = token1→token0
+ * @param {number}  tokenInIdx  Input token index
+ * @param {number}  tokenOutIdx Output token index
  * @returns {{ amountOut: bigint, gasEstimate: number }}
  */
-export function simulateCurveSwap(amountIn: bigint, poolState: any, zeroForOne: boolean) {
+export function simulateCurveSwap(
+  amountIn: bigint,
+  poolState: any,
+  tokenInIdx = 0,
+  tokenOutIdx = 1
+) {
   if (amountIn <= 0n) return { amountOut: 0n, gasEstimate: 0 };
-
-  const tokenInIdx = zeroForOne ? 0 : 1;
-  const tokenOutIdx = zeroForOne ? 1 : 0;
 
   const amountOut = getCurveAmountOut(amountIn, poolState, tokenInIdx, tokenOutIdx);
 

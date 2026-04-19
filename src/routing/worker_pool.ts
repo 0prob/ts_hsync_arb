@@ -30,8 +30,11 @@ type PathLike = {
   cumulativeFeesBps?: number;
   edges: Array<{
     poolAddress: string;
+    tokenIn: string;
     tokenOut: string;
     protocol: string;
+    tokenInIdx?: number;
+    tokenOutIdx?: number;
     zeroForOne: boolean;
     fee?: number | null;
   }>;
@@ -45,8 +48,11 @@ type SerializedEvaluationPath = {
   cumulativeFeesBps?: number;
   edges: Array<{
     poolAddress: string;
+    tokenIn: string;
     tokenOut: string;
     protocol: string;
+    tokenInIdx?: number;
+    tokenOutIdx?: number;
     zeroForOne: boolean;
     fee?: number | null;
   }>;
@@ -58,6 +64,8 @@ type SerializedEnumeratedPath = {
   logWeight: unknown;
   cumulativeFeesBps?: number;
   poolAddresses: string[];
+  tokenIns: string[];
+  tokenOuts: string[];
   zeroForOnes: boolean[];
 };
 
@@ -196,7 +204,7 @@ function serialisedPathKey(path: SerializedEnumeratedPath) {
   return [
     path.startToken.toLowerCase(),
     ...path.poolAddresses.map((poolAddress: string, i: number) =>
-      `${poolAddress.toLowerCase()}:${path.zeroForOnes[i] ? "1" : "0"}`
+      `${poolAddress.toLowerCase()}:${path.tokenIns[i].toLowerCase()}:${path.tokenOuts[i].toLowerCase()}`
     ),
   ].join("|");
 }
@@ -206,7 +214,7 @@ function serialiseEvaluationPath(path: PathLike): SerializedEvaluationPath {
     serialisedKey: [
       path.startToken.toLowerCase(),
       ...path.edges.map((edge) =>
-        `${edge.poolAddress.toLowerCase()}:${edge.zeroForOne ? "1" : "0"}`
+        `${edge.poolAddress.toLowerCase()}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`
       ),
     ].join("|"),
     startToken: path.startToken,
@@ -215,8 +223,11 @@ function serialiseEvaluationPath(path: PathLike): SerializedEvaluationPath {
     cumulativeFeesBps: path.cumulativeFeesBps,
     edges: path.edges.map((edge) => ({
       poolAddress: edge.poolAddress,
+      tokenIn: edge.tokenIn,
       tokenOut: edge.tokenOut,
       protocol: edge.protocol,
+      tokenInIdx: edge.tokenInIdx,
+      tokenOutIdx: edge.tokenOutIdx,
       zeroForOne: edge.zeroForOne,
       fee: edge.fee ?? null,
     })),
@@ -381,7 +392,7 @@ class WorkerPool {
    * Splits `startTokens` into equal chunks (one per worker) and runs
    * findArbPaths on the serialised topology graph in each worker.
    * Returns serialised path descriptors; the caller resolves full edges
-   * from the live graph using poolAddresses + zeroForOnes.
+   * from the live graph using poolAddresses + tokenIn/tokenOut identity.
    *
    * Falls back to synchronous enumeration when pool has < 2 workers or
    * only one start token.
@@ -410,6 +421,8 @@ class WorkerPool {
         logWeight:         p.logWeight,
         cumulativeFeesBps: p.cumulativeFeesBps,
         poolAddresses:     p.edges.map((e: any) => e.poolAddress),
+        tokenIns:          p.edges.map((e: any) => e.tokenIn),
+        tokenOuts:         p.edges.map((e: any) => e.tokenOut),
         zeroForOnes:       p.edges.map((e: any) => e.zeroForOne),
       }));
     }

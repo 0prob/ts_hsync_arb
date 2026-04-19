@@ -280,8 +280,8 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
       amountIn,
       amountOut,
       fee:          meta.fee || 0,
-      tokenInIdx:   meta.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
-      tokenOutIdx:  meta.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0),
+      tokenInIdx:   edge.tokenInIdx ?? meta.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
+      tokenOutIdx:  edge.tokenOutIdx ?? meta.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0),
       isCrypto:     CURVE_CRYPTO_PROTOCOLS.has(edge.protocol),
       poolId:       meta.poolId || meta.pool_id || null,
     };

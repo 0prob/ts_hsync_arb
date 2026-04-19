@@ -97,6 +97,8 @@ parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
         logWeight: p.logWeight,
         cumulativeFeesBps: p.cumulativeFeesBps,
         poolAddresses: p.edges.map((e: any) => e.poolAddress),
+        tokenIns: p.edges.map((e: any) => e.tokenIn),
+        tokenOuts: p.edges.map((e: any) => e.tokenOut),
         zeroForOnes: p.edges.map((e: any) => e.zeroForOne),
       }));
       parentPort!.postMessage({ id, type: "ENUMERATE", paths: serialised });

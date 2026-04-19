@@ -130,6 +130,8 @@ type WarmupStats = {
 type SerializedPathLike = {
   startToken: string;
   poolAddresses: string[];
+  tokenIns: string[];
+  tokenOuts: string[];
   zeroForOnes: boolean[];
   hopCount: number;
   logWeight: unknown;
@@ -683,6 +685,7 @@ const _WARMUP_CRV = new Set([
   "CURVE_STABLE", "CURVE_CRYPTO", "CURVE_MAIN", "CURVE_MAIN_REGISTRY",
   "CURVE_FACTORY_STABLE", "CURVE_FACTORY_CRYPTO",
   "CURVE_CRYPTO_FACTORY", "CURVE_STABLE_FACTORY",
+  "CURVE_STABLESWAP_NG", "CURVE_TRICRYPTO_NG",
 ]);
 const WARMUP_PROGRESS_LOG_EVERY = 25;
 
@@ -1269,7 +1272,7 @@ async function refreshCycles(force = false) {
  * Re-hydrate serialised path descriptors (from workers) back to full ArbPath
  * objects with live edge references from the in-memory graphs.
  *
- * @param {Array<{startToken,poolAddresses,zeroForOnes,hopCount,logWeight,cumulativeFeesBps}>} serialised
+ * @param {Array<{startToken,poolAddresses,tokenIns,tokenOuts,zeroForOnes,hopCount,logWeight,cumulativeFeesBps}>} serialised
  * @param {import('./src/routing/graph.ts').RoutingGraph} hub
  * @param {import('./src/routing/graph.ts').RoutingGraph} full
  * @returns {import('./src/routing/finder.ts').ArbPath[]}
@@ -1282,7 +1285,7 @@ function _hydratePaths(serialised: SerializedPathLike[], hub: any, full: any) {
     const key = [
       s.startToken.toLowerCase(),
       ...s.poolAddresses.map((pool, i) =>
-        `${pool.toLowerCase()}:${s.zeroForOnes[i] ? "1" : "0"}`
+        `${pool.toLowerCase()}:${s.tokenIns[i].toLowerCase()}:${s.tokenOuts[i].toLowerCase()}`
       ),
     ].join("|");
     if (seen.has(key)) continue;
@@ -1293,10 +1296,11 @@ function _hydratePaths(serialised: SerializedPathLike[], hub: any, full: any) {
     let ok = true;
     for (let i = 0; i < s.poolAddresses.length; i++) {
       const pool = s.poolAddresses[i];
-      const zfo  = s.zeroForOnes[i];
+      const tokenIn = s.tokenIns[i];
+      const tokenOut = s.tokenOuts[i];
       const candidate =
-        hub.getPoolEdge(pool, zfo) ||
-        full.getPoolEdge(pool, zfo);
+        hub.getPoolEdge(pool, tokenIn, tokenOut) ||
+        full.getPoolEdge(pool, tokenIn, tokenOut);
       if (!candidate) { ok = false; break; }
       edges.push(candidate);
     }

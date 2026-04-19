@@ -34,6 +34,8 @@ const CURVE_PROTOCOLS = new Set([
   "CURVE_FACTORY_CRYPTO",
   "CURVE_CRYPTO_FACTORY",
   "CURVE_STABLE_FACTORY",
+  "CURVE_STABLESWAP_NG",
+  "CURVE_TRICRYPTO_NG",
 ]);
 const BALANCER_PROTOCOLS = new Set([
   "BALANCER_WEIGHTED",
@@ -78,11 +80,21 @@ export function simulateHop(edge: any, amountIn: any, stateCache: any) {
   }
 
   if (CURVE_PROTOCOLS.has(protocol)) {
-    return simulateCurveSwap(amountIn, state, edge.zeroForOne);
+    return simulateCurveSwap(
+      amountIn,
+      state,
+      edge.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
+      edge.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0)
+    );
   }
 
   if (BALANCER_PROTOCOLS.has(protocol)) {
-    return simulateBalancerSwap(amountIn, state, edge.zeroForOne);
+    return simulateBalancerSwap(
+      amountIn,
+      state,
+      edge.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
+      edge.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0)
+    );
   }
 
   console.warn(`[simulator] Unsupported protocol: ${protocol}`);

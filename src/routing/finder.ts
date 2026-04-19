@@ -46,12 +46,13 @@ function quoteBasedLogWeight(edge: any, simulateFn: any) {
   const balances = state?.balances;
   if (!balances || balances.length < 2) return null;
 
-  const inIdx = edge.zeroForOne ? 0 : 1;
+  const inIdx = edge.tokenInIdx ?? (edge.zeroForOne ? 0 : 1);
+  const outIdx = edge.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0);
   const balanceIn = balances[inIdx];
   const probeAmount = probeAmountFromBalance(balanceIn);
   if (probeAmount <= 0n) return null;
 
-  const { amountOut } = simulateFn(probeAmount, state, edge.zeroForOne);
+  const { amountOut } = simulateFn(probeAmount, state, inIdx, outIdx);
   if (!amountOut || amountOut <= 0n) return null;
 
   return Math.log(Number(amountOut)) - Math.log(Number(probeAmount));
@@ -163,7 +164,7 @@ export function routeKeyFromEdges(startToken: any, edges: any) {
   return [
     startToken.toLowerCase(),
     ...edges.map((edge: any) =>
-      `${edge.poolAddress.toLowerCase()}:${edge.zeroForOne ? "1" : "0"}`
+      `${edge.poolAddress.toLowerCase()}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`
     ),
   ].join("|");
 }

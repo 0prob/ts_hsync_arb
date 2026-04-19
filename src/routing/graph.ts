@@ -26,6 +26,7 @@ import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/poo
 
 const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3"]);
 const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
+const ROUTING_DISABLED_PROTOCOLS = new Set(["KYBERSWAP_ELASTIC"]);
 
 function getLiveStateRef(stateMap: any, poolAddress: any) {
   const stateRef = stateMap.get(poolAddress);
@@ -49,6 +50,8 @@ function createSwapEdge({
   poolAddress,
   tokenIn,
   tokenOut,
+  tokenInIdx,
+  tokenOutIdx,
   zeroForOne,
   fee,
   swapFn,
@@ -56,7 +59,7 @@ function createSwapEdge({
   metadata,
 }: {
   protocol: any; poolAddress: any; tokenIn: any; tokenOut: any;
-  zeroForOne: any; fee: any; swapFn: any; stateRef: any; metadata: any;
+  tokenInIdx?: any; tokenOutIdx?: any; zeroForOne: any; fee: any; swapFn: any; stateRef: any; metadata: any;
 }) {
   const protocolKind = getProtocolKind(protocol);
   return {
@@ -65,6 +68,8 @@ function createSwapEdge({
     poolAddress,
     tokenIn,
     tokenOut,
+    tokenInIdx,
+    tokenOutIdx,
     zeroForOne,
     fee,
     feeBps: getFeeBps(protocolKind, fee),
@@ -98,14 +103,14 @@ export class RoutingGraph {
   tokens: Set<string>;
   edgeCount: number;
   _edgesByPool: Map<string, any[]>;
-  _edgeByPoolDirection: Map<string, any>;
+  _edgeByPoolRoute: Map<string, any>;
 
   constructor() {
     this.adjacency = new Map();
     this.tokens = new Set();
     this.edgeCount = 0;
     this._edgesByPool = new Map();
-    this._edgeByPoolDirection = new Map();
+    this._edgeByPoolRoute = new Map();
   }
 
   /**
@@ -128,8 +133,8 @@ export class RoutingGraph {
       this._edgesByPool.set(edge.poolAddress, []);
     }
     this._edgesByPool.get(edge.poolAddress)!.push(edge);
-    this._edgeByPoolDirection.set(
-      `${edge.poolAddress}:${edge.zeroForOne ? "1" : "0"}`,
+    this._edgeByPoolRoute.set(
+      `${edge.poolAddress}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`,
       edge
     );
   }
@@ -138,12 +143,13 @@ export class RoutingGraph {
    * Get one specific edge by pool address and direction.
    *
    * @param {string} poolAddress
-   * @param {boolean} zeroForOne
+   * @param {string} tokenIn
+   * @param {string} tokenOut
    * @returns {SwapEdge|undefined}
    */
-  getPoolEdge(poolAddress: any, zeroForOne: any) {
-    return this._edgeByPoolDirection.get(
-      `${poolAddress.toLowerCase()}:${zeroForOne ? "1" : "0"}`
+  getPoolEdge(poolAddress: any, tokenIn: any, tokenOut: any) {
+    return this._edgeByPoolRoute.get(
+      `${poolAddress.toLowerCase()}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`
     );
   }
 
@@ -200,6 +206,7 @@ export class RoutingGraph {
    */
   addPool(pool: any, stateMap = new Map()) {
     if (pool.status !== "active") return;
+    if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) return;
 
     const tokens = getPoolTokens(pool);
     if (!tokens || tokens.length < 2) return;
@@ -221,8 +228,24 @@ export class RoutingGraph {
     if (!stateRef) return;
     const swapFn   = isV3 && stateRef ? simulateV3Swap : null;
 
-    this.addEdge(createSwapEdge({ protocol: pool.protocol, poolAddress, tokenIn: token0, tokenOut: token1, zeroForOne: true, fee, swapFn, stateRef, metadata }));
-    this.addEdge(createSwapEdge({ protocol: pool.protocol, poolAddress, tokenIn: token1, tokenOut: token0, zeroForOne: false, fee, swapFn, stateRef, metadata }));
+    for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
+      for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
+        if (tokenInIdx === tokenOutIdx) continue;
+        this.addEdge(createSwapEdge({
+          protocol: pool.protocol,
+          poolAddress,
+          tokenIn: tokens[tokenInIdx].toLowerCase(),
+          tokenOut: tokens[tokenOutIdx].toLowerCase(),
+          tokenInIdx,
+          tokenOutIdx,
+          zeroForOne: tokenInIdx < tokenOutIdx,
+          fee,
+          swapFn,
+          stateRef,
+          metadata: { ...metadata, tokenInIdx, tokenOutIdx },
+        }));
+      }
+    }
   }
 
   /**
@@ -278,8 +301,11 @@ export class RoutingGraph {
     }
 
     this._edgesByPool.delete(poolAddress);
-    this._edgeByPoolDirection.delete(`${poolAddress}:1`);
-    this._edgeByPoolDirection.delete(`${poolAddress}:0`);
+    for (const edge of edges) {
+      this._edgeByPoolRoute.delete(
+        `${poolAddress}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`
+      );
+    }
 
     for (const edge of edges) {
       if (!this._tokenHasReferences(edge.tokenIn)) {
@@ -335,6 +361,7 @@ export function buildGraph(pools: any, stateMap = new Map()) {
 
   for (const pool of pools) {
     if (pool.status !== "active") continue;
+    if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) continue;
 
     const tokens = getPoolTokens(pool);
 
@@ -359,29 +386,24 @@ export function buildGraph(pools: any, stateMap = new Map()) {
     // V3 pre-attached swapFn: avoids a branch in simulateHop on the hot path
     const swapFn = isV3 && stateRef ? simulateV3Swap : null;
 
-    graph.addEdge(createSwapEdge({
-      protocol: pool.protocol,
-      poolAddress,
-      tokenIn: token0,
-      tokenOut: token1,
-      zeroForOne: true,
-      fee,
-      swapFn,
-      stateRef,
-      metadata,
-    }));
-
-    graph.addEdge(createSwapEdge({
-      protocol: pool.protocol,
-      poolAddress,
-      tokenIn: token1,
-      tokenOut: token0,
-      zeroForOne: false,
-      fee,
-      swapFn,
-      stateRef,
-      metadata,
-    }));
+    for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
+      for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
+        if (tokenInIdx === tokenOutIdx) continue;
+        graph.addEdge(createSwapEdge({
+          protocol: pool.protocol,
+          poolAddress,
+          tokenIn: tokens[tokenInIdx].toLowerCase(),
+          tokenOut: tokens[tokenOutIdx].toLowerCase(),
+          tokenInIdx,
+          tokenOutIdx,
+          zeroForOne: tokenInIdx < tokenOutIdx,
+          fee,
+          swapFn,
+          stateRef,
+          metadata: { ...metadata, tokenInIdx, tokenOutIdx },
+        }));
+      }
+    }
   }
 
   return graph;
@@ -403,6 +425,7 @@ export function buildHubGraph(pools: any, hubTokens: any, stateMap = new Map()) 
 
   for (const pool of pools) {
     if (pool.status !== "active") continue;
+    if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) continue;
 
     const tokens = getPoolTokens(pool);
 
@@ -422,29 +445,24 @@ export function buildHubGraph(pools: any, hubTokens: any, stateMap = new Map()) 
     const stateRef = getLiveStateRef(stateMap, poolAddress);
     const swapFn   = isV3 && stateRef ? simulateV3Swap : null;
 
-    graph.addEdge(createSwapEdge({
-      protocol: pool.protocol,
-      poolAddress,
-      tokenIn: token0,
-      tokenOut: token1,
-      zeroForOne: true,
-      fee,
-      swapFn,
-      stateRef,
-      metadata,
-    }));
-
-    graph.addEdge(createSwapEdge({
-      protocol: pool.protocol,
-      poolAddress,
-      tokenIn: token1,
-      tokenOut: token0,
-      zeroForOne: false,
-      fee,
-      swapFn,
-      stateRef,
-      metadata,
-    }));
+    for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
+      for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
+        if (tokenInIdx === tokenOutIdx) continue;
+        graph.addEdge(createSwapEdge({
+          protocol: pool.protocol,
+          poolAddress,
+          tokenIn: tokens[tokenInIdx].toLowerCase(),
+          tokenOut: tokens[tokenOutIdx].toLowerCase(),
+          tokenInIdx,
+          tokenOutIdx,
+          zeroForOne: tokenInIdx < tokenOutIdx,
+          fee,
+          swapFn,
+          stateRef,
+          metadata: { ...metadata, tokenInIdx, tokenOutIdx },
+        }));
+      }
+    }
   }
 
   return graph;
@@ -525,8 +543,8 @@ export const HUB_4_TOKENS = new Set([
 export function serializeTopology(graph: any) {
   const adjacency: Record<string, any[]> = {};
   for (const [token, edges] of graph.adjacency) {
-    adjacency[token] = edges.map(({ protocol, poolAddress, tokenIn, tokenOut, zeroForOne, fee }: any) => ({
-      protocol, poolAddress, tokenIn, tokenOut, zeroForOne, fee: fee ?? null,
+    adjacency[token] = edges.map(({ protocol, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee }: any) => ({
+      protocol, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee: fee ?? null,
     }));
   }
   return adjacency;

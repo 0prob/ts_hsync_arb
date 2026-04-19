@@ -234,14 +234,17 @@ export function getBalancerAmountIn(amountOut: bigint, poolState: any, inIdx: nu
  *
  * @param {bigint}  amountIn    Input amount
  * @param {Object}  poolState   Normalized Balancer pool state (from normalizer)
- * @param {boolean} zeroForOne  true = token0→token1
+ * @param {number}  inIdx       Input token index
+ * @param {number}  outIdx      Output token index
  * @returns {{ amountOut: bigint, gasEstimate: number }}
  */
-export function simulateBalancerSwap(amountIn: bigint, poolState: any, zeroForOne: boolean): { amountOut: bigint; gasEstimate: number } {
+export function simulateBalancerSwap(
+  amountIn: bigint,
+  poolState: any,
+  inIdx = 0,
+  outIdx = 1
+): { amountOut: bigint; gasEstimate: number } {
   if (amountIn <= 0n) return { amountOut: 0n, gasEstimate: 0 };
-
-  const inIdx = zeroForOne ? 0 : 1;
-  const outIdx = zeroForOne ? 1 : 0;
 
   const amountOut = getBalancerAmountOut(amountIn, poolState, inIdx, outIdx);
 

@@ -33,6 +33,8 @@ const CURVE_PROTOCOLS = new Set([
   "CURVE_FACTORY_CRYPTO",
   "CURVE_CRYPTO_FACTORY",
   "CURVE_STABLE_FACTORY",
+  "CURVE_STABLESWAP_NG",
+  "CURVE_TRICRYPTO_NG",
 ]);
 
 // ─── ABI fragments ────────────────────────────────────────────

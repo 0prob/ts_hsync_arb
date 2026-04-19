@@ -16,6 +16,8 @@ import BALANCER_V2 from "./balancer_v2.ts";
 import CURVE_MAIN_REGISTRY from "./curve_main_registry.ts";
 import CURVE_STABLE_FACTORY from "./curve_stable_factory.ts";
 import CURVE_CRYPTO_FACTORY from "./curve_crypto_factory.ts";
+import CURVE_STABLESWAP_NG from "./curve_stableswap_ng.ts";
+import CURVE_TRICRYPTO_NG from "./curve_tricrypto_ng.ts";
 
 export const PROTOCOLS = {
   QUICKSWAP_V2,
@@ -27,6 +29,8 @@ export const PROTOCOLS = {
   CURVE_MAIN_REGISTRY,
   CURVE_STABLE_FACTORY,
   CURVE_CRYPTO_FACTORY,
+  CURVE_STABLESWAP_NG,
+  CURVE_TRICRYPTO_NG,
 };
 
 /**
