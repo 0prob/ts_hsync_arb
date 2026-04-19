@@ -12,6 +12,7 @@ import { readContractWithRetry, throttledMap } from "../enrichment/rpc.ts";
 import { normalizeBalancerState } from "./normalizer.ts";
 import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { parsePoolMetadata, parsePoolTokens } from "./pool_record.ts";
+import { asBatchResult, TimedPoller } from "./poller_base.ts";
 
 const BALANCER_PROTOCOLS = new Set([
   "BALANCER_WEIGHTED",
@@ -174,23 +175,16 @@ export async function fetchAndNormalizeBalancerPool(pool: any) {
   return { addr, normalized };
 }
 
-export class PollBalancer {
+export class PollBalancer extends TimedPoller {
   private _registry: any;
   private _cache: Map<string, any>;
   private _concurrency: number;
-  private _verbose: boolean;
-  private _timer: ReturnType<typeof setInterval> | null;
-  private _running: boolean;
-  private _passCount: number;
 
   constructor(registry: any, stateCache: Map<string, any>, options: any = {}) {
+    super(options);
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? ENRICH_CONCURRENCY;
-    this._verbose = options.verbose ?? false;
-    this._timer = null;
-    this._running = false;
-    this._passCount = 0;
   }
 
   async poll() {
@@ -209,61 +203,26 @@ export class PollBalancer {
       async (pool: any) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool);
-          return { addr, normalized, error: null };
+          return asBatchResult(addr, normalized);
         } catch (err) {
           const addr = pool.pool_address.toLowerCase();
-          return { addr, normalized: null, error: err };
+          return asBatchResult(addr, null, err);
         }
       },
       this._concurrency
     );
 
-    let updated = 0;
-    let failed = 0;
-
-    for (const { addr, normalized, error } of results) {
-      if (normalized) {
-        this._cache.set(addr, normalized);
-        updated++;
-        if (this._verbose) {
-          console.log(`[poll_balancer] ${addr} balances=${normalized.balances}`);
-        }
-      } else {
-        failed++;
-        if (this._verbose) {
-          console.warn(`[poll_balancer] Failed ${addr}: ${error?.message}`);
-        }
-      }
-    }
-
-    const durationMs = Date.now() - t0;
-    this._passCount++;
-    console.log(
-      `[poll_balancer] Pass #${this._passCount}: ${updated} updated, ${failed} failed (${durationMs}ms)`
+    const { updated, failed } = this._storeBatchResults(
+      "poll_balancer",
+      this._cache,
+      results,
+      ({ addr, normalized }) => `[poll_balancer] ${addr} balances=${normalized.balances}`
     );
 
-    return { updated, failed, durationMs };
+    return this._completePass("poll_balancer", t0, updated, failed);
   }
 
   start(intervalMs = 30_000) {
-    if (this._timer) return;
-    this._timer = setInterval(async () => {
-      if (this._running) return;
-      this._running = true;
-      try {
-        await this.poll();
-      } catch (err: any) {
-        console.error(`[poll_balancer] Poll error: ${err.message}`);
-      } finally {
-        this._running = false;
-      }
-    }, intervalMs);
-  }
-
-  stop() {
-    if (this._timer) {
-      clearInterval(this._timer);
-      this._timer = null;
-    }
+    this._startLoop("poll_balancer", intervalMs, () => this.poll());
   }
 }

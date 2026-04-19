@@ -6,7 +6,7 @@
  * Uses readContractWithRetry() for automatic backoff on 429 errors.
  */
 
-import { readContractWithRetry } from "./rpc.ts";
+import { isNoDataReadContractError, readContractWithRetry } from "./rpc.ts";
 
 const VAULT_ADDRESS = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
 
@@ -41,9 +41,15 @@ export async function getBalancerTokens(poolId: any) {
     });
     return (tokens as any[]).map((t: any) => t.toString());
   } catch (error: any) {
+    if (isNoDataReadContractError(error)) {
+      console.error(
+        `  Balancer vault returned no token data for poolId ${poolId}: ${error.message}`
+      );
+      return [];
+    }
     console.error(
       `  Error fetching Balancer tokens for poolId ${poolId}: ${error.message}`
     );
-    return [];
+    throw error;
   }
 }

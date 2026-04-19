@@ -14,7 +14,6 @@
  * generate data/perf.json with machine-optimal values.
  */
 
-import "dotenv/config";
 import os from "os";
 import fs from "fs";
 import path from "path";

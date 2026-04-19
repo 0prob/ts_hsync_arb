@@ -171,6 +171,7 @@ let registry: RegistryService | null = null;
 let watcher: StateWatcher | null = null;
 let priceOracle: PriceOracle | null = null;
 let nonceManager: NonceManager | null = null;
+let stopTui: (() => void) | null = null;
 let running       = true;
 let cachedCycles: ArbPathLike[] = [];
 // Two routing graphs: hubGraph (HUB_4_TOKENS only) + fullGraph (all pools).
@@ -688,6 +689,21 @@ const _WARMUP_CRV = new Set([
   "CURVE_STABLESWAP_NG", "CURVE_TRICRYPTO_NG",
 ]);
 const WARMUP_PROGRESS_LOG_EVERY = 25;
+const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled: 0, failed: 0 };
+
+type WarmupGroupStats = WarmupStats["protocols"][string];
+type WarmupGroupResult = {
+  addr: string;
+  raw?: unknown;
+  normalized?: Record<string, unknown> | null;
+  noDataFailures?: Set<string>;
+};
+type WarmupGroup = {
+  key: keyof WarmupStats["protocols"];
+  protocols: Set<string>;
+  progressPhase?: string;
+  fetch: (group: PoolRecord[]) => Promise<WarmupGroupResult[]>;
+};
 
 function warmupProgressSnapshot(stats: WarmupStats) {
   const protocolStats = stats.protocols || {};
@@ -742,6 +758,97 @@ function resolveWarmupPersistBlock() {
   return 0;
 }
 
+function createWarmupStats(pools: PoolRecord[], groups: WarmupGroup[]): WarmupStats {
+  return {
+    scheduled: pools.length,
+    fetched: 0,
+    normalized: 0,
+    disabled: 0,
+    failed: 0,
+    protocols: Object.fromEntries(
+      groups.map((group) => [
+        group.key,
+        { ...EMPTY_PROTOCOL_STATS, scheduled: pools.filter((pool) => group.protocols.has(pool.protocol)).length },
+      ])
+    ),
+  } as WarmupStats;
+}
+
+function persistWarmupBatch(states: Array<{ pool_address: string; block: number; data: object }>) {
+  if (states.length > 0) registry?.batchUpdateStates(states);
+}
+
+function disableWarmupNoDataPools(
+  pools: PoolRecord[],
+  noDataFailures: Set<string> | undefined,
+  sourceLabel: string,
+  stats: WarmupStats,
+  groupStats: WarmupGroupStats
+) {
+  if (!(noDataFailures instanceof Set) || noDataFailures.size === 0) return;
+
+  for (const pool of pools) {
+    const addr = pool.pool_address.toLowerCase();
+    if (!noDataFailures.has(addr)) continue;
+
+    registry?.disablePool(addr, `${sourceLabel}: readContract returned no data`);
+    stateCache.delete(addr);
+    groupStats.disabled++;
+    stats.disabled++;
+    log(`[warmup] Disabled ${addr} after permanent ${sourceLabel} failure.`, "warn", {
+      event: "warmup_disable_pool",
+      poolAddress: addr,
+      source: sourceLabel,
+      ...warmupProgressSnapshot(stats),
+    });
+  }
+}
+
+async function runWarmupGroup(
+  pools: PoolRecord[],
+  group: WarmupGroup,
+  stats: WarmupStats,
+  persistBlock: number
+) {
+  if (!pools.length) return;
+
+  const groupStats = stats.protocols[group.key];
+  const persisted: Array<{ pool_address: string; block: number; data: object }> = [];
+  const results = await group.fetch(pools);
+  const noDataFailures = new Set<string>();
+
+  for (const result of results) {
+    if (result.noDataFailures instanceof Set) {
+      for (const addr of result.noDataFailures) noDataFailures.add(addr);
+    }
+    if (!result.raw || !result.normalized) continue;
+    stateCache.set(result.addr, result.normalized);
+    persisted.push({ pool_address: result.addr, block: persistBlock, data: result.normalized });
+    groupStats.fetched++;
+    groupStats.normalized++;
+    stats.fetched++;
+    stats.normalized++;
+  }
+
+  const failedWithoutDisable = Math.max(
+    0,
+    groupStats.scheduled - (groupStats.normalized + noDataFailures.size)
+  );
+  groupStats.failed += failedWithoutDisable;
+  stats.failed += failedWithoutDisable;
+
+  disableWarmupNoDataPools(pools, noDataFailures, `${String(group.key)} warmup`, stats, groupStats);
+  persistWarmupBatch(persisted);
+
+  if (group.progressPhase) {
+    logWarmupProgress(stats, group.progressPhase, {
+      protocol: group.key,
+      completed: groupStats.normalized + groupStats.failed + groupStats.disabled,
+      total: groupStats.scheduled,
+    });
+  }
+}
+
 /**
  * Fetch live state from the chain for a list of pools (grouped by protocol)
  * and write the normalised result directly into stateCache.
@@ -765,210 +872,135 @@ async function _fetchAndCacheStates(pools: PoolRecord[]) {
   }
 
   const persistBlock = resolveWarmupPersistBlock();
-  const persistBatch = (states: Array<{ pool_address: string; block: number; data: object }>) => {
-    if (states.length > 0) registry?.batchUpdateStates(states);
-  };
-  const v2  = pools.filter((p) => _WARMUP_V2.has(p.protocol));
-  const v3  = pools.filter((p) => _WARMUP_V3.has(p.protocol));
-  const bal = pools.filter((p) => _WARMUP_BAL.has(p.protocol));
-  const crv = pools.filter((p) => _WARMUP_CRV.has(p.protocol));
-  const stats = {
-    scheduled: pools.length,
-    fetched: 0,
-    normalized: 0,
-    disabled: 0,
-    failed: 0,
-    protocols: {
-      v2: { scheduled: v2.length, fetched: 0, normalized: 0, disabled: 0, failed: 0 },
-      v3: { scheduled: v3.length, fetched: 0, normalized: 0, disabled: 0, failed: 0 },
-      balancer: { scheduled: bal.length, fetched: 0, normalized: 0, disabled: 0, failed: 0 },
-      curve: { scheduled: crv.length, fetched: 0, normalized: 0, disabled: 0, failed: 0 },
+  const groups: WarmupGroup[] = [
+    {
+      key: "v2",
+      protocols: _WARMUP_V2,
+      progressPhase: "v2_complete",
+      async fetch(group) {
+        const statesMap = await fetchMultipleV2States(
+          group.map((pool) => pool.pool_address),
+          V2_POLL_CONCURRENCY
+        );
+        return group.map((pool) => {
+          const addr = pool.pool_address.toLowerCase();
+          const raw = statesMap.get(addr);
+          const tokens = getPoolTokens(pool);
+          return {
+            addr,
+            raw,
+            normalized: raw && tokens.length
+              ? normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata)
+              : null,
+            noDataFailures: statesMap?.noDataFailures,
+          };
+        });
+      },
     },
-  };
+    {
+      key: "v3",
+      protocols: _WARMUP_V3,
+      progressPhase: "v3_complete",
+      async fetch(group) {
+        const poolMeta = new Map();
+        for (const pool of group) {
+          const meta = getPoolMetadata(pool);
+          if (meta.isAlgebra) {
+            poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
+          }
+        }
+        let lastV3ProgressLogAt = 0;
+        const statesMap = await (fetchMultipleV3States as any)(
+          group.map((pool) => pool.pool_address),
+          V3_POLL_CONCURRENCY,
+          poolMeta,
+          (completed: number, total: number) => {
+            const now = Date.now();
+            if (completed === total || completed % 10 === 0 || now - lastV3ProgressLogAt >= 5_000) {
+              lastV3ProgressLogAt = now;
+              log(`State warmup progress: v3_progress (${completed}/${total}).`, "info", {
+                event: "warmup_progress",
+                phase: "v3_progress",
+                protocol: "v3",
+                completed,
+                total,
+                remaining: Math.max(0, total - completed),
+              });
+            }
+          }
+        );
+        return group.map((pool) => {
+          const addr = pool.pool_address.toLowerCase();
+          const raw = statesMap.get(addr);
+          const tokens = getPoolTokens(pool);
+          return {
+            addr,
+            raw,
+            normalized: raw && tokens.length
+              ? normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata)
+              : null,
+            noDataFailures: statesMap?.noDataFailures,
+          };
+        });
+      },
+    },
+    {
+      key: "balancer",
+      protocols: _WARMUP_BAL,
+      progressPhase: "balancer_progress",
+      async fetch(group) {
+        let completed = 0;
+        return throttledMap(group, async (pool: PoolRecord) => {
+          try {
+            const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool);
+            return { addr, raw: normalized, normalized };
+          } catch {
+            return { addr: pool.pool_address.toLowerCase(), raw: null, normalized: null };
+          } finally {
+            completed++;
+            if (completed === group.length || completed % WARMUP_PROGRESS_LOG_EVERY === 0) {
+              logWarmupProgress(stats, "balancer_progress", {
+                protocol: "balancer",
+                completed,
+                total: group.length,
+              });
+            }
+          }
+        }, ENRICH_CONCURRENCY);
+      },
+    },
+    {
+      key: "curve",
+      protocols: _WARMUP_CRV,
+      progressPhase: "curve_progress",
+      async fetch(group) {
+        let completed = 0;
+        return throttledMap(group, async (pool: PoolRecord) => {
+          try {
+            const { addr, normalized } = await fetchAndNormalizeCurvePool(pool);
+            return { addr, raw: normalized, normalized };
+          } catch {
+            return { addr: pool.pool_address.toLowerCase(), raw: null, normalized: null };
+          } finally {
+            completed++;
+            if (completed === group.length || completed % WARMUP_PROGRESS_LOG_EVERY === 0) {
+              logWarmupProgress(stats, "curve_progress", {
+                protocol: "curve",
+                completed,
+                total: group.length,
+              });
+            }
+          }
+        }, ENRICH_CONCURRENCY);
+      },
+    },
+  ];
+  const stats = createWarmupStats(pools, groups);
   logWarmupProgress(stats, "rpc_fetch_started");
-
-  const disableNoDataFailures = (poolGroup: PoolRecord[], statesMap: any, sourceLabel: string, groupStats: WarmupStats["protocols"][string]) => {
-    const failures = statesMap?.noDataFailures as Set<string> | undefined;
-    if (!(failures instanceof Set) || failures.size === 0) return;
-
-    for (const pool of poolGroup) {
-      const addr = pool.pool_address.toLowerCase();
-      if (!failures.has(addr)) continue;
-
-      registry?.disablePool(
-        addr,
-        `${sourceLabel}: readContract returned no data`
-      );
-      stateCache.delete(addr);
-      groupStats.disabled++;
-      stats.disabled++;
-      log(`[warmup] Disabled ${addr} after permanent ${sourceLabel} failure.`, "warn", {
-        event: "warmup_disable_pool",
-        poolAddress: addr,
-        source: sourceLabel,
-        ...warmupProgressSnapshot(stats),
-      });
-    }
-  };
-
-  await Promise.all([
-    // ── V2: batch getReserves() ──────────────────────────────────
-    (async () => {
-      if (!v2.length) return;
-      const statesMap = await fetchMultipleV2States(
-        v2.map((p) => p.pool_address),
-        V2_POLL_CONCURRENCY
-      );
-      const v2Persisted = [];
-      for (const pool of v2) {
-        const addr = pool.pool_address.toLowerCase();
-        const raw  = statesMap.get(addr);
-        if (!raw) continue;
-        stats.protocols.v2.fetched++;
-        stats.fetched++;
-        const tokens = getPoolTokens(pool);
-        if (tokens.length === 0) continue;
-        const normalized = normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata);
-        if (normalized) {
-          stateCache.set(addr, normalized);
-          v2Persisted.push({ pool_address: addr, block: persistBlock, data: normalized });
-          stats.protocols.v2.normalized++;
-          stats.normalized++;
-        }
-      }
-      disableNoDataFailures(v2, statesMap, "v2 warmup", stats.protocols.v2);
-      persistBatch(v2Persisted);
-      logWarmupProgress(stats, "v2_complete", {
-        protocol: "v2",
-      });
-    })(),
-
-    // ── V3: batch slot0 + liquidity (+ Algebra globalState) ─────
-    (async () => {
-      if (!v3.length) return;
-      const poolMeta = new Map();
-      for (const pool of v3) {
-        const meta = getPoolMetadata(pool);
-        if (meta.isAlgebra) {
-          poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
-        }
-      }
-      let lastV3ProgressLogAt = 0;
-      const statesMap = await (fetchMultipleV3States as any)(
-        v3.map((p) => p.pool_address),
-        V3_POLL_CONCURRENCY,
-        poolMeta,
-        (completed: number, total: number) => {
-          const now = Date.now();
-          if (
-            completed === total ||
-            completed % 10 === 0 ||
-            now - lastV3ProgressLogAt >= 5_000
-          ) {
-            lastV3ProgressLogAt = now;
-            log(`State warmup progress: v3_progress (${completed}/${total}).`, "info", {
-              event: "warmup_progress",
-              phase: "v3_progress",
-              protocol: "v3",
-              completed,
-              total,
-              remaining: Math.max(0, total - completed),
-            });
-          }
-        }
-      );
-      const v3Persisted = [];
-      for (const pool of v3) {
-        const addr = pool.pool_address.toLowerCase();
-        const raw  = statesMap.get(addr);
-        if (!raw) continue;
-        stats.protocols.v3.fetched++;
-        stats.fetched++;
-        const tokens = getPoolTokens(pool);
-        if (tokens.length === 0) continue;
-        const normalized = normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata);
-        if (normalized) {
-          stateCache.set(addr, normalized);
-          v3Persisted.push({ pool_address: addr, block: persistBlock, data: normalized });
-          stats.protocols.v3.normalized++;
-          stats.normalized++;
-        }
-      }
-      disableNoDataFailures(v3, statesMap, "v3 warmup", stats.protocols.v3);
-      persistBatch(v3Persisted);
-      logWarmupProgress(stats, "v3_complete", {
-        protocol: "v3",
-      });
-    })(),
-
-    // ── Balancer: getPoolTokens + getNormalizedWeights ───────────
-    (async () => {
-      if (!bal.length) return;
-      let completed = 0;
-      const balPersisted: Array<{ pool_address: string; block: number; data: object }> = [];
-      await throttledMap(bal, async (pool: PoolRecord) => {
-        try {
-          const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool);
-          stateCache.set(addr, normalized);
-          balPersisted.push({ pool_address: addr, block: persistBlock, data: normalized });
-          stats.protocols.balancer.fetched++;
-          stats.protocols.balancer.normalized++;
-          stats.fetched++;
-          stats.normalized++;
-        } catch {
-          stats.protocols.balancer.failed++;
-          stats.failed++;
-        } finally {
-          completed++;
-          if (
-            completed === bal.length ||
-            completed % WARMUP_PROGRESS_LOG_EVERY === 0
-          ) {
-            logWarmupProgress(stats, "balancer_progress", {
-              protocol: "balancer",
-              completed,
-              total: bal.length,
-            });
-          }
-        }
-      }, ENRICH_CONCURRENCY);
-      persistBatch(balPersisted);
-    })(),
-
-    // ── Curve: get_balances + A + fee ────────────────────────────
-    (async () => {
-      if (!crv.length) return;
-      let completed = 0;
-      const crvPersisted: Array<{ pool_address: string; block: number; data: object }> = [];
-      await throttledMap(crv, async (pool: PoolRecord) => {
-        try {
-          const { addr, normalized } = await fetchAndNormalizeCurvePool(pool);
-          stateCache.set(addr, normalized);
-          crvPersisted.push({ pool_address: addr, block: persistBlock, data: normalized });
-          stats.protocols.curve.fetched++;
-          stats.protocols.curve.normalized++;
-          stats.fetched++;
-          stats.normalized++;
-        } catch {
-          stats.protocols.curve.failed++;
-          stats.failed++;
-        } finally {
-          completed++;
-          if (
-            completed === crv.length ||
-            completed % WARMUP_PROGRESS_LOG_EVERY === 0
-          ) {
-            logWarmupProgress(stats, "curve_progress", {
-              protocol: "curve",
-              completed,
-              total: crv.length,
-            });
-          }
-        }
-      }, ENRICH_CONCURRENCY);
-      persistBatch(crvPersisted);
-    })(),
-  ]);
+  await Promise.all(groups.map((group) => {
+    const groupPools = pools.filter((pool) => group.protocols.has(pool.protocol));
+    return runWarmupGroup(groupPools, group, stats, persistBlock);
+  }));
 
   return stats;
 }
@@ -1774,6 +1806,8 @@ function scheduleArb() {
 async function shutdown() {
   log("Shutdown signal received...");
   running = false;
+  stopTui?.();
+  stopTui = null;
   if (watcher) await watcher.stop();
   if (gasOracle) gasOracle.stop();
   if (registry) registry.close();
@@ -1789,7 +1823,7 @@ async function main() {
 
   if (TUI_MODE) {
     const { startTui } = await import("./src/tui/index.tsx");
-    startTui(botState);
+    stopTui = startTui(botState);
   } else {
     startMetricsServer(9090);
     console.log("╔══════════════════════════════════════════════╗");

@@ -79,6 +79,61 @@ function createSwapEdge({
   };
 }
 
+function getRoutablePoolContext(pool: any, stateMap: any) {
+  if (pool.status !== "active") return null;
+  if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) return null;
+
+  const tokens = getPoolTokens(pool);
+  if (!tokens || tokens.length < 2 || hasZeroAddressToken(tokens)) return null;
+
+  const poolAddress = pool.pool_address.toLowerCase();
+  const metadata = getPoolMetadata(pool);
+  const isV3 = V3_PROTOCOLS.has(pool.protocol);
+  const fee = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
+  const stateRef = getLiveStateRef(stateMap, poolAddress);
+
+  return {
+    tokens: tokens.map((token: string) => token.toLowerCase()),
+    poolAddress,
+    metadata,
+    fee,
+    stateRef,
+    swapFn: isV3 && stateRef ? simulateV3Swap : null,
+  };
+}
+
+function addPoolEdges(
+  graph: RoutingGraph,
+  pool: any,
+  stateMap: any,
+  shouldInclude: (context: NonNullable<ReturnType<typeof getRoutablePoolContext>>) => boolean = () => true
+) {
+  const context = getRoutablePoolContext(pool, stateMap);
+  if (!context || !shouldInclude(context)) return false;
+
+  const { tokens, poolAddress, metadata, fee, stateRef, swapFn } = context;
+  for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
+    for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
+      if (tokenInIdx === tokenOutIdx) continue;
+      graph.addEdge(createSwapEdge({
+        protocol: pool.protocol,
+        poolAddress,
+        tokenIn: tokens[tokenInIdx],
+        tokenOut: tokens[tokenOutIdx],
+        tokenInIdx,
+        tokenOutIdx,
+        zeroForOne: tokenInIdx < tokenOutIdx,
+        fee,
+        swapFn,
+        stateRef,
+        metadata: { ...metadata, tokenInIdx, tokenOutIdx },
+      }));
+    }
+  }
+
+  return true;
+}
+
 // ─── Edge definition ──────────────────────────────────────────
 
 /**
@@ -205,47 +260,10 @@ export class RoutingGraph {
    * @param {Map<string,Object>}  stateMap  Live stateCache (stateRef assignment)
    */
   addPool(pool: any, stateMap = new Map()) {
-    if (pool.status !== "active") return;
-    if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) return;
-
-    const tokens = getPoolTokens(pool);
-    if (!tokens || tokens.length < 2) return;
-
     const poolAddress = pool.pool_address.toLowerCase();
-    const token0 = tokens[0].toLowerCase();
-    const token1 = tokens[1].toLowerCase();
-
-    if (hasZeroAddressToken(tokens)) return;
-
     // Skip if this pool is already in the graph
     if (this._edgesByPool.has(poolAddress)) return;
-
-    const metadata = getPoolMetadata(pool);
-
-    const isV3     = V3_PROTOCOLS.has(pool.protocol);
-    const fee      = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
-    const stateRef = getLiveStateRef(stateMap, poolAddress);
-    if (!stateRef) return;
-    const swapFn   = isV3 && stateRef ? simulateV3Swap : null;
-
-    for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
-      for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
-        if (tokenInIdx === tokenOutIdx) continue;
-        this.addEdge(createSwapEdge({
-          protocol: pool.protocol,
-          poolAddress,
-          tokenIn: tokens[tokenInIdx].toLowerCase(),
-          tokenOut: tokens[tokenOutIdx].toLowerCase(),
-          tokenInIdx,
-          tokenOutIdx,
-          zeroForOne: tokenInIdx < tokenOutIdx,
-          fee,
-          swapFn,
-          stateRef,
-          metadata: { ...metadata, tokenInIdx, tokenOutIdx },
-        }));
-      }
-    }
+    addPoolEdges(this, pool, stateMap, (context) => !!context?.stateRef);
   }
 
   /**
@@ -360,50 +378,7 @@ export function buildGraph(pools: any, stateMap = new Map()) {
   const graph = new RoutingGraph();
 
   for (const pool of pools) {
-    if (pool.status !== "active") continue;
-    if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) continue;
-
-    const tokens = getPoolTokens(pool);
-
-    if (!tokens || tokens.length < 2) continue;
-
-    const poolAddress = pool.pool_address.toLowerCase();
-    const token0 = tokens[0].toLowerCase();
-    const token1 = tokens[1].toLowerCase();
-
-    if (hasZeroAddressToken(tokens)) continue;
-
-    const metadata = getPoolMetadata(pool);
-
-    const isV3 = V3_PROTOCOLS.has(pool.protocol);
-    const fee  = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
-
-    // All protocols get a live stateRef — not just V3.
-    // The watcher mutates these objects in-place on every Sync/Swap event,
-    // so the graph never holds stale reserves or prices between arb scans.
-    const stateRef = getLiveStateRef(stateMap, poolAddress);
-
-    // V3 pre-attached swapFn: avoids a branch in simulateHop on the hot path
-    const swapFn = isV3 && stateRef ? simulateV3Swap : null;
-
-    for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
-      for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
-        if (tokenInIdx === tokenOutIdx) continue;
-        graph.addEdge(createSwapEdge({
-          protocol: pool.protocol,
-          poolAddress,
-          tokenIn: tokens[tokenInIdx].toLowerCase(),
-          tokenOut: tokens[tokenOutIdx].toLowerCase(),
-          tokenInIdx,
-          tokenOutIdx,
-          zeroForOne: tokenInIdx < tokenOutIdx,
-          fee,
-          swapFn,
-          stateRef,
-          metadata: { ...metadata, tokenInIdx, tokenOutIdx },
-        }));
-      }
-    }
+    addPoolEdges(graph, pool, stateMap);
   }
 
   return graph;
@@ -424,45 +399,9 @@ export function buildHubGraph(pools: any, hubTokens: any, stateMap = new Map()) 
   const graph = new RoutingGraph();
 
   for (const pool of pools) {
-    if (pool.status !== "active") continue;
-    if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) continue;
-
-    const tokens = getPoolTokens(pool);
-
-    if (!tokens || tokens.length < 2) continue;
-
-    const token0 = tokens[0].toLowerCase();
-    const token1 = tokens[1].toLowerCase();
-
-    if (!hubTokens.has(token0) && !hubTokens.has(token1)) continue;
-
-    const poolAddress = pool.pool_address.toLowerCase();
-
-    const metadata = getPoolMetadata(pool);
-
-    const isV3     = V3_PROTOCOLS.has(pool.protocol);
-    const fee      = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
-    const stateRef = getLiveStateRef(stateMap, poolAddress);
-    const swapFn   = isV3 && stateRef ? simulateV3Swap : null;
-
-    for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
-      for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
-        if (tokenInIdx === tokenOutIdx) continue;
-        graph.addEdge(createSwapEdge({
-          protocol: pool.protocol,
-          poolAddress,
-          tokenIn: tokens[tokenInIdx].toLowerCase(),
-          tokenOut: tokens[tokenOutIdx].toLowerCase(),
-          tokenInIdx,
-          tokenOutIdx,
-          zeroForOne: tokenInIdx < tokenOutIdx,
-          fee,
-          swapFn,
-          stateRef,
-          metadata: { ...metadata, tokenInIdx, tokenOutIdx },
-        }));
-      }
-    }
+    addPoolEdges(graph, pool, stateMap, (context) =>
+      context.tokens.some((token: string) => hubTokens.has(token))
+    );
   }
 
   return graph;

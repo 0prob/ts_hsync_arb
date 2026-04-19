@@ -71,6 +71,9 @@ export class RegistryService {
   db: CompatDatabase;
   _stmtCache: Map<string, ReturnType<CompatDatabase['prepare']>>;
   _metaCache: RegistryMetaCache;
+  _stmtFn: (key: string, sql: string) => ReturnType<CompatDatabase["prepare"]>;
+  _invalidatePoolMetaCacheFn: () => void;
+  _recordLiquidityEventFn: (...args: any[]) => void;
   constructor(dbPath: string) {
     const dbDir = path.dirname(dbPath);
     if (!fs.existsSync(dbDir)) {
@@ -81,7 +84,10 @@ export class RegistryService {
     this.db.pragma("synchronous = NORMAL");
     this._initSchema();
     this._stmtCache = new Map();
-    this._metaCache = new RegistryMetaCache(this._stmt.bind(this));
+    this._stmtFn = this._stmt.bind(this);
+    this._invalidatePoolMetaCacheFn = this._invalidatePoolMetaCache.bind(this);
+    this._recordLiquidityEventFn = this.recordLiquidityEvent.bind(this);
+    this._metaCache = new RegistryMetaCache(this._stmtFn);
   }
 
   // ─── Schema ──────────────────────────────────────────────────
@@ -211,22 +217,22 @@ export class RegistryService {
   upsertPool(metadata: Record<string, unknown>) {
     return upsertPoolRecord(
       this.db,
-      this._stmt.bind(this),
-      this._invalidatePoolMetaCache.bind(this),
+      this._stmtFn,
+      this._invalidatePoolMetaCacheFn,
       metadata
     );
   }
 
   removePool(address: string) {
     return removePoolRecord(
-      this._stmt.bind(this),
-      this._invalidatePoolMetaCache.bind(this),
+      this._stmtFn,
+      this._invalidatePoolMetaCacheFn,
       address
     );
   }
 
   updatePoolState(state: Record<string, unknown>) {
-    return updatePoolStateRecord(this._stmt.bind(this), state);
+    return updatePoolStateRecord(this._stmtFn, state);
   }
 
   getPools(opts = {}) {
@@ -246,15 +252,15 @@ export class RegistryService {
   }
 
   getPool(address: string) {
-    return getPoolRecord(this._stmt.bind(this), address);
+    return getPoolRecord(this._stmtFn, address);
   }
 
   getPoolCount() {
-    return getPoolCountRecord(this._stmt.bind(this));
+    return getPoolCountRecord(this._stmtFn);
   }
 
   getActivePoolCount() {
-    return getActivePoolCountRecord(this._stmt.bind(this));
+    return getActivePoolCountRecord(this._stmtFn);
   }
 
   // ─── Checkpoint Management ───────────────────────────────────
@@ -294,8 +300,8 @@ export class RegistryService {
   batchUpsertPools(poolList: Record<string, unknown>[]) {
     batchUpsertPoolsRecord(
       this.db,
-      this._stmt.bind(this),
-      this._invalidatePoolMetaCache.bind(this),
+      this._stmtFn,
+      this._invalidatePoolMetaCacheFn,
       poolList
     );
   }
@@ -332,7 +338,7 @@ export class RegistryService {
    * @returns {Object} e.g. { QUICKSWAP_V2: 3622, UNISWAP_V3: 3513, ... }
    */
   getPoolCountByProtocol() {
-    return getPoolCountByProtocolRecord(this._stmt.bind(this));
+    return getPoolCountByProtocolRecord(this._stmtFn);
   }
 
   // ─── Snapshot I/O ────────────────────────────────────────────
@@ -423,9 +429,9 @@ export class RegistryService {
    */
   disablePool(poolAddress: any, reason = "manual") {
     disablePoolRecord(
-      this._stmt.bind(this),
-      this._invalidatePoolMetaCache.bind(this),
-      this.recordLiquidityEvent.bind(this),
+      this._stmtFn,
+      this._invalidatePoolMetaCacheFn,
+      this._recordLiquidityEventFn,
       poolAddress,
       reason
     );
@@ -439,8 +445,8 @@ export class RegistryService {
    */
   enablePool(poolAddress: any) {
     enablePoolRecord(
-      this._stmt.bind(this),
-      this._invalidatePoolMetaCache.bind(this),
+      this._stmtFn,
+      this._invalidatePoolMetaCacheFn,
       poolAddress
     );
   }
@@ -467,7 +473,7 @@ export class RegistryService {
    */
   recordLiquidityEvent(poolAddress: any, blockNumber: any, eventType: any, oldValue: any, newValue: any) {
     recordLiquidityEventRecord(
-      this._stmt.bind(this),
+      this._stmtFn,
       poolAddress,
       blockNumber,
       eventType,
@@ -484,7 +490,7 @@ export class RegistryService {
    * @returns {boolean}
    */
   hasRecentLiquidityEvent(poolAddress: any, sinceBlock: any) {
-    return hasRecentLiquidityEventRecord(this._stmt.bind(this), poolAddress, sinceBlock);
+    return hasRecentLiquidityEventRecord(this._stmtFn, poolAddress, sinceBlock);
   }
 
   /**
@@ -502,7 +508,7 @@ export class RegistryService {
    */
   detectLiquidityChange(poolAddress: any, oldState: any, newState: any, blockNumber: any, thresholdPct = 50) {
     return detectLiquidityChangeRecord(
-      this.recordLiquidityEvent.bind(this),
+      this._recordLiquidityEventFn,
       poolAddress,
       oldState,
       newState,

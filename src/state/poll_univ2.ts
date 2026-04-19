@@ -15,6 +15,7 @@
 
 import { fetchMultipleV2States } from "./uniswap_v2.ts";
 import { normalizeV2State } from "./normalizer.ts";
+import { TimedPoller } from "./poller_base.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
 
@@ -22,23 +23,16 @@ const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
 
 // ─── Poller class ─────────────────────────────────────────────
 
-export class PollUniv2 {
+export class PollUniv2 extends TimedPoller {
   private _registry: any;
   private _cache: Map<string, any>;
   private _concurrency: number;
-  private _verbose: boolean;
-  private _timer: ReturnType<typeof setTimeout> | null;
-  private _running: boolean;
-  private _passCount: number;
 
   constructor(registry: any, stateCache: Map<string, any>, options: any = {}) {
+    super(options);
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? 10;
-    this._verbose = options.verbose ?? false;
-    this._timer = null;
-    this._running = false;
-    this._passCount = 0;
   }
 
   // ─── Single poll pass ───────────────────────────────────────
@@ -96,14 +90,7 @@ export class PollUniv2 {
       }
     }
 
-    const durationMs = Date.now() - t0;
-    this._passCount++;
-
-    console.log(
-      `[poll_univ2] Pass #${this._passCount}: ${updated} updated, ${failed} failed (${durationMs}ms)`
-    );
-
-    return { updated, failed, durationMs };
+    return this._completePass("poll_univ2", t0, updated, failed);
   }
 
   // ─── Continuous polling ──────────────────────────────────────
@@ -114,38 +101,6 @@ export class PollUniv2 {
    * @param {number} intervalMs  Milliseconds between polls
    */
   start(intervalMs = 15_000) {
-    if (this._running) return;
-    this._running = true;
-
-    const loop = async () => {
-      if (!this._running) return;
-      try {
-        await this.poll();
-      } catch (err: any) {
-        console.error(`[poll_univ2] Poll error: ${err.message}`);
-      }
-      if (this._running) {
-        this._timer = setTimeout(loop, intervalMs);
-      }
-    };
-
-    // Run immediately then on interval
-    loop();
-  }
-
-  /**
-   * Stop the continuous poller.
-   */
-  stop() {
-    this._running = false;
-    if (this._timer) {
-      clearTimeout(this._timer);
-      this._timer = null;
-    }
-  }
-
-  /** @returns {boolean} Whether the poller is running */
-  get isRunning() {
-    return this._running;
+    this._startLoop("poll_univ2", intervalMs, () => this.poll());
   }
 }

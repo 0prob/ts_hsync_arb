@@ -135,6 +135,25 @@ export async function readContractWithRetry(params: any) {
 }
 
 /**
+ * Execute a viem multicall with the same endpoint failover and retry policy as
+ * readContractWithRetry().
+ *
+ * @param {object} params  Same params as publicClient.multicall()
+ * @returns {Promise<any[]>} The multicall results
+ */
+export async function multicallWithRetry(params: any) {
+  return executeWithRpcRetry(
+    (client: any) => client.multicall(params),
+    {
+      onRateLimitMessage: (shortUrl: any, _endpoint: any, _attempt: any, reason = "rate-limited") =>
+        `    RPC ${reason} on ${shortUrl} during multicall, switching endpoint...`,
+      onRetryMessage: (shortUrl: any, delayMs: any) =>
+        `    RPC multicall error on ${shortUrl}, retrying in ${delayMs}ms...`,
+    }
+  );
+}
+
+/**
  * True for viem readContract failures where the address returned no calldata.
  *
  * This usually means one of:

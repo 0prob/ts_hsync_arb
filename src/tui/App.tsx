@@ -1,10 +1,12 @@
-import React from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
-import Table from 'ink-table';
+import InkTable from 'ink-table';
 import Gradient from 'ink-gradient';
 import BigText from 'ink-big-text';
+import type { JSX } from 'react';
 import type { BotState } from './index.tsx';
+
+const Table = InkTable as unknown as (props: { data: BotState["opportunities"] }) => JSX.Element;
 
 export const App = ({ state }: { state: BotState }) => {
   const { exit } = useApp();

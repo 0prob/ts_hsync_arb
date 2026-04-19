@@ -6,7 +6,7 @@
  * Uses readContractWithRetry() for automatic backoff on 429 errors.
  */
 
-import { readContractWithRetry } from "./rpc.ts";
+import { isNoDataReadContractError, readContractWithRetry } from "./rpc.ts";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
@@ -40,9 +40,15 @@ export async function getCurveTokens(poolAddress: any, registryAddress: any) {
       .filter((t: any) => t !== ZERO)
       .map((t: any) => t.toString());
   } catch (error: any) {
+    if (isNoDataReadContractError(error)) {
+      console.error(
+        `  Curve registry returned no token data for ${poolAddress}: ${error.message}`
+      );
+      return [];
+    }
     console.error(
       `  Error fetching Curve tokens for ${poolAddress}: ${error.message}`
     );
-    return [];
+    throw error;
   }
 }

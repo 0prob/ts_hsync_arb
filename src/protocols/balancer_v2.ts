@@ -4,8 +4,9 @@
  */
 
 import { getBalancerTokens } from "../enrichment/balancer.ts";
+import { createRpcTokenProtocol } from "./factories.ts";
 
-export default {
+export default createRpcTokenProtocol({
   name: "Balancer V2",
   address: "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
   signature:
@@ -24,4 +25,4 @@ export default {
   async enrichTokens(poolMeta: any) {
     return getBalancerTokens(poolMeta.metadata.poolId);
   },
-};
+});

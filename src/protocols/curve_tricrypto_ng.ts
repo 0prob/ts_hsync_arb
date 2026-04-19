@@ -1,22 +1,13 @@
-import { discoverCurveListedFactory } from "./curve_list_factory.ts";
+import { createCurveListedFactoryProtocol } from "./factories.ts";
 
-const FACTORY_ADDRESS = "0x0c0e5f2fF0ff18a3be9b835635039256dC4B4963";
+const FACTORY_ADDRESS = "0xC1b393EfEF38140662b91441C6710Aa704973228";
 
-export default {
+export default createCurveListedFactoryProtocol({
   name: "Curve Tricrypto NG",
   address: FACTORY_ADDRESS,
-  async discover({ key, registry, chainHeight }: any) {
-    return discoverCurveListedFactory({
-      protocolKey: key,
-      protocolName: "Curve Tricrypto NG",
-      factoryAddress: FACTORY_ADDRESS,
-      slotCount: 3,
-      registry,
-      checkpointBlock: chainHeight,
-      metadataForPool: () => ({
-        factory: FACTORY_ADDRESS,
-        variant: "tricrypto-ng",
-      }),
-    });
-  },
-};
+  slotCount: 3,
+  metadataForPool: () => ({
+    factory: FACTORY_ADDRESS,
+    variant: "tricrypto-ng",
+  }),
+});

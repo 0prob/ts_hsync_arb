@@ -21,6 +21,7 @@ import { readContractWithRetry, throttledMap } from "../enrichment/rpc.ts";
 import { normalizeCurveState } from "./normalizer.ts";
 import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { parsePoolTokens } from "./pool_record.ts";
+import { asBatchResult, TimedPoller } from "./poller_base.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
 
@@ -182,23 +183,16 @@ export async function fetchAndNormalizeCurvePool(pool: any) {
 
 // ─── Poller class ─────────────────────────────────────────────
 
-export class PollCurve {
+export class PollCurve extends TimedPoller {
   private _registry: any;
   private _cache: Map<string, any>;
   private _concurrency: number;
-  private _verbose: boolean;
-  private _timer: ReturnType<typeof setTimeout> | null;
-  private _running: boolean;
-  private _passCount: number;
 
   constructor(registry: any, stateCache: Map<string, any>, options: any = {}) {
+    super(options);
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? ENRICH_CONCURRENCY;
-    this._verbose = options.verbose ?? false;
-    this._timer = null;
-    this._running = false;
-    this._passCount = 0;
   }
 
   async poll() {
@@ -217,70 +211,26 @@ export class PollCurve {
       async (pool: any) => {
         try {
           const { addr, normalized } = await fetchAndNormalizeCurvePool(pool);
-          return { addr, normalized, error: null };
+          return asBatchResult(addr, normalized);
         } catch (err: any) {
           const addr = pool.pool_address.toLowerCase();
-          return { addr, normalized: null, error: err };
+          return asBatchResult(addr, null, err);
         }
       },
       this._concurrency
     );
 
-    let updated = 0;
-    let failed = 0;
-
-    for (const { addr, normalized, error } of results) {
-      if (normalized) {
-        this._cache.set(addr, normalized);
-        updated++;
-        if (this._verbose) {
-          console.log(`[poll_curve] ${addr} A=${normalized.A} balances=${normalized.balances}`);
-        }
-      } else {
-        failed++;
-        if (this._verbose) {
-          console.warn(`[poll_curve] Failed ${addr}: ${error?.message}`);
-        }
-      }
-    }
-
-    const durationMs = Date.now() - t0;
-    this._passCount++;
-    console.log(
-      `[poll_curve] Pass #${this._passCount}: ${updated} updated, ${failed} failed (${durationMs}ms)`
+    const { updated, failed } = this._storeBatchResults(
+      "poll_curve",
+      this._cache,
+      results,
+      ({ addr, normalized }) => `[poll_curve] ${addr} A=${normalized.A} balances=${normalized.balances}`
     );
 
-    return { updated, failed, durationMs };
+    return this._completePass("poll_curve", t0, updated, failed);
   }
 
   start(intervalMs = 30_000) {
-    if (this._running) return;
-    this._running = true;
-
-    const loop = async () => {
-      if (!this._running) return;
-      try {
-        await this.poll();
-      } catch (err: any) {
-        console.error(`[poll_curve] Poll error: ${err.message}`);
-      }
-      if (this._running) {
-        this._timer = setTimeout(loop, intervalMs);
-      }
-    };
-
-    loop();
-  }
-
-  stop() {
-    this._running = false;
-    if (this._timer) {
-      clearTimeout(this._timer);
-      this._timer = null;
-    }
-  }
-
-  get isRunning() {
-    return this._running;
+    this._startLoop("poll_curve", intervalMs, () => this.poll());
   }
 }

@@ -28,6 +28,76 @@ function discoveryCheckpointFromNextBlock(nextBlock: any, fallbackFromBlock: any
   return Math.max(0, fallbackFromBlock - 1);
 }
 
+function decodeDiscoveryLogs(protocol: any, logs: any[], decodedLogs: any[]) {
+  let errors = 0;
+  const extractedPools = [];
+
+  for (let i = 0; i < decodedLogs.length; i++) {
+    const decoded = decodedLogs[i];
+    const rawLog = logs[i];
+    if (!decoded) continue;
+
+    try {
+      const extracted = protocol.decode(decoded, rawLog);
+      if (!extracted.pool_address || typeof extracted.pool_address !== "string") {
+        console.warn(
+          `  Warning: Could not extract pool address for ${protocol.name} at block ${rawLog.blockNumber}`
+        );
+        continue;
+      }
+      extractedPools.push({ extracted, rawLog });
+    } catch (innerError: any) {
+      errors++;
+      if (errors <= 5) {
+        console.error(
+          `  Error decoding log #${i} for ${protocol.name}: ${innerError.message}`
+        );
+      }
+    }
+  }
+
+  return { extractedPools, errors };
+}
+
+async function enrichDiscoveredPools(protocol: any, extractedPools: any[]) {
+  if (!protocol.enrichTokens) return;
+
+  const needsEnrichment = extractedPools.filter((p) => p.extracted.tokens.length === 0);
+  if (needsEnrichment.length === 0) return;
+
+  console.log(
+    `  Enriching ${needsEnrichment.length} pools via RPC (concurrency=${ENRICH_CONCURRENCY})...`
+  );
+
+  const enrichedTokens = await throttledMap(
+    needsEnrichment,
+    (item: any) => protocol.enrichTokens(item.extracted),
+    ENRICH_CONCURRENCY
+  );
+
+  for (let i = 0; i < needsEnrichment.length; i++) {
+    needsEnrichment[i].extracted.tokens = enrichedTokens[i] || [];
+  }
+}
+
+function buildDiscoveredPoolBatch(key: string, extractedPools: any[]) {
+  const initializedPools = extractedPools.filter(({ extracted }) => extracted.tokens.length >= 2);
+  const skipped = extractedPools.length - initializedPools.length;
+  if (skipped > 0) {
+    console.log(`  Skipped ${skipped} uninitialized pool(s) with no token data.`);
+  }
+
+  return initializedPools.map(({ extracted, rawLog }) => ({
+    protocol: key,
+    block: Number(rawLog.blockNumber),
+    tx: rawLog.transactionHash,
+    pool_address: extracted.pool_address,
+    tokens: extracted.tokens,
+    metadata: extracted.metadata,
+    status: "active",
+  }));
+}
+
 // ─── Per-protocol discovery ────────────────────────────────────
 
 async function discoverProtocol(key: any, protocol: any, registry: any, context: any = {}) {
@@ -102,83 +172,9 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
   const decoder = Decoder.fromSignatures([protocol.signature]);
   const decodedLogs = await decoder.decodeLogs(logs);
 
-  let errors = 0;
-  const extractedPools = [];
-
-  for (let i = 0; i < decodedLogs.length; i++) {
-    const decoded = decodedLogs[i];
-    const rawLog = logs[i];
-    if (!decoded) continue;
-
-    try {
-      const extracted = protocol.decode(decoded, rawLog);
-
-      if (!extracted.pool_address || typeof extracted.pool_address !== "string") {
-        console.warn(
-          `  Warning: Could not extract pool address for ${protocol.name} at block ${rawLog.blockNumber}`
-        );
-        continue;
-      }
-
-      extractedPools.push({ extracted, rawLog });
-    } catch (innerError: any) {
-      errors++;
-      if (errors <= 5) {
-        console.error(
-          `  Error decoding log #${i} for ${protocol.name}: ${innerError.message}`
-        );
-      }
-    }
-  }
-
-  if (protocol.enrichTokens) {
-    const needsEnrichment = extractedPools.filter(
-      (p) => p.extracted.tokens.length === 0
-    );
-
-    if (needsEnrichment.length > 0) {
-      console.log(
-        `  Enriching ${needsEnrichment.length} pools via RPC (concurrency=${ENRICH_CONCURRENCY})...`
-      );
-
-      const enrichedTokens = await throttledMap(
-        needsEnrichment,
-        async (item: any) => {
-          try {
-            return await protocol.enrichTokens(item.extracted);
-          } catch (err: any) {
-            console.error(
-              `  Enrichment failed for ${item.extracted.pool_address}: ${err.message}`
-            );
-            return [];
-          }
-        },
-        ENRICH_CONCURRENCY
-      );
-
-      for (let i = 0; i < needsEnrichment.length; i++) {
-        needsEnrichment[i].extracted.tokens = enrichedTokens[i];
-      }
-    }
-  }
-
-  const initializedPools = extractedPools.filter(
-    ({ extracted }) => extracted.tokens.length >= 2
-  );
-  const skipped = extractedPools.length - initializedPools.length;
-  if (skipped > 0) {
-    console.log(`  Skipped ${skipped} uninitialized pool(s) with no token data.`);
-  }
-
-  const poolBatch = initializedPools.map(({ extracted, rawLog }) => ({
-    protocol: key,
-    block: Number(rawLog.blockNumber),
-    tx: rawLog.transactionHash,
-    pool_address: extracted.pool_address,
-    tokens: extracted.tokens,
-    metadata: extracted.metadata,
-    status: "active",
-  }));
+  const { extractedPools, errors } = decodeDiscoveryLogs(protocol, logs, decodedLogs);
+  await enrichDiscoveredPools(protocol, extractedPools);
+  const poolBatch = buildDiscoveredPoolBatch(key, extractedPools);
 
   let hydrationPromise: Promise<number> | null = null;
   if (poolBatch.length > 0) {

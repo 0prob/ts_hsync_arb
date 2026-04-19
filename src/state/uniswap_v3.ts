@@ -18,6 +18,7 @@
 
 import {
   isNoDataReadContractError,
+  multicallWithRetry,
   readContractWithRetry,
   throttledMap,
 } from "../enrichment/rpc.ts";
@@ -139,6 +140,8 @@ const TICKS_ABI = [
 
 const MIN_TICK = -887272;
 const MAX_TICK = 887272;
+const V3_BITMAP_MULTICALL_CHUNK_SIZE = 128;
+const V3_TICKS_MULTICALL_CHUNK_SIZE = 200;
 
 type PoolCoreState = {
   sqrtPriceX96: bigint;
@@ -204,6 +207,14 @@ function extractTicksFromWord(word: bigint, wordPos: number, tickSpacing: number
     }
   }
   return ticks;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
 }
 
 // ─── Core State Fetcher ───────────────────────────────────────
@@ -312,35 +323,58 @@ export async function fetchTickBitmap(
     wordPositions.push(w);
   }
 
-  // Fetch all bitmap words with concurrency throttling
-  const words = await throttledMap(
-    wordPositions,
-    async (wordPos: number) => {
+  const bitmaps = new Map<number, bigint>();
+  const tickIndices: number[] = [];
+  const wordChunks = chunk(wordPositions, V3_BITMAP_MULTICALL_CHUNK_SIZE);
+
+  await throttledMap(
+    wordChunks,
+    async (wordChunk: number[]) => {
+      const contracts = wordChunk.map((wordPos) => ({
+        address: poolAddress,
+        abi: TICK_BITMAP_ABI,
+        functionName: "tickBitmap",
+        args: [wordPos],
+      }));
+
+      let results: any[];
       try {
-        const result = await readContractWithRetry({
-          address: poolAddress,
-          abi: TICK_BITMAP_ABI,
-          functionName: "tickBitmap",
-          args: [wordPos],
+        results = await multicallWithRetry({
+          contracts,
+          allowFailure: true,
         });
-        return { wordPos, word: BigInt(result) };
       } catch {
-        // Some word positions may revert if out of range
-        return { wordPos, word: 0n };
+        // Fall back to per-word reads for this chunk if multicall is unavailable
+        // or rejected by the current endpoint.
+        results = await Promise.all(
+          wordChunk.map(async (wordPos) => {
+            try {
+              const result = await readContractWithRetry({
+                address: poolAddress,
+                abi: TICK_BITMAP_ABI,
+                functionName: "tickBitmap",
+                args: [wordPos],
+              });
+              return { status: "success", result };
+            } catch {
+              return { status: "failure", result: 0n };
+            }
+          })
+        );
+      }
+
+      for (let i = 0; i < wordChunk.length; i++) {
+        const wordPos = wordChunk[i];
+        const result = results[i];
+        if (!result || result.status !== "success") continue;
+        const word = BigInt(result.result);
+        if (word === 0n) continue;
+        bitmaps.set(wordPos, word);
+        tickIndices.push(...extractTicksFromWord(word, wordPos, tickSpacing));
       }
     },
     ENRICH_CONCURRENCY
   );
-
-  const bitmaps = new Map<number, bigint>();
-  const tickIndices: number[] = [];
-
-  for (const { wordPos, word } of words) {
-    if (word !== 0n) {
-      bitmaps.set(wordPos, word);
-      tickIndices.push(...extractTicksFromWord(word, wordPos, tickSpacing));
-    }
-  }
 
   return { bitmaps, tickIndices: tickIndices.sort((a, b) => a - b) };
 }
@@ -359,38 +393,58 @@ export async function fetchTickData(
   const tickMap = new Map<number, TickLiquidity>();
 
   if (tickIndices.length === 0) return tickMap;
+  const tickChunks = chunk(tickIndices, V3_TICKS_MULTICALL_CHUNK_SIZE);
 
-  const results = await throttledMap(
-    tickIndices,
-    async (tick: number) => {
+  await throttledMap(
+    tickChunks,
+    async (tickChunk: number[]) => {
+      const contracts = tickChunk.map((tick) => ({
+        address: poolAddress,
+        abi: TICKS_ABI,
+        functionName: "ticks",
+        args: [tick],
+      }));
+
+      let results: any[];
       try {
-        const result = await readContractWithRetry({
-          address: poolAddress,
-          abi: TICKS_ABI,
-          functionName: "ticks",
-          args: [tick],
+        results = await multicallWithRetry({
+          contracts,
+          allowFailure: true,
         });
-        return {
-          tick,
-          liquidityGross: BigInt(result[0]),
-          liquidityNet: BigInt(result[1]),
-          initialized: Boolean(result[7]),
-        };
       } catch {
-        return { tick, liquidityGross: 0n, liquidityNet: 0n, initialized: false };
+        // Preserve existing behavior if multicall cannot be used on this endpoint.
+        results = await Promise.all(
+          tickChunk.map(async (tick) => {
+            try {
+              const result = await readContractWithRetry({
+                address: poolAddress,
+                abi: TICKS_ABI,
+                functionName: "ticks",
+                args: [tick],
+              });
+              return { status: "success", result };
+            } catch {
+              return { status: "failure" };
+            }
+          })
+        );
+      }
+
+      for (let i = 0; i < tickChunk.length; i++) {
+        const tick = tickChunk[i];
+        const result = results[i];
+        if (!result || result.status !== "success") continue;
+        const decoded = result.result;
+        const liquidityGross = BigInt(decoded[0]);
+        if (!decoded[7] || liquidityGross <= 0n) continue;
+        tickMap.set(tick, {
+          liquidityGross,
+          liquidityNet: BigInt(decoded[1]),
+        });
       }
     },
     ENRICH_CONCURRENCY
   );
-
-  for (const r of results) {
-    if (r.initialized && r.liquidityGross > 0n) {
-      tickMap.set(r.tick, {
-        liquidityGross: r.liquidityGross,
-        liquidityNet: r.liquidityNet,
-      });
-    }
-  }
 
   return tickMap;
 }

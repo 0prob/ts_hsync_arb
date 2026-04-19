@@ -29,6 +29,20 @@ function toBigIntSafe(v: any): bigint | any {
   try { return BigInt(v); } catch { return v; }
 }
 
+function rehydrateV3State(data: any) {
+  if (!data?.ticks || data.ticks instanceof Map) return;
+
+  data.ticks = new Map(
+    Object.entries(data.ticks).map(([tick, liquidity]: [string, any]) => [
+      Number(tick),
+      {
+        liquidityGross: toBigIntSafe(liquidity?.liquidityGross ?? 0),
+        liquidityNet: toBigIntSafe(liquidity?.liquidityNet ?? 0),
+      },
+    ])
+  );
+}
+
 export function rehydrateStateData(protocol: string, data: any): any {
   if (!data) return data;
   const cls = protocolClass(protocol);
@@ -40,12 +54,19 @@ export function rehydrateStateData(protocol: string, data: any): any {
       data[field] = data[field].map(toBigIntSafe);
     }
   }
+  if (cls === "V3") {
+    rehydrateV3State(data);
+  }
   return data;
 }
 
 export function stringifyWithBigInt(obj: any) {
   return JSON.stringify(obj, (_key, value) =>
-    typeof value === "bigint" ? value.toString() : value
+    typeof value === "bigint"
+      ? value.toString()
+      : value instanceof Map
+        ? Object.fromEntries(value)
+        : value
   );
 }
 
