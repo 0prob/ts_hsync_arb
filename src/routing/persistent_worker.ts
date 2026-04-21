@@ -30,7 +30,7 @@ let cachedTopologyGraph: any = null;
 parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
   try {
     if (type === "SYNC_STATE") {
-      const { stateObj } = payload;
+      const { stateObj, retainPools } = payload;
       for (const [poolAddress, state] of Object.entries(stateObj || {}) as [string, any][]) {
         rehydrateStateData(state.protocol, state);
         if (state.ticks && !(state.ticks instanceof Map)) {
@@ -42,6 +42,14 @@ parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
           );
         }
         workerStateMap.set(poolAddress, state);
+      }
+      if (Array.isArray(retainPools)) {
+        const retained = new Set(retainPools.map((poolAddress: string) => poolAddress.toLowerCase()));
+        for (const poolAddress of [...workerStateMap.keys()]) {
+          if (!retained.has(poolAddress)) {
+            workerStateMap.delete(poolAddress);
+          }
+        }
       }
       parentPort!.postMessage({ id, type: "SYNC_STATE" });
 

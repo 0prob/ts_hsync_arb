@@ -17,7 +17,7 @@ export function createRegistryRepositories(registry: any) {
     },
     tokens: {
       getMeta: (address: string) => registry.getTokenMeta(address),
-      getDecimals: (address: string) => registry.getTokenDecimals?.(address),
+      getDecimals: (addresses: string[]) => registry.getTokenDecimals?.(addresses),
       batchUpsertMeta: (rows: any[]) => registry.batchUpsertTokenMeta?.(rows),
     },
   };

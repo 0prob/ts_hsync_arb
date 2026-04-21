@@ -3,21 +3,36 @@
  * src/db/registry_assets.js — Token metadata and pool fee helpers
  */
 
-const STMT_CACHE_KEY = Symbol.for("registry_assets_stmt_cache");
-
 function assetStmt(db: any, key: any, sql: any) {
-  let cache = db[STMT_CACHE_KEY];
-  if (!cache) {
-    cache = new Map();
-    Object.defineProperty(db, STMT_CACHE_KEY, { value: cache });
+  return db.statement(key, sql);
+}
+
+function normalizeTokenAddress(address: any) {
+  if (typeof address !== "string") return null;
+  const trimmed = address.trim();
+  if (!trimmed) return null;
+  return trimmed.toLowerCase();
+}
+
+function normalizeTokenText(value: any) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+}
+
+function normalizeTokenDecimals(decimals: any) {
+  const numeric = Number(decimals);
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric > 255) {
+    throw new Error(`Invalid token decimals: ${decimals}`);
   }
-  if (!cache.has(key)) {
-    cache.set(key, db.prepare(sql));
-  }
-  return cache.get(key);
+  return numeric;
 }
 
 export function upsertTokenMeta(db: any, address: any, decimals: any, symbol: any = null, name: any = null) {
+  const normalizedAddress = normalizeTokenAddress(address);
+  if (!normalizedAddress) {
+    throw new Error("Token address is required");
+  }
   assetStmt(
     db,
     "upsertTokenMeta",
@@ -29,13 +44,20 @@ export function upsertTokenMeta(db: any, address: any, decimals: any, symbol: an
          name       = COALESCE(excluded.name, token_meta.name),
          updated_at = excluded.updated_at`
   )
-    .run(address.toLowerCase(), decimals, symbol, name);
+    .run(
+      normalizedAddress,
+      normalizeTokenDecimals(decimals),
+      normalizeTokenText(symbol),
+      normalizeTokenText(name),
+    );
 }
 
 export function getTokenMeta(db: any, address: any) {
+  const normalizedAddress = normalizeTokenAddress(address);
+  if (!normalizedAddress) return null;
   return (
     assetStmt(db, "getTokenMeta", `SELECT * FROM token_meta WHERE address = ?`)
-      .get(address.toLowerCase()) || null
+      .get(normalizedAddress) || null
   );
 }
 
@@ -44,7 +66,7 @@ export function getTokenDecimals(db: any, addresses: any) {
   if (!Array.isArray(addresses) || addresses.length === 0) return result;
 
   const CHUNK = 900;
-  const lower = addresses.map((a) => a.toLowerCase());
+  const lower = [...new Set(addresses.map(normalizeTokenAddress).filter(Boolean))];
 
   for (let i = 0; i < lower.length; i += CHUNK) {
     const batch = lower.slice(i, i + CHUNK);
@@ -63,11 +85,36 @@ export function getTokenDecimals(db: any, addresses: any) {
 }
 
 export function batchUpsertTokenMeta(db: any, tokens: any, upsertTokenMetaImpl = upsertTokenMeta) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return;
+
+  const merged = new Map();
+  for (const token of tokens) {
+    const normalizedAddress = normalizeTokenAddress(token?.address);
+    if (!normalizedAddress) continue;
+
+    const prior = merged.get(normalizedAddress);
+    const next = {
+      address: normalizedAddress,
+      decimals: normalizeTokenDecimals(token?.decimals),
+      symbol: normalizeTokenText(token?.symbol),
+      name: normalizeTokenText(token?.name),
+    };
+
+    merged.set(normalizedAddress, {
+      ...prior,
+      ...next,
+      symbol: next.symbol ?? prior?.symbol ?? null,
+      name: next.name ?? prior?.name ?? null,
+    });
+  }
+
+  if (merged.size === 0) return;
+
   db.transaction((list: any) => {
     for (const t of list) {
       upsertTokenMetaImpl(db, t.address, t.decimals, t.symbol, t.name);
     }
-  })(tokens);
+  })([...merged.values()]);
 }
 
 export function upsertPoolFee(db: any, poolAddress: any, feeBps: any, feeRaw = null, protocol = null) {

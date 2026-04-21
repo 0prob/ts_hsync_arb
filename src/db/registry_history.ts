@@ -5,18 +5,8 @@
 
 import { lowerCaseAddressList, mapArbHistoryRow } from "./registry_codec.ts";
 
-const STMT_CACHE_KEY = Symbol.for("registry_history_stmt_cache");
-
 function historyStmt(db: any, key: any, sql: any) {
-  let cache = db[STMT_CACHE_KEY];
-  if (!cache) {
-    cache = new Map();
-    Object.defineProperty(db, STMT_CACHE_KEY, { value: cache });
-  }
-  if (!cache.has(key)) {
-    cache.set(key, db.prepare(sql));
-  }
-  return cache.get(key);
+  return db.statement(key, sql);
 }
 
 export function logArbResult(db: any, arb: any) {

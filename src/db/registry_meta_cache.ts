@@ -30,8 +30,7 @@ export class RegistryMetaCache {
 
   getActive() {
     if (!this._activePoolMetaCache) {
-      this._activePoolMetaCache = [...this.getAll().values()]
-        .filter((pool) => pool.status === "active");
+      this._activePoolMetaCache = loadPoolMetaCache(this._stmt, "active");
     }
     return this._activePoolMetaCache;
   }

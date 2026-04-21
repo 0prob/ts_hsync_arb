@@ -244,7 +244,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
                   Math.ceil(options.selective4HopPathBudget / Math.max(selective4HopTokens.length, 1)),
                 ),
                 max4HopPathsPerToken: options.selective4HopMaxPathsPerToken,
-                topologyKey: `${topologyKeyBase}:full_selective_4hop`,
+                topologyKey: `${topologyKeyBase}:full`,
               })
             : Promise.resolve([]),
         ]);

@@ -19,6 +19,7 @@ import { dynamicPublicClient } from "../utils/rpc_manager.ts";
 import { logger } from "../utils/logger.ts";
 import { isEndpointCapabilityError } from "../utils/rpc_manager.ts";
 import { getPoolTokens } from "../util/pool_record.ts";
+import { normalizeHydrationAddresses, normalizeTokenHydrationAddress } from "./token_hydrator_helpers.ts";
 
 // ─── HyperRPC client ──────────────────────────────────────────
 //
@@ -51,7 +52,6 @@ const NAME_ABI = [
 // ─── Helpers ──────────────────────────────────────────────────
 
 const CHUNK_SIZE = 200; // tokens per multicall → 600 call targets per request
-
 function chunk(arr: any, size: any) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -99,7 +99,6 @@ async function fetchMetaBatch(addresses: any) {
     callCount: contracts.length,
     resultCount: Array.isArray(results) ? results.length : 0,
     successCount,
-    firstResults: Array.isArray(results) ? results.slice(0, 6) : results,
   }, "[token_hydrator] multicall raw result summary");
 
   return addresses.map((addr: any, i: any) => {
@@ -128,15 +127,16 @@ async function fetchMetaBatch(addresses: any) {
  * @returns {Promise<number>}  Number of new tokens persisted
  */
 export async function hydrateTokens(tokenAddresses: any, registry: any) {
-  if (!tokenAddresses || tokenAddresses.length === 0) return 0;
+  const normalizedAddresses = normalizeHydrationAddresses(tokenAddresses);
+  if (normalizedAddresses.length === 0) return 0;
 
   // Filter to only addresses not yet in the DB — re-hydration is rare; this
   // check ensures a repeated discovery run is a no-op for existing tokens.
-  const existing = registry.getTokenDecimals(tokenAddresses);
-  const toFetch  = tokenAddresses.filter((a: any) => !existing.has(a));
+  const existing = registry.getTokenDecimals(normalizedAddresses);
+  const toFetch  = normalizedAddresses.filter((address: any) => !existing.has(address));
 
   if (toFetch.length === 0) {
-    logger.debug(`[token_hydrator] ${tokenAddresses.length} token(s) already in DB — skipping`);
+    logger.debug(`[token_hydrator] ${normalizedAddresses.length} token(s) already in DB — skipping`);
     return 0;
   }
 
@@ -194,9 +194,8 @@ export async function hydrateNewTokens(pools: any, registry: any) {
     const tokens = getPoolTokens(pool);
     if (!Array.isArray(tokens)) continue;
     for (const t of tokens) {
-      if (t && t !== "0x0000000000000000000000000000000000000000") {
-        seen.add(t.toLowerCase());
-      }
+      const normalized = normalizeTokenHydrationAddress(t);
+      if (normalized) seen.add(normalized);
     }
   }
   return hydrateTokens([...seen], registry);

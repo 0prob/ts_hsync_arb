@@ -40,11 +40,13 @@ class CompatStatement {
 export class CompatDatabase {
   db: DatabaseSync;
   _statementCache: Map<string, CompatStatement>;
+  _namedStatementCache: Map<string, CompatStatement>;
   _savepointId: number;
   _closed: boolean;
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this._statementCache = new Map();
+    this._namedStatementCache = new Map();
     this._savepointId = 0;
     this._closed = false;
   }
@@ -55,6 +57,13 @@ export class CompatDatabase {
       this._statementCache.set(sql, new CompatStatement(this.db.prepare(sql)));
     }
     return this._statementCache.get(sql)!;
+  }
+
+  statement(key: string, sql: string) {
+    if (!this._namedStatementCache.has(key)) {
+      this._namedStatementCache.set(key, this.prepare(sql));
+    }
+    return this._namedStatementCache.get(key)!;
   }
 
   exec(sql: string) {
@@ -99,6 +108,7 @@ export class CompatDatabase {
   close() {
     if (this._closed) return;
     this._closed = true;
+    this._namedStatementCache.clear();
     this._statementCache.clear();
     this.db.close();
   }

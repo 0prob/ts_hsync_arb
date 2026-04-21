@@ -21,6 +21,28 @@ function assertPoolAddress(metadata: any) {
   }
 }
 
+function normalizePoolUpsertRecord(pool: any) {
+  assertPoolAddress(pool);
+  return {
+    ...pool,
+    pool_address: String(pool.pool_address).toLowerCase(),
+    protocol: String(pool.protocol ?? ""),
+    tokens: lowerCaseAddressList(Array.isArray(pool.tokens) ? pool.tokens : parseJson(pool.tokens, [])),
+    tx: pool.tx != null ? String(pool.tx) : "",
+    metadata: pool.metadata ?? {},
+    status: pool.status || "active",
+  };
+}
+
+function normalizePoolUpsertBatch(poolList: any[]) {
+  const latestByAddress = new Map<string, any>();
+  for (const pool of poolList) {
+    const normalized = normalizePoolUpsertRecord(pool);
+    latestByAddress.set(normalized.pool_address, normalized);
+  }
+  return [...latestByAddress.values()];
+}
+
 export function upsertPool(db: any, stmt: any, invalidatePoolMetaCache: any, metadata: any) {
   assertPoolAddress(metadata);
 
@@ -56,6 +78,29 @@ export function removePool(stmt: any, invalidatePoolMetaCache: any, address: any
   ).run(address.toLowerCase());
   invalidatePoolMetaCache();
   return result;
+}
+
+export function batchRemovePools(stmt: any, invalidatePoolMetaCache: any, db: any, addresses: any[]) {
+  if (!Array.isArray(addresses) || addresses.length === 0) return 0;
+
+  const removePoolStmt = stmt(
+    "removePool",
+    `UPDATE pools SET status = 'removed' WHERE address = ?`
+  );
+
+  const normalisedAddresses = [...new Set(addresses.map((address) => String(address).toLowerCase()))];
+  const transaction = db.transaction((poolAddresses: string[]) => {
+    let removed = 0;
+    for (const address of poolAddresses) {
+      const result = removePoolStmt.run(address);
+      removed += Number(result?.changes ?? 0);
+    }
+    return removed;
+  });
+
+  const removed = transaction(normalisedAddresses);
+  invalidatePoolMetaCache();
+  return removed;
 }
 
 export function updatePoolState(stmt: any, state: any) {
@@ -100,18 +145,21 @@ export function getPools(db: any, opts: any = {}) {
   return db.prepare(sql).all(...params).map(mapPoolRow);
 }
 
-export function loadPoolMetaCache(stmt: any) {
+export function loadPoolMetaCache(stmt: any, status: string | null = null) {
+  const cacheKey = status ? `getPoolMetaByStatus:${status}` : "getAllPoolMeta";
+  const statusSql = status ? " WHERE status = ?" : "";
   const rows = stmt(
-    "getAllPoolMeta",
+    cacheKey,
     `SELECT address, protocol, tokens, created_block, created_tx, metadata, status
-     FROM pools`
-  ).all();
-  return new Map(
-    rows.map((row: any) => {
-      const pool = mapPoolMetaRow(row);
-      return [pool.pool_address, pool];
-    })
-  );
+     FROM pools${statusSql}`
+  ).all(...(status ? [status] : []));
+  const pools = rows.map(mapPoolMetaRow);
+
+  if (status) {
+    return pools;
+  }
+
+  return new Map(pools.map((pool: any) => [pool.pool_address, pool]));
 }
 
 export function getPool(stmt: any, address: any) {
@@ -136,7 +184,34 @@ export function getActivePoolCount(stmt: any) {
   ).get().count;
 }
 
+export function getPoolCountForProtocol(stmt: any, protocol: string, status: string | null = null) {
+  const cacheKey = status
+    ? `getPoolCountForProtocol:${protocol}:${status}`
+    : `getPoolCountForProtocol:${protocol}:all`;
+  const sql = status
+    ? `SELECT COUNT(*) as count FROM pools WHERE protocol = ? AND status = ?`
+    : `SELECT COUNT(*) as count FROM pools WHERE protocol = ?`;
+  const row = stmt(cacheKey, sql).get(...(status ? [protocol, status] : [protocol]));
+  return Number(row?.count ?? 0);
+}
+
+export function getPoolAddressesForProtocol(stmt: any, protocol: string, status: string | null = null) {
+  const cacheKey = status
+    ? `getPoolAddressesForProtocol:${protocol}:${status}`
+    : `getPoolAddressesForProtocol:${protocol}:all`;
+  const sql = status
+    ? `SELECT address FROM pools WHERE protocol = ? AND status = ?`
+    : `SELECT address FROM pools WHERE protocol = ?`;
+  return stmt(cacheKey, sql)
+    .all(...(status ? [protocol, status] : [protocol]))
+    .map((row: any) => String(row.address).toLowerCase());
+}
+
 export function batchUpsertPools(db: any, stmt: any, invalidatePoolMetaCache: any, poolList: any) {
+  if (!Array.isArray(poolList) || poolList.length === 0) return;
+  const normalizedPools = normalizePoolUpsertBatch(poolList);
+  if (normalizedPools.length === 0) return;
+
   const upsertPoolStmt = stmt("upsertPool", `
     INSERT INTO pools (address, protocol, tokens, created_block, created_tx, metadata, status)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -152,21 +227,23 @@ export function batchUpsertPools(db: any, stmt: any, invalidatePoolMetaCache: an
   db.transaction((pools: any) => {
     for (const pool of pools) {
       upsertPoolStmt.run(
-        pool.pool_address.toLowerCase(),
+        pool.pool_address,
         pool.protocol,
-        stringifyWithBigInt(lowerCaseAddressList(pool.tokens || [])),
+        stringifyWithBigInt(pool.tokens || []),
         pool.block ?? 0,
-        pool.tx ?? "",
-        stringifyWithBigInt(pool.metadata || {}),
-        pool.status || "active"
+        pool.tx,
+        stringifyWithBigInt(pool.metadata),
+        pool.status
       );
     }
-  })(poolList);
+  })(normalizedPools);
 
   invalidatePoolMetaCache();
 }
 
 export function batchUpdateStates(db: any, updatePoolStateImpl: any, stateList: any) {
+  if (!Array.isArray(stateList) || stateList.length === 0) return;
+
   db.transaction((states: any) => {
     for (const state of states) {
       updatePoolStateImpl(state);
@@ -222,12 +299,16 @@ export function saveSnapshot(getPoolsImpl: any, snapshotPath: any) {
   fs.writeFileSync(snapshotPath, stringifyWithBigInt(getPoolsImpl()));
 }
 
-export function disablePool(stmt: any, invalidatePoolMetaCache: any, recordLiquidityEventImpl: any, poolAddress: any, reason = "manual") {
-  stmt("disablePool", `UPDATE pools SET status = 'disabled' WHERE address = ?`)
-    .run(poolAddress.toLowerCase());
-  invalidatePoolMetaCache();
+export function disablePool(db: any, stmt: any, invalidatePoolMetaCache: any, recordLiquidityEventImpl: any, poolAddress: any, reason = "manual") {
+  const normalizedAddress = poolAddress.toLowerCase();
 
-  recordLiquidityEventImpl(poolAddress, 0, "disabled", null, reason);
+  db.transaction(() => {
+    stmt("disablePool", `UPDATE pools SET status = 'disabled' WHERE address = ?`)
+      .run(normalizedAddress);
+    recordLiquidityEventImpl(normalizedAddress, 0, "disabled", null, reason);
+  })();
+
+  invalidatePoolMetaCache();
 }
 
 export function enablePool(stmt: any, invalidatePoolMetaCache: any, poolAddress: any) {

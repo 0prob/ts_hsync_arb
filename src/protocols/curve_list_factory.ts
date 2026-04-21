@@ -1,8 +1,10 @@
 import { readContractWithRetry, throttledMap } from "../enrichment/rpc.ts";
 import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { hydrateNewTokens } from "../enrichment/token_hydrator.ts";
+import { logger } from "../utils/logger.ts";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
+const discoveryLogger: any = logger.child({ component: "discovery_curve_factory" });
 
 const POOL_COUNT_ABI = [
   {
@@ -78,9 +80,7 @@ export async function discoverCurveListedFactory({
   metadataForPool = () => ({}),
 }: DiscoverCurveFactoryOptions) {
   const existing = new Set(
-    (registry.getPools({ protocol: protocolKey }) || []).map((pool: any) =>
-      pool.pool_address.toLowerCase()
-    )
+    registry.getPoolAddressesForProtocol(protocolKey)
   );
 
   const poolCount = Number(
@@ -97,6 +97,10 @@ export async function discoverCurveListedFactory({
   }
 
   console.log(`\n[${protocolName}] Enumerating ${poolCount} factory-listed pools...`);
+  discoveryLogger.info(
+    { protocol: protocolKey, poolCount, existingPools: existing.size },
+    "[discovery] Enumerating Curve factory-listed pools",
+  );
 
   const indexes = Array.from({ length: poolCount }, (_, i) => i);
   const listedPools = await throttledMap(
@@ -158,6 +162,15 @@ export async function discoverCurveListedFactory({
   if (checkpointBlock != null) registry.setCheckpoint(protocolKey, checkpointBlock);
 
   console.log(`  Inserted/updated ${poolBatch.length} pools for ${protocolName}.`);
+  discoveryLogger.info(
+    {
+      protocol: protocolKey,
+      enumeratedPools: poolCount,
+      insertedPools: poolBatch.length,
+      checkpointBlock,
+    },
+    "[discovery] Curve factory scan complete",
+  );
 
   const hydrationPromise =
     poolBatch.length > 0

@@ -18,9 +18,6 @@
 import fs from "fs";
 import path from "path";
 import { CompatDatabase } from "./sqlite.ts";
-import {
-  parseJson,
-} from "./registry_codec.ts";
 import { RegistryMetaCache } from "./registry_meta_cache.ts";
 import {
   getCheckpoint as getCheckpointRecord,
@@ -46,12 +43,15 @@ import {
 import {
   batchUpdateStates as batchUpdateStatesRecord,
   batchUpsertPools as batchUpsertPoolsRecord,
+  batchRemovePools as batchRemovePoolsRecord,
   detectLiquidityChange as detectLiquidityChangeRecord,
   disablePool as disablePoolRecord,
   enablePool as enablePoolRecord,
   getActivePoolCount as getActivePoolCountRecord,
+  getPoolAddressesForProtocol as getPoolAddressesForProtocolRecord,
   getPool as getPoolRecord,
   getPoolCount as getPoolCountRecord,
+  getPoolCountForProtocol as getPoolCountForProtocolRecord,
   getPoolCountByProtocol as getPoolCountByProtocolRecord,
   getPools as getPoolsRecord,
   getPoolsWithState as getPoolsWithStateRecord,
@@ -69,7 +69,6 @@ import {
 
 export class RegistryService {
   db: CompatDatabase;
-  _stmtCache: Map<string, ReturnType<CompatDatabase['prepare']>>;
   _metaCache: RegistryMetaCache;
   _stmtFn: (key: string, sql: string) => ReturnType<CompatDatabase["prepare"]>;
   _invalidatePoolMetaCacheFn: () => void;
@@ -83,7 +82,6 @@ export class RegistryService {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this._initSchema();
-    this._stmtCache = new Map();
     this._stmtFn = this._stmt.bind(this);
     this._invalidatePoolMetaCacheFn = this._invalidatePoolMetaCache.bind(this);
     this._recordLiquidityEventFn = this.recordLiquidityEvent.bind(this);
@@ -177,8 +175,10 @@ export class RegistryService {
 
       CREATE INDEX IF NOT EXISTS idx_pools_protocol ON pools(protocol);
       CREATE INDEX IF NOT EXISTS idx_pools_status ON pools(status);
+      CREATE INDEX IF NOT EXISTS idx_pools_status_protocol ON pools(status, protocol);
       CREATE INDEX IF NOT EXISTS idx_pool_state_block ON pool_state(last_updated_block);
       CREATE INDEX IF NOT EXISTS idx_liquidity_events_addr ON liquidity_events(address);
+      CREATE INDEX IF NOT EXISTS idx_liquidity_events_addr_block ON liquidity_events(address, block_number);
       CREATE INDEX IF NOT EXISTS idx_arb_history_recorded ON arb_history(recorded_at);
       CREATE INDEX IF NOT EXISTS idx_arb_history_token ON arb_history(start_token);
     `);
@@ -186,6 +186,8 @@ export class RegistryService {
     // Migrations for existing databases
     const migrations = [
       `ALTER TABLE pools ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+      `CREATE INDEX IF NOT EXISTS idx_pools_status_protocol ON pools(status, protocol)`,
+      `CREATE INDEX IF NOT EXISTS idx_liquidity_events_addr_block ON liquidity_events(address, block_number)`,
     ];
 
     for (const migration of migrations) {
@@ -200,10 +202,7 @@ export class RegistryService {
   // ─── Pool CRUD ───────────────────────────────────────────────
 
   _stmt(key: string, sql: string) {
-    if (!this._stmtCache.has(key)) {
-      this._stmtCache.set(key, this.db.prepare(sql));
-    }
-    return this._stmtCache.get(key)!;
+    return this.db.statement(key, sql);
   }
 
   _invalidatePoolMetaCache() {
@@ -232,6 +231,15 @@ export class RegistryService {
       this._stmtFn,
       this._invalidatePoolMetaCacheFn,
       address
+    );
+  }
+
+  batchRemovePools(addresses: string[]) {
+    return batchRemovePoolsRecord(
+      this._stmtFn,
+      this._invalidatePoolMetaCacheFn,
+      this.db,
+      addresses
     );
   }
 
@@ -265,6 +273,14 @@ export class RegistryService {
 
   getActivePoolCount() {
     return getActivePoolCountRecord(this._stmtFn);
+  }
+
+  getPoolCountForProtocol(protocol: string, status: string | null = null) {
+    return getPoolCountForProtocolRecord(this._stmtFn, protocol, status);
+  }
+
+  getPoolAddressesForProtocol(protocol: string, status: string | null = null) {
+    return getPoolAddressesForProtocolRecord(this._stmtFn, protocol, status);
   }
 
   // ─── Checkpoint Management ───────────────────────────────────
@@ -433,6 +449,7 @@ export class RegistryService {
    */
   disablePool(poolAddress: any, reason = "manual") {
     disablePoolRecord(
+      this.db,
       this._stmtFn,
       this._invalidatePoolMetaCacheFn,
       this._recordLiquidityEventFn,
@@ -607,6 +624,7 @@ export class RegistryService {
   // ─── Lifecycle ───────────────────────────────────────────────
 
   close() {
+    this._metaCache.invalidate();
     this.db.close();
   }
 }

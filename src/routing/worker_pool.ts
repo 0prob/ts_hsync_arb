@@ -79,6 +79,7 @@ type WorkerSlot = {
   busy: boolean;
   currentJobId: number | null;
   syncedStateVersions: Map<string, number>;
+  syncedPoolAddresses: Set<string>;
   syncedTopologyKey: string | null;
 };
 type PendingJob = {
@@ -86,6 +87,10 @@ type PendingJob = {
   reject: (reason?: unknown) => void;
   slot: WorkerSlot | null;
 };
+
+function isUsableSlot(slot: WorkerSlot | null | undefined): slot is WorkerSlot {
+  return slot != null && slot.worker != null && !slot.busy;
+}
 
 function buildChunkStateObject(paths: PathLike[], stateCache: WorkerStateMap) {
   const stateObj: Record<string, any> = {};
@@ -105,6 +110,24 @@ function buildChunkStateObject(paths: PathLike[], stateCache: WorkerStateMap) {
   }
 
   return stateObj;
+}
+
+function collectChunkPoolAddresses(paths: PathLike[]) {
+  const seenPools = new Set<string>();
+  for (const path of paths) {
+    for (const edge of path.edges) {
+      seenPools.add(edge.poolAddress);
+    }
+  }
+  return [...seenPools];
+}
+
+function samePoolAddressSet(left: Set<string>, right: string[]) {
+  if (left.size !== right.length) return false;
+  for (const poolAddress of right) {
+    if (!left.has(poolAddress)) return false;
+  }
+  return true;
 }
 
 function getStateVersion(state: Record<string, any> | undefined) {
@@ -251,7 +274,7 @@ function rehydrateEvaluationResults(
 
 // ─── WorkerPool ───────────────────────────────────────────────
 
-class WorkerPool {
+export class WorkerPool {
   private _size: number;
   private _slots: WorkerSlot[];
   private _queue: QueueItem[];
@@ -290,6 +313,7 @@ class WorkerPool {
    */
   async terminate() {
     this._terminating = true;
+    this._rejectAllPending(new Error("[worker_pool] Worker pool terminated"));
     for (const { worker } of this._slots) {
       if (worker) await worker.terminate().catch(() => {});
     }
@@ -341,7 +365,7 @@ class WorkerPool {
     // When enough idle workers are available, target fixed slots and keep a
     // persistent worker-side state mirror, sending only changed pool states.
     // Only requires as many idle slots as there are chunks, not all slots.
-    const idleEvalSlots = this._slots.filter((s) => s && !s.busy);
+    const idleEvalSlots = this._slots.filter((s) => isUsableSlot(s));
     const canUsePersistentMirror =
       this._queue.length === 0 &&
       idleEvalSlots.length >= chunks.length;
@@ -430,7 +454,7 @@ class WorkerPool {
       chunks.push(startTokens.slice(i, i + chunkSize));
     }
 
-    const idleEnumSlots = this._slots.filter((s) => s && !s.busy);
+    const idleEnumSlots = this._slots.filter((s) => isUsableSlot(s));
     const canUsePersistentTopology =
       Boolean(topologyKey) &&
       this._queue.length === 0 &&
@@ -483,7 +507,7 @@ class WorkerPool {
       const id = this._nextId++;
       this._pending.set(id, { resolve, reject, slot: null });
 
-      const idle = this._slots.find((s) => !s.busy);
+      const idle = this._slots.find((s) => isUsableSlot(s));
       if (idle) {
         this._dispatchToSlot(idle, id, data);
       } else {
@@ -501,11 +525,20 @@ class WorkerPool {
   }
 
   _dispatchToSlot(slot: WorkerSlot, id: number, data: WorkerPayload) {
+    if (!slot.worker) {
+      const pending = this._pending.get(id);
+      if (pending) {
+        this._pending.delete(id);
+        pending.reject(new Error("[worker_pool] Attempted to dispatch to an unavailable worker slot"));
+      }
+      return;
+    }
+
     const pending = this._pending.get(id);
     if (pending) pending.slot = slot;
     slot.busy = true;
     slot.currentJobId = id;
-    slot.worker?.postMessage({ id, ...data });
+    slot.worker.postMessage({ id, ...data });
   }
 
   async _evaluateOnSlot(
@@ -516,11 +549,12 @@ class WorkerPool {
     amountStr: string,
     options: Record<string, any>
   ) {
-    const { delta: stateDeltaObj, count } = this._buildStateDelta(
+    const { delta: stateDeltaObj, count, poolAddresses } = this._buildStateDelta(
       chunk,
       stateCache,
       slot.syncedStateVersions
     );
+    const poolMembershipChanged = !samePoolAddressSet(slot.syncedPoolAddresses, poolAddresses);
 
     if (workerLogger.isLevelEnabled("debug")) {
       workerLogger.debug(
@@ -529,16 +563,29 @@ class WorkerPool {
           slotIndex: this._slots.indexOf(slot),
           chunkPaths: chunk.length,
           deltaPools: count,
+          retainedPools: poolAddresses.length,
+          poolMembershipChanged,
         },
         "[worker_pool] Evaluation slot delta"
       );
     }
 
-    if (count > 0) {
-      await this._submitToSlot(slot, { type: "SYNC_STATE", stateObj: stateDeltaObj });
+    if (count > 0 || poolMembershipChanged) {
+      await this._submitToSlot(slot, {
+        type: "SYNC_STATE",
+        stateObj: stateDeltaObj,
+        retainPools: poolAddresses,
+      });
       for (const [poolAddress, state] of Object.entries(stateDeltaObj)) {
         slot.syncedStateVersions.set(poolAddress, getStateVersion(state));
       }
+      const retainedPools = new Set(poolAddresses);
+      for (const poolAddress of [...slot.syncedStateVersions.keys()]) {
+        if (!retainedPools.has(poolAddress)) {
+          slot.syncedStateVersions.delete(poolAddress);
+        }
+      }
+      slot.syncedPoolAddresses = retainedPools;
     }
 
     return this._submitToSlot(slot, {
@@ -575,27 +622,21 @@ class WorkerPool {
   _buildStateDelta(paths: PathLike[], stateCache: WorkerStateMap, syncedStateVersions: Map<string, number>) {
     const delta: Record<string, Record<string, any>> = {};
     let count = 0;
-    const seenPools = new Set<string>();
+    const poolAddresses = collectChunkPoolAddresses(paths);
 
-    for (const path of paths) {
-      for (const edge of path.edges) {
-        const poolAddress = edge.poolAddress;
-        if (seenPools.has(poolAddress)) continue;
-        seenPools.add(poolAddress);
+    for (const poolAddress of poolAddresses) {
+      const state = stateCache.get(poolAddress);
+      if (!state) continue;
 
-        const state = stateCache.get(poolAddress);
-        if (!state) continue;
-
-        const version = getStateVersion(state);
-        const syncedVersion = syncedStateVersions.get(poolAddress);
-        if (syncedVersion !== version) {
-          delta[poolAddress] = state;
-          count++;
-        }
+      const version = getStateVersion(state);
+      const syncedVersion = syncedStateVersions.get(poolAddress);
+      if (syncedVersion !== version) {
+        delta[poolAddress] = state;
+        count++;
       }
     }
 
-    return { delta, count };
+    return { delta, count, poolAddresses };
   }
 
   /**
@@ -607,11 +648,12 @@ class WorkerPool {
     const worker = new Worker(WORKER_URL, {
       execArgv: WORKER_EXEC_ARGV,
     });
-    const slot = {
+    const slot: WorkerSlot = {
       worker,
       busy: false,
       currentJobId: null,
       syncedStateVersions: new Map(),
+      syncedPoolAddresses: new Set<string>(),
       syncedTopologyKey: null,
     };
 
@@ -637,13 +679,14 @@ class WorkerPool {
       // Replace in slots array
       const idx = this._slots.indexOf(slot);
       if (idx !== -1) {
-        this._slots[idx] = {
-          worker: null,
-          busy: false,
-          currentJobId: null,
-          syncedStateVersions: new Map(),
-          syncedTopologyKey: null,
-        };
+          this._slots[idx] = {
+            worker: null,
+            busy: false,
+            currentJobId: null,
+            syncedStateVersions: new Map(),
+            syncedPoolAddresses: new Set<string>(),
+            syncedTopologyKey: null,
+          };
       }
       this._spawnSlot(i);
     });
@@ -659,6 +702,7 @@ class WorkerPool {
             busy: false,
             currentJobId: null,
             syncedStateVersions: new Map(),
+            syncedPoolAddresses: new Set<string>(),
             syncedTopologyKey: null,
           };
         }
@@ -676,7 +720,7 @@ class WorkerPool {
   }
 
   _drainQueue(slot: WorkerSlot) {
-    if (this._queue.length === 0) return;
+    if (!isUsableSlot(slot) || this._queue.length === 0) return;
     const next = this._queue.shift();
     if (!next) return;
     const { id, data } = next;
@@ -688,6 +732,7 @@ class WorkerPool {
     const currentJobId = slot.currentJobId;
     slot.currentJobId = null;
     slot.syncedStateVersions.clear();
+    slot.syncedPoolAddresses.clear();
     slot.syncedTopologyKey = null;
     if (currentJobId == null) return;
 
@@ -696,6 +741,22 @@ class WorkerPool {
       pending.reject(new Error("[worker_pool] Worker crashed during evaluation"));
       this._pending.delete(currentJobId);
     }
+  }
+
+  _rejectAllPending(error: Error) {
+    for (const { id } of this._queue) {
+      const pending = this._pending.get(id);
+      if (pending) {
+        pending.reject(error);
+        this._pending.delete(id);
+      }
+    }
+    this._queue = [];
+
+    for (const pending of this._pending.values()) {
+      pending.reject(error);
+    }
+    this._pending.clear();
   }
 
   /** Number of paths currently queued or in-flight */

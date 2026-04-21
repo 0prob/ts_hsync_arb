@@ -1,3 +1,9 @@
+export interface BotOpportunityRow {
+  Route: string;
+  Profit: string;
+  ROI: string;
+}
+
 export interface BotState {
   status: 'idle' | 'running' | 'error';
   passCount: number;
@@ -5,6 +11,6 @@ export interface BotState {
   gasPrice: string;
   maticPrice: string;
   lastArbMs: number;
-  opportunities: any[];
+  opportunities: BotOpportunityRow[];
   logs: string[];
 }

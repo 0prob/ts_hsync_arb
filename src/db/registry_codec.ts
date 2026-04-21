@@ -29,6 +29,15 @@ function toBigIntSafe(v: any): bigint | any {
   try { return BigInt(v); } catch { return v; }
 }
 
+export function normalizeAddress(value: any) {
+  return typeof value === "string" ? value.toLowerCase() : value;
+}
+
+function normalizeAddressList(values: any) {
+  if (!Array.isArray(values)) return [];
+  return values.map(normalizeAddress);
+}
+
 function rehydrateV3State(data: any) {
   if (!data?.ticks || data.ticks instanceof Map) return;
 
@@ -82,16 +91,14 @@ export function parseJson(value: any, fallback: any) {
 }
 
 export function lowerCaseAddressList(values: any[] = []) {
-  return values.map((value) =>
-    typeof value === "string" ? value.toLowerCase() : value
-  );
+  return normalizeAddressList(values);
 }
 
 export function mapPoolRow(row: any) {
   return {
-    pool_address: row.address,
+    pool_address: normalizeAddress(row.address),
     protocol: row.protocol,
-    tokens: parseJson(row.tokens, []),
+    tokens: normalizeAddressList(parseJson(row.tokens, [])),
     block: row.created_block,
     tx: row.created_tx,
     metadata: parseJson(row.metadata, {}),
@@ -104,9 +111,9 @@ export function mapPoolRow(row: any) {
 
 export function mapPoolMetaRow(row: any) {
   return {
-    pool_address: row.address,
+    pool_address: normalizeAddress(row.address),
     protocol: row.protocol,
-    tokens: parseJson(row.tokens, []),
+    tokens: normalizeAddressList(parseJson(row.tokens, [])),
     block: row.created_block,
     tx: row.created_tx,
     metadata: parseJson(row.metadata, {}),
@@ -117,9 +124,9 @@ export function mapPoolMetaRow(row: any) {
 
 export function mapStalePoolRow(row: any) {
   return {
-    pool_address: row.address,
+    pool_address: normalizeAddress(row.address),
     protocol: row.protocol,
-    tokens: parseJson(row.tokens, []),
+    tokens: normalizeAddressList(parseJson(row.tokens, [])),
     metadata: parseJson(row.metadata, {}),
   };
 }
@@ -127,7 +134,9 @@ export function mapStalePoolRow(row: any) {
 export function mapArbHistoryRow(row: any) {
   return {
     ...row,
-    pools: parseJson(row.pools, []),
+    tx_hash: normalizeAddress(row.tx_hash),
+    start_token: normalizeAddress(row.start_token),
+    pools: normalizeAddressList(parseJson(row.pools, [])),
     protocols: parseJson(row.protocols, []),
   };
 }

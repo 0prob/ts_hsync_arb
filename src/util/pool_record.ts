@@ -3,17 +3,25 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const tokenCache = new WeakMap<object, string[]>();
 const metadataCache = new WeakMap<object, Record<string, any>>();
 
-function parsePoolTokensValue(value: unknown): string[] {
-  const parsed = typeof value === "string" ? JSON.parse(value) : value;
-  if (!Array.isArray(parsed)) return [];
-  return parsed.map((token) =>
-    typeof token === "string" ? token.toLowerCase() : String(token).toLowerCase()
-  );
+export function parsePoolTokensValue(value: unknown): string[] {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "[]") : value;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((token) =>
+      typeof token === "string" ? token.toLowerCase() : String(token).toLowerCase()
+    );
+  } catch {
+    return [];
+  }
 }
 
-function parsePoolMetadataValue(value: unknown): Record<string, any> {
-  const parsed = typeof value === "string" ? JSON.parse(value || "{}") : (value ?? {});
-  return parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : {};
+export function parsePoolMetadataValue(value: unknown): Record<string, any> {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "{}") : (value ?? {});
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : {};
+  } catch {
+    return {};
+  }
 }
 
 export function getPoolTokens(pool: any): string[] {

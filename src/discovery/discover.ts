@@ -24,6 +24,23 @@ import { detectReorg } from "../reorg/detect.ts";
 import { throttledMap } from "../enrichment/rpc.ts";
 import { hydrateNewTokens } from "../enrichment/token_hydrator.ts";
 import { GENESIS_START_BLOCK, DB_PATH, ENVIO_API_TOKEN, HYPERSYNC_URL, ENRICH_CONCURRENCY } from "../config/index.ts";
+import { logger } from "../utils/logger.ts";
+import { buildDiscoveredPoolBatch } from "./helpers.ts";
+
+type DiscoveryProtocol = {
+  name: string;
+  address: string;
+  signature: string;
+  decode: (decoded: any, rawLog: any) => any;
+  enrichTokens?: (pool: any) => Promise<string[]>;
+  discover?: (context: any) => Promise<any>;
+};
+
+const discoveryQuerySpecCache = new Map<string, {
+  topic0: string;
+  decoder: InstanceType<typeof Decoder>;
+}>();
+const discoveryLogger: any = logger.child({ component: "discovery" });
 
 function discoveryCheckpointFromNextBlock(nextBlock: any, fallbackFromBlock: any) {
   if (Number.isFinite(nextBlock) && nextBlock > 0) {
@@ -63,6 +80,21 @@ function decodeDiscoveryLogs(protocol: any, logs: any[], decodedLogs: any[]) {
   return { extractedPools, errors };
 }
 
+function getDiscoveryQuerySpec(protocol: DiscoveryProtocol) {
+  const cacheKey = `${protocol.address.toLowerCase()}:${protocol.signature}`;
+  const cached = discoveryQuerySpecCache.get(cacheKey);
+  if (cached) return cached;
+
+  const abiItem = parseAbiItem(protocol.signature) as any;
+  const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
+  const spec = {
+    topic0: topics[0],
+    decoder: Decoder.fromSignatures([protocol.signature]),
+  };
+  discoveryQuerySpecCache.set(cacheKey, spec);
+  return spec;
+}
+
 async function enrichDiscoveredPools(protocol: any, extractedPools: any[]) {
   if (!protocol.enrichTokens) return;
 
@@ -84,24 +116,6 @@ async function enrichDiscoveredPools(protocol: any, extractedPools: any[]) {
   }
 }
 
-function buildDiscoveredPoolBatch(key: string, extractedPools: any[]) {
-  const initializedPools = extractedPools.filter(({ extracted }) => extracted.tokens.length >= 2);
-  const skipped = extractedPools.length - initializedPools.length;
-  if (skipped > 0) {
-    console.log(`  Skipped ${skipped} uninitialized pool(s) with no token data.`);
-  }
-
-  return initializedPools.map(({ extracted, rawLog }) => ({
-    protocol: key,
-    block: Number(rawLog.blockNumber),
-    tx: rawLog.transactionHash,
-    pool_address: extracted.pool_address,
-    tokens: extracted.tokens,
-    metadata: extracted.metadata,
-    status: "active",
-  }));
-}
-
 // ─── Per-protocol discovery ────────────────────────────────────
 
 async function discoverProtocol(key: any, protocol: any, registry: any, context: any = {}) {
@@ -109,11 +123,10 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
     return protocol.discover({ key, protocol, registry, ...context });
   }
   const checkpoint = registry.getCheckpoint(key);
-  const existingPools = registry.getPools({ protocol: key });
+  const existingPoolCount = registry.getPoolCountForProtocol(key);
   const shouldBackfillEmptyProtocol =
     !!checkpoint &&
-    Array.isArray(existingPools) &&
-    existingPools.length === 0 &&
+    existingPoolCount === 0 &&
     checkpoint.last_block >= GENESIS_START_BLOCK;
 
   const fromBlock = shouldBackfillEmptyProtocol
@@ -131,10 +144,12 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
           : ` (genesis start)`) +
       `...`
   );
+  discoveryLogger.info(
+    { protocol: key, fromBlock, resumed: Boolean(checkpoint), backfillEmptyProtocol: shouldBackfillEmptyProtocol },
+    "[discovery] Protocol scan starting",
+  );
 
-  const abiItem = parseAbiItem(protocol.signature) as any;
-  const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
-  const topic0 = topics[0];
+  const { topic0, decoder } = getDiscoveryQuerySpec(protocol);
 
   const query = buildHyperSyncLogQuery({
     fromBlock,
@@ -158,7 +173,6 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
 
   console.log(`  Found ${logs.length} discovery events for ${protocol.name}.`);
 
-  const decoder = Decoder.fromSignatures([protocol.signature]);
   const decodedLogs = await decoder.decodeLogs(logs);
 
   const { extractedPools, errors } = decodeDiscoveryLogs(protocol, logs, decodedLogs);
@@ -178,6 +192,17 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
 
   if (errors > 5) console.warn(`  ... and ${errors - 5} more decode errors suppressed.`);
   console.log(`  Inserted/updated ${poolBatch.length} pools for ${protocol.name}.`);
+  discoveryLogger.info(
+    {
+      protocol: key,
+      logs: logs.length,
+      decodedPools: extractedPools.length,
+      insertedPools: poolBatch.length,
+      decodeErrors: errors,
+      checkpointBlock,
+    },
+    "[discovery] Protocol scan complete",
+  );
 
   return { discovered: poolBatch.length, checkpointBlock, rollbackGuard, hydrationPromise };
 }
@@ -191,9 +216,7 @@ async function discoverCurveRemovals(registry: any) {
 
   console.log(`\n[Curve PoolRemoved] Scanning from block ${fromBlock}...`);
 
-  const abiItem = parseAbiItem(CURVE_POOL_REMOVED.signature) as any;
-  const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
-  const topic0 = topics[0];
+  const { topic0, decoder } = getDiscoveryQuerySpec(CURVE_POOL_REMOVED as DiscoveryProtocol);
 
   const query = buildHyperSyncLogQuery({
     fromBlock,
@@ -221,24 +244,31 @@ async function discoverCurveRemovals(registry: any) {
     return { removed: 0, checkpointBlock, rollbackGuard };
   }
 
-  const decoder = Decoder.fromSignatures([CURVE_POOL_REMOVED.signature]);
   const decodedLogs = await decoder.decodeLogs(logs);
-  let removed = 0;
+  const removedPoolAddresses = new Set<string>();
 
   for (let i = 0; i < decodedLogs.length; i++) {
     const decoded = decodedLogs[i];
     if (!decoded) continue;
 
-    const poolAddress = decoded.indexed[0]?.val?.toString();
+    const poolAddress = decoded.indexed[0]?.val?.toString()?.toLowerCase();
     if (poolAddress) {
-      registry.removePool(poolAddress);
-      removed++;
-      console.log(`  Pool removed: ${poolAddress} at block ${logs[i].blockNumber}`);
+      removedPoolAddresses.add(poolAddress);
     }
   }
 
+  const removed = registry.batchRemovePools([...removedPoolAddresses]);
   registry.setCheckpoint(checkpointKey, checkpointBlock);
-  console.log(`  Marked ${removed} pools as removed.`);
+  console.log(`  Marked ${removed} pools as removed from ${removedPoolAddresses.size} removal event(s).`);
+  discoveryLogger.info(
+    {
+      protocol: checkpointKey,
+      removalEvents: removedPoolAddresses.size,
+      poolsRemoved: removed,
+      checkpointBlock,
+    },
+    "[discovery] Curve removal scan complete",
+  );
   return { removed, checkpointBlock, rollbackGuard };
 }
 

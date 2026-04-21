@@ -3,20 +3,8 @@
  * src/db/registry_checkpoints.js — Checkpoint, rollback-guard, and reorg helpers
  */
 
-const _stmtCache = new WeakMap<object, Map<string, ReturnType<import('./sqlite.ts').CompatDatabase['prepare']>>>();
-
 function checkpointStmt(db: import('./sqlite.ts').CompatDatabase, key: string, sql: string) {
-  let cache = _stmtCache.get(db as object);
-  if (!cache) {
-    cache = new Map();
-    _stmtCache.set(db as object, cache);
-  }
-  let stmt = cache.get(key);
-  if (!stmt) {
-    stmt = db.prepare(sql);
-    cache.set(key, stmt);
-  }
-  return stmt;
+  return db.statement(key, sql);
 }
 
 export function getCheckpoint(db: import('./sqlite.ts').CompatDatabase, protocol: string) {
