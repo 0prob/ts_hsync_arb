@@ -78,18 +78,42 @@ function _num(envKey: string, perfKey: string, def: number): number {
 
 // ─── HyperSync ─────────────────────────────────────────────────
 
+function withEnvioToken(rawUrl: string, token: string) {
+  if (!rawUrl || !token) return rawUrl;
+
+  try {
+    const url = new URL(rawUrl);
+    const isHostedHypersync =
+      url.protocol.startsWith("http") &&
+      (url.hostname.endsWith(".hypersync.xyz") || url.hostname === "hypersync.xyz");
+
+    if (!isHostedHypersync) return rawUrl;
+    if (url.username || url.password) return rawUrl;
+    if (url.searchParams.has("api_key") || url.searchParams.has("apiKey") || url.searchParams.has("token")) {
+      return rawUrl;
+    }
+
+    return `${url.protocol}//${encodeURIComponent(token)}@${url.host}${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return rawUrl;
+  }
+}
+
 // Direct HyperSync streaming endpoint — used by the StateWatcher native client.
 // Uses its own binary protocol, not standard JSON-RPC.
 export const HYPERSYNC_URL =
   process.env.HYPERSYNC_URL || "https://polygon.hypersync.xyz";
 
+export const ENVIO_API_TOKEN = process.env.ENVIO_API_TOKEN || "";
+
 // HyperRPC JSON-RPC endpoint — used exclusively for multicall token metadata
 // hydration so batch reads don't compete with hot-path RPC scoring.
-// Point HYPERRPC_URL at your local HyperRPC instance or use the remote default.
-export const HYPERRPC_URL =
-  process.env.HYPERRPC_URL || "https://polygon.rpc.hypersync.xyz";
-
-export const ENVIO_API_TOKEN = process.env.ENVIO_API_TOKEN || "";
+// Hosted *.rpc.hypersync.xyz endpoints automatically inherit ENVIO_API_TOKEN.
+// Local/custom endpoints are left untouched.
+export const HYPERRPC_URL = withEnvioToken(
+  process.env.HYPERRPC_URL || "https://polygon.rpc.hypersync.xyz",
+  ENVIO_API_TOKEN,
+);
 
 if (!ENVIO_API_TOKEN) {
   console.warn(

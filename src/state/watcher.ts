@@ -12,6 +12,10 @@
  */
 
 import { client, LogField, BlockField, Decoder, JoinMode } from "../hypersync/client.ts";
+import {
+  buildHyperSyncLogQuery,
+  DEFAULT_HYPERSYNC_BLOCK_FIELDS,
+} from "../hypersync/query_policy.ts";
 import { detectReorg } from "../reorg/detect.ts";
 import { fetchAndNormalizeBalancerPool } from "./poll_balancer.ts";
 import { fetchAndNormalizeCurvePool } from "./poll_curve.ts";
@@ -197,16 +201,14 @@ export class StateWatcher {
       ? { address: this._watchedAddresses, topics: [TOPICS] }
       : { topics: [TOPICS] };
 
-    return {
+    return buildHyperSyncLogQuery({
       fromBlock: this._lastBlock + 1,
       logs: [logFilter],
       maxNumLogs: HYPERSYNC_BATCH_SIZE,
       joinMode: JoinMode.JoinNothing,
-      fieldSelection: {
-        log: LOG_FIELDS,
-        block: [BlockField.Number, BlockField.Timestamp],
-      },
-    };
+      logFields: LOG_FIELDS,
+      blockFields: DEFAULT_HYPERSYNC_BLOCK_FIELDS,
+    });
   }
 
   async _loop() {

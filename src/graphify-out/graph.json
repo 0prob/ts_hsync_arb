@@ -79,10 +79,37 @@
       "label": "fetchAllLogs()",
       "file_type": "code",
       "source_file": "/home/x/t/src/hypersync/paginate.ts",
-      "source_location": "L29",
+      "source_location": "L26",
       "id": "paginate_fetchalllogs",
       "community": 1,
       "norm_label": "fetchalllogs()"
+    },
+    {
+      "label": "query_policy.ts",
+      "file_type": "code",
+      "source_file": "/home/x/t/src/hypersync/query_policy.ts",
+      "source_location": "L1",
+      "id": "home_x_t_src_hypersync_query_policy_ts",
+      "community": 1,
+      "norm_label": "query_policy.ts"
+    },
+    {
+      "label": "buildHyperSyncLogQuery()",
+      "file_type": "code",
+      "source_file": "/home/x/t/src/hypersync/query_policy.ts",
+      "source_location": "L36",
+      "id": "query_policy_buildhypersynclogquery",
+      "community": 1,
+      "norm_label": "buildhypersynclogquery()"
+    },
+    {
+      "label": "applyHistoricalHyperSyncQueryPolicy()",
+      "file_type": "code",
+      "source_file": "/home/x/t/src/hypersync/query_policy.ts",
+      "source_location": "L62",
+      "id": "query_policy_applyhistoricalhypersyncquerypolicy",
+      "community": 1,
+      "norm_label": "applyhistoricalhypersyncquerypolicy()"
     },
     {
       "label": "index.ts",
@@ -112,10 +139,19 @@
       "norm_label": "_num()"
     },
     {
+      "label": "withEnvioToken()",
+      "file_type": "code",
+      "source_file": "/home/x/t/src/config/index.ts",
+      "source_location": "L81",
+      "id": "index_withenviotoken",
+      "community": 1,
+      "norm_label": "withenviotoken()"
+    },
+    {
       "label": "_dedupeRpcUrls()",
       "file_type": "code",
       "source_file": "/home/x/t/src/config/index.ts",
-      "source_location": "L127",
+      "source_location": "L151",
       "id": "index_deduperpcurls",
       "community": 1,
       "norm_label": "_deduperpcurls()"
@@ -133,7 +169,7 @@
       "label": "discoveryCheckpointFromNextBlock()",
       "file_type": "code",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L24",
+      "source_location": "L28",
       "id": "discover_discoverycheckpointfromnextblock",
       "community": 1,
       "norm_label": "discoverycheckpointfromnextblock()"
@@ -142,7 +178,7 @@
       "label": "decodeDiscoveryLogs()",
       "file_type": "code",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L31",
+      "source_location": "L35",
       "id": "discover_decodediscoverylogs",
       "community": 1,
       "norm_label": "decodediscoverylogs()"
@@ -151,7 +187,7 @@
       "label": "enrichDiscoveredPools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L62",
+      "source_location": "L66",
       "id": "discover_enrichdiscoveredpools",
       "community": 1,
       "norm_label": "enrichdiscoveredpools()"
@@ -160,7 +196,7 @@
       "label": "buildDiscoveredPoolBatch()",
       "file_type": "code",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L83",
+      "source_location": "L87",
       "id": "discover_builddiscoveredpoolbatch",
       "community": 1,
       "norm_label": "builddiscoveredpoolbatch()"
@@ -169,7 +205,7 @@
       "label": "discoverProtocol()",
       "file_type": "code",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L103",
+      "source_location": "L107",
       "id": "discover_discoverprotocol",
       "community": 1,
       "norm_label": "discoverprotocol()"
@@ -178,7 +214,7 @@
       "label": "discoverCurveRemovals()",
       "file_type": "code",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L198",
+      "source_location": "L187",
       "id": "discover_discovercurveremovals",
       "community": 1,
       "norm_label": "discovercurveremovals()"
@@ -187,7 +223,7 @@
       "label": "discoverPools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L262",
+      "source_location": "L247",
       "id": "discover_discoverpools",
       "community": 1,
       "norm_label": "discoverpools()"
@@ -207,7 +243,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_enumerate_cycles_ts",
-      "community": 3,
+      "community": 4,
       "norm_label": "enumerate_cycles.ts"
     },
     {
@@ -216,7 +252,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L49",
       "id": "enumerate_cycles_v2liquiditywmatic",
-      "community": 3,
+      "community": 4,
       "norm_label": "v2liquiditywmatic()"
     },
     {
@@ -225,7 +261,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L57",
       "id": "enumerate_cycles_prunebyliquidity",
-      "community": 3,
+      "community": 4,
       "norm_label": "prunebyliquidity()"
     },
     {
@@ -234,7 +270,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L70",
       "id": "enumerate_cycles_sortbylogweight",
-      "community": 3,
+      "community": 4,
       "norm_label": "sortbylogweight()"
     },
     {
@@ -243,7 +279,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L82",
       "id": "enumerate_cycles_enumeratecycles",
-      "community": 3,
+      "community": 4,
       "norm_label": "enumeratecycles()"
     },
     {
@@ -252,7 +288,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L120",
       "id": "enumerate_cycles_enumeratecyclesdual",
-      "community": 3,
+      "community": 4,
       "norm_label": "enumeratecyclesdual()"
     },
     {
@@ -261,7 +297,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L162",
       "id": "enumerate_cycles_enumeratecyclesfortoken",
-      "community": 3,
+      "community": 4,
       "norm_label": "enumeratecyclesfortoken()"
     },
     {
@@ -270,7 +306,7 @@
       "source_file": "/home/x/t/src/routing/enumerate_cycles.ts",
       "source_location": "L166",
       "id": "enumerate_cycles_cyclesummary",
-      "community": 3,
+      "community": 4,
       "norm_label": "cyclesummary()"
     },
     {
@@ -279,7 +315,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_finder_ts",
-      "community": 3,
+      "community": 4,
       "norm_label": "finder.ts"
     },
     {
@@ -288,7 +324,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L35",
       "id": "finder_sqrtpricetofloat",
-      "community": 3,
+      "community": 4,
       "norm_label": "sqrtpricetofloat()"
     },
     {
@@ -297,7 +333,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L39",
       "id": "finder_probeamountfrombalance",
-      "community": 3,
+      "community": 4,
       "norm_label": "probeamountfrombalance()"
     },
     {
@@ -306,7 +342,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L45",
       "id": "finder_quotebasedlogweight",
-      "community": 3,
+      "community": 4,
       "norm_label": "quotebasedlogweight()"
     },
     {
@@ -315,7 +351,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L74",
       "id": "finder_edgespotlogweight",
-      "community": 3,
+      "community": 4,
       "norm_label": "edgespotlogweight()"
     },
     {
@@ -324,7 +360,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L117",
       "id": "finder_pathcumulativefeesbps",
-      "community": 3,
+      "community": 4,
       "norm_label": "pathcumulativefeesbps()"
     },
     {
@@ -333,7 +369,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L136",
       "id": "finder_annotatepath",
-      "community": 3,
+      "community": 4,
       "norm_label": "annotatepath()"
     },
     {
@@ -351,7 +387,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L194",
       "id": "finder_shouldpruneedge",
-      "community": 3,
+      "community": 4,
       "norm_label": "shouldpruneedge()"
     },
     {
@@ -360,7 +396,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L265",
       "id": "finder_find2hoppaths",
-      "community": 3,
+      "community": 4,
       "norm_label": "find2hoppaths()"
     },
     {
@@ -369,7 +405,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L307",
       "id": "finder_find3hoppaths",
-      "community": 3,
+      "community": 4,
       "norm_label": "find3hoppaths()"
     },
     {
@@ -378,7 +414,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L360",
       "id": "finder_find4hoppathsbidirectional",
-      "community": 3,
+      "community": 4,
       "norm_label": "find4hoppathsbidirectional()"
     },
     {
@@ -387,7 +423,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L455",
       "id": "finder_findarbpaths",
-      "community": 3,
+      "community": 4,
       "norm_label": "findarbpaths()"
     },
     {
@@ -396,7 +432,7 @@
       "source_file": "/home/x/t/src/routing/finder.ts",
       "source_location": "L503",
       "id": "finder_deduplicatepaths",
-      "community": 3,
+      "community": 4,
       "norm_label": "deduplicatepaths()"
     },
     {
@@ -405,7 +441,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_graph_ts",
-      "community": 3,
+      "community": 4,
       "norm_label": "graph.ts"
     },
     {
@@ -414,7 +450,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L31",
       "id": "graph_getlivestateref",
-      "community": 3,
+      "community": 7,
       "norm_label": "getlivestateref()"
     },
     {
@@ -423,7 +459,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L36",
       "id": "graph_getprotocolkind",
-      "community": 3,
+      "community": 4,
       "norm_label": "getprotocolkind()"
     },
     {
@@ -432,7 +468,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L42",
       "id": "graph_getfeebps",
-      "community": 3,
+      "community": 4,
       "norm_label": "getfeebps()"
     },
     {
@@ -441,7 +477,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L48",
       "id": "graph_createswapedge",
-      "community": 3,
+      "community": 4,
       "norm_label": "createswapedge()"
     },
     {
@@ -450,7 +486,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L82",
       "id": "graph_getroutablepoolcontext",
-      "community": 3,
+      "community": 7,
       "norm_label": "getroutablepoolcontext()"
     },
     {
@@ -459,7 +495,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L105",
       "id": "graph_addpooledges",
-      "community": 3,
+      "community": 4,
       "norm_label": "addpooledges()"
     },
     {
@@ -468,7 +504,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L156",
       "id": "graph_routinggraph",
-      "community": 3,
+      "community": 4,
       "norm_label": "routinggraph"
     },
     {
@@ -477,7 +513,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L163",
       "id": "graph_routinggraph_constructor",
-      "community": 3,
+      "community": 4,
       "norm_label": ".constructor()"
     },
     {
@@ -486,7 +522,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L176",
       "id": "graph_routinggraph_addedge",
-      "community": 3,
+      "community": 4,
       "norm_label": ".addedge()"
     },
     {
@@ -495,7 +531,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L205",
       "id": "graph_routinggraph_getpooledge",
-      "community": 3,
+      "community": 4,
       "norm_label": ".getpooledge()"
     },
     {
@@ -504,7 +540,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L217",
       "id": "graph_routinggraph_getedges",
-      "community": 3,
+      "community": 4,
       "norm_label": ".getedges()"
     },
     {
@@ -513,7 +549,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L228",
       "id": "graph_routinggraph_getedgesbetween",
-      "community": 3,
+      "community": 4,
       "norm_label": ".getedgesbetween()"
     },
     {
@@ -522,7 +558,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L238",
       "id": "graph_routinggraph_getneighbors",
-      "community": 3,
+      "community": 4,
       "norm_label": ".getneighbors()"
     },
     {
@@ -531,7 +567,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L249",
       "id": "graph_routinggraph_hastoken",
-      "community": 3,
+      "community": 4,
       "norm_label": ".hastoken()"
     },
     {
@@ -540,7 +576,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L262",
       "id": "graph_routinggraph_addpool",
-      "community": 3,
+      "community": 4,
       "norm_label": ".addpool()"
     },
     {
@@ -549,7 +585,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L277",
       "id": "graph_routinggraph_updateedgestate",
-      "community": 3,
+      "community": 4,
       "norm_label": ".updateedgestate()"
     },
     {
@@ -558,7 +594,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L285",
       "id": "graph_routinggraph_tokenhasreferences",
-      "community": 3,
+      "community": 4,
       "norm_label": "._tokenhasreferences()"
     },
     {
@@ -567,7 +603,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L305",
       "id": "graph_routinggraph_removepool",
-      "community": 3,
+      "community": 4,
       "norm_label": ".removepool()"
     },
     {
@@ -576,7 +612,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L343",
       "id": "graph_routinggraph_stats",
-      "community": 3,
+      "community": 4,
       "norm_label": ".stats()"
     },
     {
@@ -585,7 +621,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L377",
       "id": "graph_buildgraph",
-      "community": 3,
+      "community": 4,
       "norm_label": "buildgraph()"
     },
     {
@@ -594,7 +630,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L398",
       "id": "graph_buildhubgraph",
-      "community": 3,
+      "community": 4,
       "norm_label": "buildhubgraph()"
     },
     {
@@ -603,7 +639,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L482",
       "id": "graph_serializetopology",
-      "community": 3,
+      "community": 4,
       "norm_label": "serializetopology()"
     },
     {
@@ -612,7 +648,7 @@
       "source_file": "/home/x/t/src/routing/graph.ts",
       "source_location": "L499",
       "id": "graph_deserializetopology",
-      "community": 3,
+      "community": 4,
       "norm_label": "deserializetopology()"
     },
     {
@@ -630,7 +666,7 @@
       "source_file": "/home/x/t/src/routing/persistent_worker.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_persistent_worker_ts",
-      "community": 0,
+      "community": 4,
       "norm_label": "persistent_worker.ts"
     },
     {
@@ -639,7 +675,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_route_cache_ts",
-      "community": 5,
+      "community": 3,
       "norm_label": "route_cache.ts"
     },
     {
@@ -648,7 +684,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L30",
       "id": "route_cache_routecache",
-      "community": 5,
+      "community": 3,
       "norm_label": "routecache"
     },
     {
@@ -657,7 +693,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L35",
       "id": "route_cache_routecache_constructor",
-      "community": 5,
+      "community": 3,
       "norm_label": ".constructor()"
     },
     {
@@ -666,7 +702,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L52",
       "id": "route_cache_routecache_update",
-      "community": 5,
+      "community": 3,
       "norm_label": ".update()"
     },
     {
@@ -675,7 +711,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L94",
       "id": "route_cache_routecache_getbypools",
-      "community": 5,
+      "community": 3,
       "norm_label": ".getbypools()"
     },
     {
@@ -684,7 +720,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L108",
       "id": "route_cache_routecache_getall",
-      "community": 5,
+      "community": 3,
       "norm_label": ".getall()"
     },
     {
@@ -693,7 +729,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L116",
       "id": "route_cache_routecache_size",
-      "community": 5,
+      "community": 3,
       "norm_label": ".size()"
     },
     {
@@ -702,7 +738,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L128",
       "id": "route_cache_routecache_prune",
-      "community": 5,
+      "community": 3,
       "norm_label": ".prune()"
     },
     {
@@ -711,7 +747,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L145",
       "id": "route_cache_routecache_removebypools",
-      "community": 5,
+      "community": 3,
       "norm_label": ".removebypools()"
     },
     {
@@ -720,7 +756,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L160",
       "id": "route_cache_routecache_clear",
-      "community": 5,
+      "community": 3,
       "norm_label": ".clear()"
     },
     {
@@ -729,7 +765,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L165",
       "id": "route_cache_routecache_routes",
-      "community": 5,
+      "community": 3,
       "norm_label": ".routes()"
     },
     {
@@ -738,7 +774,7 @@
       "source_file": "/home/x/t/src/routing/route_cache.ts",
       "source_location": "L171",
       "id": "route_cache_routecache_rebuildindex",
-      "community": 5,
+      "community": 3,
       "norm_label": "._rebuildindex()"
     },
     {
@@ -747,7 +783,7 @@
       "source_file": "/home/x/t/src/routing/score_route.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_score_route_ts",
-      "community": 12,
+      "community": 13,
       "norm_label": "score_route.ts"
     },
     {
@@ -756,7 +792,7 @@
       "source_file": "/home/x/t/src/routing/score_route.ts",
       "source_location": "L34",
       "id": "score_route_estimategascostwei",
-      "community": 12,
+      "community": 13,
       "norm_label": "estimategascostwei()"
     },
     {
@@ -765,7 +801,7 @@
       "source_file": "/home/x/t/src/routing/score_route.ts",
       "source_location": "L39",
       "id": "score_route_gascostinstarttokenunits",
-      "community": 12,
+      "community": 13,
       "norm_label": "gascostinstarttokenunits()"
     },
     {
@@ -774,7 +810,7 @@
       "source_file": "/home/x/t/src/routing/score_route.ts",
       "source_location": "L67",
       "id": "score_route_scoreroute",
-      "community": 12,
+      "community": 13,
       "norm_label": "scoreroute()"
     },
     {
@@ -783,7 +819,7 @@
       "source_file": "/home/x/t/src/routing/score_route.ts",
       "source_location": "L114",
       "id": "score_route_rankroutes",
-      "community": 12,
+      "community": 13,
       "norm_label": "rankroutes()"
     },
     {
@@ -792,7 +828,7 @@
       "source_file": "/home/x/t/src/routing/score_route.ts",
       "source_location": "L136",
       "id": "score_route_selectbestroute",
-      "community": 12,
+      "community": 13,
       "norm_label": "selectbestroute()"
     },
     {
@@ -855,7 +891,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_worker_pool_ts",
-      "community": 5,
+      "community": 3,
       "norm_label": "worker_pool.ts"
     },
     {
@@ -864,7 +900,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L90",
       "id": "worker_pool_buildchunkstateobject",
-      "community": 5,
+      "community": 3,
       "norm_label": "buildchunkstateobject()"
     },
     {
@@ -873,7 +909,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L110",
       "id": "worker_pool_getstateversion",
-      "community": 5,
+      "community": 3,
       "norm_label": "getstateversion()"
     },
     {
@@ -882,7 +918,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L114",
       "id": "worker_pool_buildevaluationchunks",
-      "community": 5,
+      "community": 3,
       "norm_label": "buildevaluationchunks()"
     },
     {
@@ -891,7 +927,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L165",
       "id": "worker_pool_summarisechunkpools",
-      "community": 5,
+      "community": 3,
       "norm_label": "summarisechunkpools()"
     },
     {
@@ -900,7 +936,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L173",
       "id": "worker_pool_summariseevaluationchunks",
-      "community": 5,
+      "community": 3,
       "norm_label": "summariseevaluationchunks()"
     },
     {
@@ -909,7 +945,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L204",
       "id": "worker_pool_serialisedpathkey",
-      "community": 5,
+      "community": 3,
       "norm_label": "serialisedpathkey()"
     },
     {
@@ -918,7 +954,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L213",
       "id": "worker_pool_serialiseevaluationpath",
-      "community": 5,
+      "community": 3,
       "norm_label": "serialiseevaluationpath()"
     },
     {
@@ -927,7 +963,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L233",
       "id": "worker_pool_serialiseevaluationpaths",
-      "community": 5,
+      "community": 3,
       "norm_label": "serialiseevaluationpaths()"
     },
     {
@@ -936,7 +972,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L237",
       "id": "worker_pool_rehydrateevaluationresults",
-      "community": 5,
+      "community": 3,
       "norm_label": "rehydrateevaluationresults()"
     },
     {
@@ -945,7 +981,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L254",
       "id": "worker_pool_workerpool",
-      "community": 5,
+      "community": 3,
       "norm_label": "workerpool"
     },
     {
@@ -954,7 +990,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L263",
       "id": "worker_pool_workerpool_constructor",
-      "community": 5,
+      "community": 3,
       "norm_label": ".constructor()"
     },
     {
@@ -963,7 +999,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L279",
       "id": "worker_pool_workerpool_init",
-      "community": 5,
+      "community": 3,
       "norm_label": ".init()"
     },
     {
@@ -972,7 +1008,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L291",
       "id": "worker_pool_workerpool_terminate",
-      "community": 5,
+      "community": 3,
       "norm_label": ".terminate()"
     },
     {
@@ -981,7 +1017,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L316",
       "id": "worker_pool_workerpool_evaluate",
-      "community": 5,
+      "community": 3,
       "norm_label": ".evaluate()"
     },
     {
@@ -990,7 +1026,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L401",
       "id": "worker_pool_workerpool_enumerate",
-      "community": 5,
+      "community": 3,
       "norm_label": ".enumerate()"
     },
     {
@@ -999,7 +1035,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L481",
       "id": "worker_pool_workerpool_submit",
-      "community": 5,
+      "community": 3,
       "norm_label": "._submit()"
     },
     {
@@ -1008,7 +1044,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L495",
       "id": "worker_pool_workerpool_submittoslot",
-      "community": 5,
+      "community": 3,
       "norm_label": "._submittoslot()"
     },
     {
@@ -1017,7 +1053,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L503",
       "id": "worker_pool_workerpool_dispatchtoslot",
-      "community": 5,
+      "community": 3,
       "norm_label": "._dispatchtoslot()"
     },
     {
@@ -1026,7 +1062,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L511",
       "id": "worker_pool_workerpool_evaluateonslot",
-      "community": 5,
+      "community": 3,
       "norm_label": "._evaluateonslot()"
     },
     {
@@ -1035,7 +1071,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L552",
       "id": "worker_pool_workerpool_enumerateonslot",
-      "community": 5,
+      "community": 3,
       "norm_label": "._enumerateonslot()"
     },
     {
@@ -1044,7 +1080,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L575",
       "id": "worker_pool_workerpool_buildstatedelta",
-      "community": 5,
+      "community": 3,
       "norm_label": "._buildstatedelta()"
     },
     {
@@ -1053,7 +1089,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L604",
       "id": "worker_pool_workerpool_spawnslot",
-      "community": 5,
+      "community": 3,
       "norm_label": "._spawnslot()"
     },
     {
@@ -1062,7 +1098,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L678",
       "id": "worker_pool_workerpool_drainqueue",
-      "community": 5,
+      "community": 3,
       "norm_label": "._drainqueue()"
     },
     {
@@ -1071,7 +1107,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L686",
       "id": "worker_pool_workerpool_rejectslotpending",
-      "community": 5,
+      "community": 3,
       "norm_label": "._rejectslotpending()"
     },
     {
@@ -1080,7 +1116,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L702",
       "id": "worker_pool_workerpool_queuedepth",
-      "community": 5,
+      "community": 3,
       "norm_label": ".queuedepth()"
     },
     {
@@ -1089,7 +1125,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L705",
       "id": "worker_pool_workerpool_size",
-      "community": 5,
+      "community": 3,
       "norm_label": ".size()"
     },
     {
@@ -1098,7 +1134,7 @@
       "source_file": "/home/x/t/src/routing/worker_pool.ts",
       "source_location": "L707",
       "id": "worker_pool_workerpool_initialized",
-      "community": 5,
+      "community": 3,
       "norm_label": ".initialized()"
     },
     {
@@ -1116,7 +1152,7 @@
       "source_file": "/home/x/t/src/routing/route_identity.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_route_identity_ts",
-      "community": 5,
+      "community": 3,
       "norm_label": "route_identity.ts"
     },
     {
@@ -1125,7 +1161,7 @@
       "source_file": "/home/x/t/src/routing/route_identity.ts",
       "source_location": "L7",
       "id": "route_identity_normaliseroutesegment",
-      "community": 5,
+      "community": 3,
       "norm_label": "normaliseroutesegment()"
     },
     {
@@ -1134,7 +1170,7 @@
       "source_file": "/home/x/t/src/routing/route_identity.ts",
       "source_location": "L11",
       "id": "route_identity_routeidentityfromedges",
-      "community": 5,
+      "community": 3,
       "norm_label": "routeidentityfromedges()"
     },
     {
@@ -1143,7 +1179,7 @@
       "source_file": "/home/x/t/src/routing/route_identity.ts",
       "source_location": "L18",
       "id": "route_identity_routeidentityfromserializedpath",
-      "community": 5,
+      "community": 3,
       "norm_label": "routeidentityfromserializedpath()"
     },
     {
@@ -1152,7 +1188,7 @@
       "source_file": "/home/x/t/src/routing/route_identity.ts",
       "source_location": "L32",
       "id": "route_identity_routeexecutioncachekey",
-      "community": 5,
+      "community": 3,
       "norm_label": "routeexecutioncachekey()"
     },
     {
@@ -1179,7 +1215,7 @@
       "source_file": "/home/x/t/src/routing/optimization_candidates.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_optimization_candidates_ts",
-      "community": 12,
+      "community": 13,
       "norm_label": "optimization_candidates.ts"
     },
     {
@@ -1188,7 +1224,7 @@
       "source_file": "/home/x/t/src/routing/optimization_candidates.ts",
       "source_location": "L30",
       "id": "optimization_candidates_roiforcandidate",
-      "community": 12,
+      "community": 13,
       "norm_label": "roiforcandidate()"
     },
     {
@@ -1197,7 +1233,7 @@
       "source_file": "/home/x/t/src/routing/optimization_candidates.ts",
       "source_location": "L35",
       "id": "optimization_candidates_selectoptimizationcandidates",
-      "community": 12,
+      "community": 13,
       "norm_label": "selectoptimizationcandidates()"
     },
     {
@@ -1206,7 +1242,7 @@
       "source_file": "/home/x/t/src/routing/optimization_candidates.ts",
       "source_location": "L84",
       "id": "optimization_candidates_shouldoptimizecandidate",
-      "community": 12,
+      "community": 13,
       "norm_label": "shouldoptimizecandidate()"
     },
     {
@@ -1215,7 +1251,7 @@
       "source_file": "/home/x/t/src/routing/candidate_pipeline.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_candidate_pipeline_ts",
-      "community": 12,
+      "community": 13,
       "norm_label": "candidate_pipeline.ts"
     },
     {
@@ -1224,7 +1260,7 @@
       "source_file": "/home/x/t/src/routing/candidate_pipeline.ts",
       "source_location": "L29",
       "id": "candidate_pipeline_evaluatecandidatepipeline",
-      "community": 12,
+      "community": 13,
       "norm_label": "evaluatecandidatepipeline()"
     },
     {
@@ -1233,7 +1269,7 @@
       "source_file": "/home/x/t/src/routing/filter_fresh_candidates.ts",
       "source_location": "L1",
       "id": "home_x_t_src_routing_filter_fresh_candidates_ts",
-      "community": 12,
+      "community": 13,
       "norm_label": "filter_fresh_candidates.ts"
     },
     {
@@ -1242,7 +1278,7 @@
       "source_file": "/home/x/t/src/routing/filter_fresh_candidates.ts",
       "source_location": "L12",
       "id": "filter_fresh_candidates_partitionfreshcandidates",
-      "community": 12,
+      "community": 13,
       "norm_label": "partitionfreshcandidates()"
     },
     {
@@ -1287,7 +1323,7 @@
       "source_file": "/home/x/t/src/execution/abi_fragments.ts",
       "source_location": "L1",
       "id": "home_x_t_src_execution_abi_fragments_ts",
-      "community": 8,
+      "community": 9,
       "norm_label": "abi_fragments.ts"
     },
     {
@@ -1296,7 +1332,7 @@
       "source_file": "/home/x/t/src/execution/addresses.ts",
       "source_location": "L1",
       "id": "home_x_t_src_execution_addresses_ts",
-      "community": 8,
+      "community": 9,
       "norm_label": "addresses.ts"
     },
     {
@@ -1305,7 +1341,7 @@
       "source_file": "/home/x/t/src/execution/build_tx.ts",
       "source_location": "L1",
       "id": "home_x_t_src_execution_build_tx_ts",
-      "community": 8,
+      "community": 9,
       "norm_label": "build_tx.ts"
     },
     {
@@ -1314,7 +1350,7 @@
       "source_file": "/home/x/t/src/execution/build_tx.ts",
       "source_location": "L29",
       "id": "build_tx_assertvalidrouteforexecution",
-      "community": 8,
+      "community": 9,
       "norm_label": "assertvalidrouteforexecution()"
     },
     {
@@ -1323,7 +1359,7 @@
       "source_file": "/home/x/t/src/execution/build_tx.ts",
       "source_location": "L73",
       "id": "build_tx_resolveflashloan",
-      "community": 8,
+      "community": 9,
       "norm_label": "resolveflashloan()"
     },
     {
@@ -1332,7 +1368,7 @@
       "source_file": "/home/x/t/src/execution/build_tx.ts",
       "source_location": "L110",
       "id": "build_tx_buildarbtx",
-      "community": 8,
+      "community": 9,
       "norm_label": "buildarbtx()"
     },
     {
@@ -1341,7 +1377,7 @@
       "source_file": "/home/x/t/src/execution/build_tx.ts",
       "source_location": "L215",
       "id": "build_tx_buildtransfertx",
-      "community": 8,
+      "community": 9,
       "norm_label": "buildtransfertx()"
     },
     {
@@ -1350,7 +1386,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L1",
       "id": "home_x_t_src_execution_calldata_ts",
-      "community": 8,
+      "community": 9,
       "norm_label": "calldata.ts"
     },
     {
@@ -1359,7 +1395,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L57",
       "id": "calldata_encodev2hop",
-      "community": 8,
+      "community": 9,
       "norm_label": "encodev2hop()"
     },
     {
@@ -1368,7 +1404,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L109",
       "id": "calldata_encodev3hop",
-      "community": 8,
+      "community": 9,
       "norm_label": "encodev3hop()"
     },
     {
@@ -1377,7 +1413,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L152",
       "id": "calldata_encodecurvehop",
-      "community": 8,
+      "community": 9,
       "norm_label": "encodecurvehop()"
     },
     {
@@ -1386,7 +1422,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L194",
       "id": "calldata_encodebalancerhop",
-      "community": 8,
+      "community": 9,
       "norm_label": "encodebalancerhop()"
     },
     {
@@ -1395,7 +1431,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L263",
       "id": "calldata_encoderoute",
-      "community": 8,
+      "community": 9,
       "norm_label": "encoderoute()"
     },
     {
@@ -1404,7 +1440,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L314",
       "id": "calldata_computeroutehash",
-      "community": 8,
+      "community": 9,
       "norm_label": "computeroutehash()"
     },
     {
@@ -1413,7 +1449,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L337",
       "id": "calldata_buildflashparams",
-      "community": 8,
+      "community": 9,
       "norm_label": "buildflashparams()"
     },
     {
@@ -1422,7 +1458,7 @@
       "source_file": "/home/x/t/src/execution/calldata.ts",
       "source_location": "L359",
       "id": "calldata_encodeexecutearb",
-      "community": 8,
+      "community": 9,
       "norm_label": "encodeexecutearb()"
     },
     {
@@ -1431,7 +1467,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L1",
       "id": "home_x_t_src_execution_gas_ts",
-      "community": 8,
+      "community": 9,
       "norm_label": "gas.ts"
     },
     {
@@ -1440,7 +1476,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L37",
       "id": "gas_gasoracle",
-      "community": 8,
+      "community": 9,
       "norm_label": "gasoracle"
     },
     {
@@ -1449,7 +1485,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L45",
       "id": "gas_gasoracle_constructor",
-      "community": 8,
+      "community": 9,
       "norm_label": ".constructor()"
     },
     {
@@ -1458,7 +1494,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L57",
       "id": "gas_gasoracle_start",
-      "community": 8,
+      "community": 9,
       "norm_label": ".start()"
     },
     {
@@ -1467,7 +1503,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L78",
       "id": "gas_gasoracle_update",
-      "community": 8,
+      "community": 9,
       "norm_label": ".update()"
     },
     {
@@ -1476,7 +1512,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L124",
       "id": "gas_gasoracle_gettokenprice",
-      "community": 8,
+      "community": 9,
       "norm_label": ".gettokenprice()"
     },
     {
@@ -1485,7 +1521,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L131",
       "id": "gas_gasoracle_getfees",
-      "community": 8,
+      "community": 9,
       "norm_label": ".getfees()"
     },
     {
@@ -1494,7 +1530,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L140",
       "id": "gas_gasoracle_stop",
-      "community": 8,
+      "community": 9,
       "norm_label": ".stop()"
     },
     {
@@ -1503,7 +1539,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L156",
       "id": "gas_fetchgasprice",
-      "community": 8,
+      "community": 9,
       "norm_label": "fetchgasprice()"
     },
     {
@@ -1512,7 +1548,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L164",
       "id": "gas_fetcheip1559fees",
-      "community": 8,
+      "community": 9,
       "norm_label": "fetcheip1559fees()"
     },
     {
@@ -1521,7 +1557,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L170",
       "id": "gas_estimategas",
-      "community": 8,
+      "community": 9,
       "norm_label": "estimategas()"
     },
     {
@@ -1530,7 +1566,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L181",
       "id": "gas_cleargasestimatecache",
-      "community": 5,
+      "community": 3,
       "norm_label": "cleargasestimatecache()"
     },
     {
@@ -1539,7 +1575,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L185",
       "id": "gas_gasestimatecachekey",
-      "community": 8,
+      "community": 9,
       "norm_label": "gasestimatecachekey()"
     },
     {
@@ -1548,7 +1584,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L193",
       "id": "gas_clampbigint",
-      "community": 8,
+      "community": 9,
       "norm_label": "clampbigint()"
     },
     {
@@ -1557,7 +1593,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L205",
       "id": "gas_scalepriorityfeebyprofitmargin",
-      "community": 8,
+      "community": 9,
       "norm_label": "scalepriorityfeebyprofitmargin()"
     },
     {
@@ -1566,7 +1602,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L235",
       "id": "gas_recommendgasparams",
-      "community": 8,
+      "community": 9,
       "norm_label": "recommendgasparams()"
     },
     {
@@ -1575,7 +1611,7 @@
       "source_file": "/home/x/t/src/execution/gas.ts",
       "source_location": "L272",
       "id": "gas_quickgascheck",
-      "community": 8,
+      "community": 9,
       "norm_label": "quickgascheck()"
     },
     {
@@ -1593,7 +1629,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L1",
       "id": "home_x_t_src_execution_nonce_manager_ts",
-      "community": 8,
+      "community": 9,
       "norm_label": "nonce_manager.ts"
     },
     {
@@ -1602,7 +1638,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L24",
       "id": "nonce_manager_noncemanager",
-      "community": 10,
+      "community": 11,
       "norm_label": "noncemanager"
     },
     {
@@ -1611,7 +1647,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L29",
       "id": "nonce_manager_noncemanager_constructor",
-      "community": 10,
+      "community": 11,
       "norm_label": ".constructor()"
     },
     {
@@ -1620,7 +1656,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L37",
       "id": "nonce_manager_noncemanager_key",
-      "community": 10,
+      "community": 11,
       "norm_label": "._key()"
     },
     {
@@ -1629,7 +1665,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L41",
       "id": "nonce_manager_noncemanager_fetchonchain",
-      "community": 10,
+      "community": 11,
       "norm_label": "._fetchonchain()"
     },
     {
@@ -1638,7 +1674,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L49",
       "id": "nonce_manager_noncemanager_ensuresynced",
-      "community": 10,
+      "community": 11,
       "norm_label": "._ensuresynced()"
     },
     {
@@ -1647,7 +1683,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L81",
       "id": "nonce_manager_noncemanager_next",
-      "community": 10,
+      "community": 11,
       "norm_label": ".next()"
     },
     {
@@ -1656,7 +1692,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L101",
       "id": "nonce_manager_noncemanager_confirm",
-      "community": 10,
+      "community": 11,
       "norm_label": ".confirm()"
     },
     {
@@ -1665,7 +1701,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L116",
       "id": "nonce_manager_noncemanager_revert",
-      "community": 10,
+      "community": 11,
       "norm_label": ".revert()"
     },
     {
@@ -1674,7 +1710,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L131",
       "id": "nonce_manager_noncemanager_markdropped",
-      "community": 10,
+      "community": 11,
       "norm_label": ".markdropped()"
     },
     {
@@ -1683,7 +1719,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L140",
       "id": "nonce_manager_noncemanager_resync",
-      "community": 10,
+      "community": 11,
       "norm_label": ".resync()"
     },
     {
@@ -1692,7 +1728,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L156",
       "id": "nonce_manager_noncemanager_peek",
-      "community": 10,
+      "community": 11,
       "norm_label": ".peek()"
     },
     {
@@ -1701,7 +1737,7 @@
       "source_file": "/home/x/t/src/execution/nonce_manager.ts",
       "source_location": "L165",
       "id": "nonce_manager_noncemanager_reset",
-      "community": 5,
+      "community": 3,
       "norm_label": ".reset()"
     },
     {
@@ -1809,7 +1845,7 @@
       "source_file": "/home/x/t/src/execution/send_tx.ts",
       "source_location": "L1",
       "id": "home_x_t_src_execution_send_tx_ts",
-      "community": 10,
+      "community": 11,
       "norm_label": "send_tx.ts"
     },
     {
@@ -1818,7 +1854,7 @@
       "source_file": "/home/x/t/src/execution/send_tx.ts",
       "source_location": "L42",
       "id": "send_tx_stopreceiptpollerifidle",
-      "community": 10,
+      "community": 11,
       "norm_label": "stopreceiptpollerifidle()"
     },
     {
@@ -1827,88 +1863,97 @@
       "source_file": "/home/x/t/src/execution/send_tx.ts",
       "source_location": "L49",
       "id": "send_tx_cleartrackedreceipt",
-      "community": 10,
+      "community": 11,
       "norm_label": "cleartrackedreceipt()"
+    },
+    {
+      "label": "hasTrackedPendingTx()",
+      "file_type": "code",
+      "source_file": "/home/x/t/src/execution/send_tx.ts",
+      "source_location": "L55",
+      "id": "send_tx_hastrackedpendingtx",
+      "community": 11,
+      "norm_label": "hastrackedpendingtx()"
     },
     {
       "label": "pollTrackedReceipt()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L55",
+      "source_location": "L64",
       "id": "send_tx_polltrackedreceipt",
-      "community": 10,
+      "community": 11,
       "norm_label": "polltrackedreceipt()"
     },
     {
       "label": "pollPendingReceipts()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L92",
+      "source_location": "L101",
       "id": "send_tx_pollpendingreceipts",
-      "community": 10,
+      "community": 11,
       "norm_label": "pollpendingreceipts()"
     },
     {
       "label": "trackSubmittedTx()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L105",
+      "source_location": "L114",
       "id": "send_tx_tracksubmittedtx",
-      "community": 10,
+      "community": 11,
       "norm_label": "tracksubmittedtx()"
     },
     {
       "label": "dryRun()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L130",
+      "source_location": "L139",
       "id": "send_tx_dryrun",
-      "community": 10,
+      "community": 11,
       "norm_label": "dryrun()"
     },
     {
       "label": "rawTxHash()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L144",
+      "source_location": "L153",
       "id": "send_tx_rawtxhash",
-      "community": 10,
+      "community": 11,
       "norm_label": "rawtxhash()"
     },
     {
       "label": "submitSignedTransactionsIndividually()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L148",
+      "source_location": "L157",
       "id": "send_tx_submitsignedtransactionsindividually",
-      "community": 10,
+      "community": 11,
       "norm_label": "submitsignedtransactionsindividually()"
     },
     {
       "label": "sendTx()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L203",
+      "source_location": "L212",
       "id": "send_tx_sendtx",
-      "community": 10,
+      "community": 11,
       "norm_label": "sendtx()"
     },
     {
       "label": "sendTxBundle()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L373",
+      "source_location": "L382",
       "id": "send_tx_sendtxbundle",
-      "community": 10,
+      "community": 11,
       "norm_label": "sendtxbundle()"
     },
     {
       "label": "logFailure()",
       "file_type": "code",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L537",
+      "source_location": "L546",
       "id": "send_tx_logfailure",
-      "community": 10,
+      "community": 11,
       "norm_label": "logfailure()"
     },
     {
@@ -1980,7 +2025,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L1",
       "id": "home_x_t_src_profit_price_oracle_ts",
-      "community": 10,
+      "community": 7,
       "norm_label": "price_oracle.ts"
     },
     {
@@ -1989,7 +2034,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L77",
       "id": "price_oracle_priceoracle",
-      "community": 13,
+      "community": 7,
       "norm_label": "priceoracle"
     },
     {
@@ -1998,7 +2043,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L85",
       "id": "price_oracle_priceoracle_constructor",
-      "community": 13,
+      "community": 7,
       "norm_label": ".constructor()"
     },
     {
@@ -2007,7 +2052,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L95",
       "id": "price_oracle_priceoracle_setdefaults",
-      "community": 13,
+      "community": 7,
       "norm_label": "._setdefaults()"
     },
     {
@@ -2016,7 +2061,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L116",
       "id": "price_oracle_priceoracle_update",
-      "community": 13,
+      "community": 7,
       "norm_label": ".update()"
     },
     {
@@ -2025,7 +2070,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L205",
       "id": "price_oracle_priceoracle_getrate",
-      "community": 13,
+      "community": 7,
       "norm_label": ".getrate()"
     },
     {
@@ -2034,7 +2079,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L209",
       "id": "price_oracle_priceoracle_getfreshrate",
-      "community": 13,
+      "community": 7,
       "norm_label": ".getfreshrate()"
     },
     {
@@ -2043,7 +2088,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L218",
       "id": "price_oracle_priceoracle_isfresh",
-      "community": 13,
+      "community": 7,
       "norm_label": ".isfresh()"
     },
     {
@@ -2052,7 +2097,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L229",
       "id": "price_oracle_priceoracle_tomatic",
-      "community": 13,
+      "community": 7,
       "norm_label": ".tomatic()"
     },
     {
@@ -2061,7 +2106,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L244",
       "id": "price_oracle_priceoracle_frommatic",
-      "community": 13,
+      "community": 7,
       "norm_label": ".frommatic()"
     },
     {
@@ -2070,7 +2115,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L259",
       "id": "price_oracle_priceoracle_getdecimals",
-      "community": 13,
+      "community": 7,
       "norm_label": "._getdecimals()"
     },
     {
@@ -2079,7 +2124,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L294",
       "id": "price_oracle_priceoracle_storepairquote",
-      "community": 13,
+      "community": 7,
       "norm_label": "._storepairquote()"
     },
     {
@@ -2088,7 +2133,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L306",
       "id": "price_oracle_priceoracle_scaledratetowei",
-      "community": 13,
+      "community": 7,
       "norm_label": "._scaledratetowei()"
     },
     {
@@ -2097,7 +2142,7 @@
       "source_file": "/home/x/t/src/profit/price_oracle.ts",
       "source_location": "L312",
       "id": "price_oracle_priceoracle_derivequoteratescaled",
-      "community": 13,
+      "community": 7,
       "norm_label": "._derivequoteratescaled()"
     },
     {
@@ -2106,7 +2151,7 @@
       "source_file": "/home/x/t/src/protocols/balancer_v2.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_balancer_v2_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "balancer_v2.ts"
     },
     {
@@ -2115,7 +2160,7 @@
       "source_file": "/home/x/t/src/protocols/balancer_v2.ts",
       "source_location": "L14",
       "id": "balancer_v2_decode",
-      "community": 9,
+      "community": 10,
       "norm_label": "decode()"
     },
     {
@@ -2124,7 +2169,7 @@
       "source_file": "/home/x/t/src/protocols/balancer_v2.ts",
       "source_location": "L25",
       "id": "balancer_v2_enrichtokens",
-      "community": 9,
+      "community": 10,
       "norm_label": "enrichtokens()"
     },
     {
@@ -2133,7 +2178,7 @@
       "source_file": "/home/x/t/src/protocols/curve_crypto_factory.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_curve_crypto_factory_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "curve_crypto_factory.ts"
     },
     {
@@ -2142,7 +2187,7 @@
       "source_file": "/home/x/t/src/protocols/curve_crypto_factory.ts",
       "source_location": "L11",
       "id": "curve_crypto_factory_decode",
-      "community": 9,
+      "community": 10,
       "norm_label": "decode()"
     },
     {
@@ -2151,7 +2196,7 @@
       "source_file": "/home/x/t/src/protocols/curve_main_registry.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_curve_main_registry_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "curve_main_registry.ts"
     },
     {
@@ -2160,7 +2205,7 @@
       "source_file": "/home/x/t/src/protocols/curve_main_registry.ts",
       "source_location": "L15",
       "id": "curve_main_registry_decode",
-      "community": 9,
+      "community": 10,
       "norm_label": "decode()"
     },
     {
@@ -2169,7 +2214,7 @@
       "source_file": "/home/x/t/src/protocols/curve_main_registry.ts",
       "source_location": "L25",
       "id": "curve_main_registry_enrichtokens",
-      "community": 9,
+      "community": 10,
       "norm_label": "enrichtokens()"
     },
     {
@@ -2178,7 +2223,7 @@
       "source_file": "/home/x/t/src/protocols/curve_stable_factory.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_curve_stable_factory_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "curve_stable_factory.ts"
     },
     {
@@ -2187,7 +2232,7 @@
       "source_file": "/home/x/t/src/protocols/curve_stable_factory.ts",
       "source_location": "L13",
       "id": "curve_stable_factory_decode",
-      "community": 9,
+      "community": 10,
       "norm_label": "decode()"
     },
     {
@@ -2196,7 +2241,7 @@
       "source_file": "/home/x/t/src/protocols/index.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_index_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "index.ts"
     },
     {
@@ -2205,7 +2250,7 @@
       "source_file": "/home/x/t/src/protocols/quickswap_v2.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_quickswap_v2_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "quickswap_v2.ts"
     },
     {
@@ -2214,7 +2259,7 @@
       "source_file": "/home/x/t/src/protocols/quickswap_v3.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_quickswap_v3_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "quickswap_v3.ts"
     },
     {
@@ -2223,7 +2268,7 @@
       "source_file": "/home/x/t/src/protocols/quickswap_v3.ts",
       "source_location": "L28",
       "id": "quickswap_v3_decode",
-      "community": 9,
+      "community": 10,
       "norm_label": "decode()"
     },
     {
@@ -2232,7 +2277,7 @@
       "source_file": "/home/x/t/src/protocols/sushiswap_v2.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_sushiswap_v2_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "sushiswap_v2.ts"
     },
     {
@@ -2241,7 +2286,7 @@
       "source_file": "/home/x/t/src/protocols/sushiswap_v3.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_sushiswap_v3_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "sushiswap_v3.ts"
     },
     {
@@ -2250,7 +2295,7 @@
       "source_file": "/home/x/t/src/protocols/uniswap_v3.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_uniswap_v3_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "uniswap_v3.ts"
     },
     {
@@ -2259,7 +2304,7 @@
       "source_file": "/home/x/t/src/protocols/curve_list_factory.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_curve_list_factory_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "curve_list_factory.ts"
     },
     {
@@ -2268,7 +2313,7 @@
       "source_file": "/home/x/t/src/protocols/curve_list_factory.ts",
       "source_location": "L27",
       "id": "curve_list_factory_ismissingpoollistentryerror",
-      "community": 9,
+      "community": 10,
       "norm_label": "ismissingpoollistentryerror()"
     },
     {
@@ -2277,7 +2322,7 @@
       "source_file": "/home/x/t/src/protocols/curve_list_factory.ts",
       "source_location": "L35",
       "id": "curve_list_factory_getcoinsabi",
-      "community": 9,
+      "community": 10,
       "norm_label": "getcoinsabi()"
     },
     {
@@ -2286,7 +2331,7 @@
       "source_file": "/home/x/t/src/protocols/curve_list_factory.ts",
       "source_location": "L47",
       "id": "curve_list_factory_getdynamiccoinsabi",
-      "community": 9,
+      "community": 10,
       "norm_label": "getdynamiccoinsabi()"
     },
     {
@@ -2295,7 +2340,7 @@
       "source_file": "/home/x/t/src/protocols/curve_list_factory.ts",
       "source_location": "L70",
       "id": "curve_list_factory_discovercurvelistedfactory",
-      "community": 2,
+      "community": 5,
       "norm_label": "discovercurvelistedfactory()"
     },
     {
@@ -2304,7 +2349,7 @@
       "source_file": "/home/x/t/src/protocols/curve_stableswap_ng.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_curve_stableswap_ng_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "curve_stableswap_ng.ts"
     },
     {
@@ -2313,7 +2358,7 @@
       "source_file": "/home/x/t/src/protocols/curve_tricrypto_ng.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_curve_tricrypto_ng_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "curve_tricrypto_ng.ts"
     },
     {
@@ -2340,7 +2385,7 @@
       "source_file": "/home/x/t/src/protocols/factories.ts",
       "source_location": "L1",
       "id": "home_x_t_src_protocols_factories_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "factories.ts"
     },
     {
@@ -2349,7 +2394,7 @@
       "source_file": "/home/x/t/src/protocols/factories.ts",
       "source_location": "L20",
       "id": "factories_createpaircreatedprotocol",
-      "community": 9,
+      "community": 10,
       "norm_label": "createpaircreatedprotocol()"
     },
     {
@@ -2358,7 +2403,7 @@
       "source_file": "/home/x/t/src/protocols/factories.ts",
       "source_location": "L38",
       "id": "factories_createuniv3poolprotocol",
-      "community": 9,
+      "community": 10,
       "norm_label": "createuniv3poolprotocol()"
     },
     {
@@ -2367,7 +2412,7 @@
       "source_file": "/home/x/t/src/protocols/factories.ts",
       "source_location": "L65",
       "id": "factories_createrpctokenprotocol",
-      "community": 9,
+      "community": 10,
       "norm_label": "createrpctokenprotocol()"
     },
     {
@@ -2376,7 +2421,7 @@
       "source_file": "/home/x/t/src/protocols/factories.ts",
       "source_location": "L83",
       "id": "factories_createcurvelistedfactoryprotocol",
-      "community": 9,
+      "community": 10,
       "norm_label": "createcurvelistedfactoryprotocol()"
     },
     {
@@ -2385,7 +2430,7 @@
       "source_file": "/home/x/t/src/enrichment/balancer.ts",
       "source_location": "L1",
       "id": "home_x_t_src_enrichment_balancer_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "balancer.ts"
     },
     {
@@ -2394,7 +2439,7 @@
       "source_file": "/home/x/t/src/enrichment/balancer.ts",
       "source_location": "L34",
       "id": "balancer_getbalancertokens",
-      "community": 9,
+      "community": 10,
       "norm_label": "getbalancertokens()"
     },
     {
@@ -2403,7 +2448,7 @@
       "source_file": "/home/x/t/src/enrichment/curve.ts",
       "source_location": "L1",
       "id": "home_x_t_src_enrichment_curve_ts",
-      "community": 9,
+      "community": 10,
       "norm_label": "curve.ts"
     },
     {
@@ -2412,7 +2457,7 @@
       "source_file": "/home/x/t/src/enrichment/curve.ts",
       "source_location": "L31",
       "id": "curve_getcurvetokens",
-      "community": 9,
+      "community": 10,
       "norm_label": "getcurvetokens()"
     },
     {
@@ -2430,7 +2475,7 @@
       "source_file": "/home/x/t/src/enrichment/rpc.ts",
       "source_location": "L1",
       "id": "home_x_t_src_enrichment_rpc_ts",
-      "community": 7,
+      "community": 8,
       "norm_label": "rpc.ts"
     },
     {
@@ -2439,7 +2484,7 @@
       "source_file": "/home/x/t/src/enrichment/rpc.ts",
       "source_location": "L42",
       "id": "rpc_executewithrpcretry",
-      "community": 7,
+      "community": 8,
       "norm_label": "executewithrpcretry()"
     },
     {
@@ -2457,7 +2502,7 @@
       "source_file": "/home/x/t/src/enrichment/rpc.ts",
       "source_location": "L144",
       "id": "rpc_multicallwithretry",
-      "community": 7,
+      "community": 8,
       "norm_label": "multicallwithretry()"
     },
     {
@@ -2466,7 +2511,7 @@
       "source_file": "/home/x/t/src/enrichment/rpc.ts",
       "source_location": "L169",
       "id": "rpc_isnodatareadcontracterror",
-      "community": 9,
+      "community": 10,
       "norm_label": "isnodatareadcontracterror()"
     },
     {
@@ -2484,7 +2529,7 @@
       "source_file": "/home/x/t/src/enrichment/rpc.ts",
       "source_location": "L206",
       "id": "rpc_rpcshorturl",
-      "community": 7,
+      "community": 8,
       "norm_label": "rpcshorturl()"
     },
     {
@@ -2808,7 +2853,7 @@
       "source_file": "/home/x/t/src/db/registry_meta_cache.ts",
       "source_location": "L8",
       "id": "registry_meta_cache_registrymetacache",
-      "community": 4,
+      "community": 0,
       "norm_label": "registrymetacache"
     },
     {
@@ -2817,7 +2862,7 @@
       "source_file": "/home/x/t/src/db/registry_meta_cache.ts",
       "source_location": "L13",
       "id": "registry_meta_cache_registrymetacache_constructor",
-      "community": 4,
+      "community": 0,
       "norm_label": ".constructor()"
     },
     {
@@ -2826,7 +2871,7 @@
       "source_file": "/home/x/t/src/db/registry_meta_cache.ts",
       "source_location": "L19",
       "id": "registry_meta_cache_registrymetacache_invalidate",
-      "community": 4,
+      "community": 5,
       "norm_label": ".invalidate()"
     },
     {
@@ -2835,7 +2880,7 @@
       "source_file": "/home/x/t/src/db/registry_meta_cache.ts",
       "source_location": "L24",
       "id": "registry_meta_cache_registrymetacache_getall",
-      "community": 4,
+      "community": 0,
       "norm_label": ".getall()"
     },
     {
@@ -2844,7 +2889,7 @@
       "source_file": "/home/x/t/src/db/registry_meta_cache.ts",
       "source_location": "L31",
       "id": "registry_meta_cache_registrymetacache_getactive",
-      "community": 4,
+      "community": 2,
       "norm_label": ".getactive()"
     },
     {
@@ -2853,7 +2898,7 @@
       "source_file": "/home/x/t/src/db/registry_meta_cache.ts",
       "source_location": "L39",
       "id": "registry_meta_cache_registrymetacache_get",
-      "community": 4,
+      "community": 0,
       "norm_label": ".get()"
     },
     {
@@ -2916,7 +2961,7 @@
       "source_file": "/home/x/t/src/db/registry_pools.ts",
       "source_location": "L103",
       "id": "registry_pools_loadpoolmetacache",
-      "community": 4,
+      "community": 0,
       "norm_label": "loadpoolmetacache()"
     },
     {
@@ -3087,7 +3132,7 @@
       "source_file": "/home/x/t/src/db/registry.ts",
       "source_location": "L70",
       "id": "registry_registryservice",
-      "community": 4,
+      "community": 5,
       "norm_label": "registryservice"
     },
     {
@@ -3096,7 +3141,7 @@
       "source_file": "/home/x/t/src/db/registry.ts",
       "source_location": "L77",
       "id": "registry_registryservice_constructor",
-      "community": 4,
+      "community": 5,
       "norm_label": ".constructor()"
     },
     {
@@ -3105,7 +3150,7 @@
       "source_file": "/home/x/t/src/db/registry.ts",
       "source_location": "L95",
       "id": "registry_registryservice_initschema",
-      "community": 4,
+      "community": 5,
       "norm_label": "._initschema()"
     },
     {
@@ -3123,41 +3168,41 @@
       "source_file": "/home/x/t/src/db/registry.ts",
       "source_location": "L209",
       "id": "registry_registryservice_invalidatepoolmetacache",
-      "community": 4,
+      "community": 5,
       "norm_label": "._invalidatepoolmetacache()"
     },
     {
       "label": "._getPoolMetaCache()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L213",
+      "source_location": "L217",
       "id": "registry_registryservice_getpoolmetacache",
-      "community": 4,
+      "community": 0,
       "norm_label": "._getpoolmetacache()"
     },
     {
       "label": ".upsertPool()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L217",
+      "source_location": "L221",
       "id": "registry_registryservice_upsertpool",
-      "community": 4,
+      "community": 5,
       "norm_label": ".upsertpool()"
     },
     {
       "label": ".removePool()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L226",
+      "source_location": "L230",
       "id": "registry_registryservice_removepool",
-      "community": 4,
+      "community": 5,
       "norm_label": ".removepool()"
     },
     {
       "label": ".updatePoolState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L234",
+      "source_location": "L238",
       "id": "registry_registryservice_updatepoolstate",
       "community": 1,
       "norm_label": ".updatepoolstate()"
@@ -3166,25 +3211,25 @@
       "label": ".getPools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L238",
+      "source_location": "L242",
       "id": "registry_registryservice_getpools",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getpools()"
     },
     {
       "label": ".getActivePools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L242",
+      "source_location": "L246",
       "id": "registry_registryservice_getactivepools",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getactivepools()"
     },
     {
       "label": ".getActivePoolsMeta()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L246",
+      "source_location": "L250",
       "id": "registry_registryservice_getactivepoolsmeta",
       "community": 2,
       "norm_label": ".getactivepoolsmeta()"
@@ -3193,43 +3238,43 @@
       "label": ".getPoolMeta()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L250",
+      "source_location": "L254",
       "id": "registry_registryservice_getpoolmeta",
-      "community": 13,
+      "community": 1,
       "norm_label": ".getpoolmeta()"
     },
     {
       "label": ".getPool()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L254",
+      "source_location": "L258",
       "id": "registry_registryservice_getpool",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getpool()"
     },
     {
       "label": ".getPoolCount()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L258",
+      "source_location": "L262",
       "id": "registry_registryservice_getpoolcount",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getpoolcount()"
     },
     {
       "label": ".getActivePoolCount()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L262",
+      "source_location": "L266",
       "id": "registry_registryservice_getactivepoolcount",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getactivepoolcount()"
     },
     {
       "label": ".getCheckpoint()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L268",
+      "source_location": "L272",
       "id": "registry_registryservice_getcheckpoint",
       "community": 1,
       "norm_label": ".getcheckpoint()"
@@ -3238,7 +3283,7 @@
       "label": ".setCheckpoint()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L272",
+      "source_location": "L276",
       "id": "registry_registryservice_setcheckpoint",
       "community": 1,
       "norm_label": ".setcheckpoint()"
@@ -3247,16 +3292,16 @@
       "label": ".getGlobalCheckpoint()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L276",
+      "source_location": "L280",
       "id": "registry_registryservice_getglobalcheckpoint",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getglobalcheckpoint()"
     },
     {
       "label": ".setRollbackGuard()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L282",
+      "source_location": "L286",
       "id": "registry_registryservice_setrollbackguard",
       "community": 1,
       "norm_label": ".setrollbackguard()"
@@ -3265,7 +3310,7 @@
       "label": ".getRollbackGuard()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L286",
+      "source_location": "L290",
       "id": "registry_registryservice_getrollbackguard",
       "community": 1,
       "norm_label": ".getrollbackguard()"
@@ -3274,234 +3319,234 @@
       "label": ".rollbackToBlock()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L292",
+      "source_location": "L296",
       "id": "registry_registryservice_rollbacktoblock",
-      "community": 4,
+      "community": 5,
       "norm_label": ".rollbacktoblock()"
     },
     {
       "label": ".batchUpsertPools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L300",
+      "source_location": "L304",
       "id": "registry_registryservice_batchupsertpools",
-      "community": 2,
+      "community": 5,
       "norm_label": ".batchupsertpools()"
     },
     {
       "label": ".batchUpdateStates()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L314",
+      "source_location": "L318",
       "id": "registry_registryservice_batchupdatestates",
-      "community": 4,
+      "community": 5,
       "norm_label": ".batchupdatestates()"
     },
     {
       "label": ".getPoolsWithState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L322",
+      "source_location": "L326",
       "id": "registry_registryservice_getpoolswithstate",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getpoolswithstate()"
     },
     {
       "label": ".getStaleStatePools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L332",
+      "source_location": "L336",
       "id": "registry_registryservice_getstalestatepools",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getstalestatepools()"
     },
     {
       "label": ".getPoolCountByProtocol()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L340",
+      "source_location": "L344",
       "id": "registry_registryservice_getpoolcountbyprotocol",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getpoolcountbyprotocol()"
     },
     {
       "label": ".loadSnapshot()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L346",
+      "source_location": "L350",
       "id": "registry_registryservice_loadsnapshot",
-      "community": 4,
+      "community": 5,
       "norm_label": ".loadsnapshot()"
     },
     {
       "label": ".saveSnapshot()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L350",
+      "source_location": "L354",
       "id": "registry_registryservice_savesnapshot",
-      "community": 4,
+      "community": 5,
       "norm_label": ".savesnapshot()"
     },
     {
       "label": ".upsertTokenMeta()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L364",
+      "source_location": "L368",
       "id": "registry_registryservice_upserttokenmeta",
-      "community": 4,
+      "community": 5,
       "norm_label": ".upserttokenmeta()"
     },
     {
       "label": ".getTokenMeta()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L374",
+      "source_location": "L378",
       "id": "registry_registryservice_gettokenmeta",
-      "community": 13,
+      "community": 7,
       "norm_label": ".gettokenmeta()"
     },
     {
       "label": ".getTokenDecimals()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L384",
+      "source_location": "L388",
       "id": "registry_registryservice_gettokendecimals",
-      "community": 4,
+      "community": 5,
       "norm_label": ".gettokendecimals()"
     },
     {
       "label": ".batchUpsertTokenMeta()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L393",
+      "source_location": "L397",
       "id": "registry_registryservice_batchupserttokenmeta",
-      "community": 4,
+      "community": 5,
       "norm_label": ".batchupserttokenmeta()"
     },
     {
       "label": ".upsertPoolFee()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L407",
+      "source_location": "L411",
       "id": "registry_registryservice_upsertpoolfee",
-      "community": 4,
+      "community": 5,
       "norm_label": ".upsertpoolfee()"
     },
     {
       "label": ".getPoolFee()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L417",
+      "source_location": "L421",
       "id": "registry_registryservice_getpoolfee",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getpoolfee()"
     },
     {
       "label": ".disablePool()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L430",
+      "source_location": "L434",
       "id": "registry_registryservice_disablepool",
-      "community": 4,
+      "community": 5,
       "norm_label": ".disablepool()"
     },
     {
       "label": ".enablePool()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L446",
+      "source_location": "L450",
       "id": "registry_registryservice_enablepool",
-      "community": 4,
+      "community": 5,
       "norm_label": ".enablepool()"
     },
     {
       "label": ".getDisabledPools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L459",
+      "source_location": "L463",
       "id": "registry_registryservice_getdisabledpools",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getdisabledpools()"
     },
     {
       "label": ".recordLiquidityEvent()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L474",
+      "source_location": "L478",
       "id": "registry_registryservice_recordliquidityevent",
-      "community": 4,
+      "community": 5,
       "norm_label": ".recordliquidityevent()"
     },
     {
       "label": ".hasRecentLiquidityEvent()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L492",
+      "source_location": "L496",
       "id": "registry_registryservice_hasrecentliquidityevent",
-      "community": 4,
+      "community": 5,
       "norm_label": ".hasrecentliquidityevent()"
     },
     {
       "label": ".detectLiquidityChange()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L509",
+      "source_location": "L513",
       "id": "registry_registryservice_detectliquiditychange",
-      "community": 4,
+      "community": 5,
       "norm_label": ".detectliquiditychange()"
     },
     {
       "label": ".validatePoolMetadata()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L535",
+      "source_location": "L539",
       "id": "registry_registryservice_validatepoolmetadata",
-      "community": 4,
+      "community": 5,
       "norm_label": ".validatepoolmetadata()"
     },
     {
       "label": ".validateAllPools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L544",
+      "source_location": "L548",
       "id": "registry_registryservice_validateallpools",
-      "community": 4,
+      "community": 5,
       "norm_label": ".validateallpools()"
     },
     {
       "label": ".logArbResult()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L571",
+      "source_location": "L575",
       "id": "registry_registryservice_logarbresult",
-      "community": 4,
+      "community": 5,
       "norm_label": ".logarbresult()"
     },
     {
       "label": ".getArbHistory()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L585",
+      "source_location": "L589",
       "id": "registry_registryservice_getarbhistory",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getarbhistory()"
     },
     {
       "label": ".getArbStats()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L599",
+      "source_location": "L603",
       "id": "registry_registryservice_getarbstats",
-      "community": 4,
+      "community": 5,
       "norm_label": ".getarbstats()"
     },
     {
       "label": ".close()",
       "file_type": "code",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L605",
+      "source_location": "L609",
       "id": "registry_registryservice_close",
-      "community": 4,
+      "community": 5,
       "norm_label": ".close()"
     },
     {
@@ -3573,7 +3618,7 @@
       "source_file": "/home/x/t/src/db/sqlite.ts",
       "source_location": "L40",
       "id": "sqlite_compatdatabase",
-      "community": 4,
+      "community": 5,
       "norm_label": "compatdatabase"
     },
     {
@@ -3582,7 +3627,7 @@
       "source_file": "/home/x/t/src/db/sqlite.ts",
       "source_location": "L45",
       "id": "sqlite_compatdatabase_constructor",
-      "community": 4,
+      "community": 5,
       "norm_label": ".constructor()"
     },
     {
@@ -3600,7 +3645,7 @@
       "source_file": "/home/x/t/src/db/sqlite.ts",
       "source_location": "L60",
       "id": "sqlite_compatdatabase_exec",
-      "community": 4,
+      "community": 5,
       "norm_label": ".exec()"
     },
     {
@@ -3609,7 +3654,7 @@
       "source_file": "/home/x/t/src/db/sqlite.ts",
       "source_location": "L64",
       "id": "sqlite_compatdatabase_pragma",
-      "community": 4,
+      "community": 5,
       "norm_label": ".pragma()"
     },
     {
@@ -3627,7 +3672,7 @@
       "source_file": "/home/x/t/src/db/sqlite.ts",
       "source_location": "L99",
       "id": "sqlite_compatdatabase_close",
-      "community": 4,
+      "community": 7,
       "norm_label": ".close()"
     },
     {
@@ -3708,7 +3753,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L1",
       "id": "home_x_t_src_math_curve_ts",
-      "community": 6,
+      "community": 2,
       "norm_label": "curve.ts"
     },
     {
@@ -3717,7 +3762,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L55",
       "id": "curve_getd",
-      "community": 6,
+      "community": 2,
       "norm_label": "getd()"
     },
     {
@@ -3726,7 +3771,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L100",
       "id": "curve_gety",
-      "community": 6,
+      "community": 2,
       "norm_label": "gety()"
     },
     {
@@ -3735,7 +3780,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L145",
       "id": "curve_toxp",
-      "community": 6,
+      "community": 2,
       "norm_label": "toxp()"
     },
     {
@@ -3744,7 +3789,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L160",
       "id": "curve_getcurveamountout",
-      "community": 6,
+      "community": 2,
       "norm_label": "getcurveamountout()"
     },
     {
@@ -3753,7 +3798,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L196",
       "id": "curve_getcurveamountin",
-      "community": 6,
+      "community": 2,
       "norm_label": "getcurveamountin()"
     },
     {
@@ -3762,7 +3807,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L236",
       "id": "curve_simulatecurveswap",
-      "community": 6,
+      "community": 2,
       "norm_label": "simulatecurveswap()"
     },
     {
@@ -3771,7 +3816,7 @@
       "source_file": "/home/x/t/src/math/curve.ts",
       "source_location": "L256",
       "id": "curve_defaultrates",
-      "community": 6,
+      "community": 2,
       "norm_label": "defaultrates()"
     },
     {
@@ -3780,7 +3825,7 @@
       "source_file": "/home/x/t/src/math/full_math.ts",
       "source_location": "L1",
       "id": "home_x_t_src_math_full_math_ts",
-      "community": 11,
+      "community": 12,
       "norm_label": "full_math.ts"
     },
     {
@@ -3789,7 +3834,7 @@
       "source_file": "/home/x/t/src/math/full_math.ts",
       "source_location": "L21",
       "id": "full_math_muldiv",
-      "community": 11,
+      "community": 12,
       "norm_label": "muldiv()"
     },
     {
@@ -3798,7 +3843,7 @@
       "source_file": "/home/x/t/src/math/full_math.ts",
       "source_location": "L35",
       "id": "full_math_muldivroundingup",
-      "community": 11,
+      "community": 12,
       "norm_label": "muldivroundingup()"
     },
     {
@@ -3807,7 +3852,7 @@
       "source_file": "/home/x/t/src/math/full_math.ts",
       "source_location": "L49",
       "id": "full_math_divroundingup",
-      "community": 11,
+      "community": 12,
       "norm_label": "divroundingup()"
     },
     {
@@ -3825,7 +3870,7 @@
       "source_file": "/home/x/t/src/math/sqrt_price_math.ts",
       "source_location": "L1",
       "id": "home_x_t_src_math_sqrt_price_math_ts",
-      "community": 11,
+      "community": 12,
       "norm_label": "sqrt_price_math.ts"
     },
     {
@@ -3834,7 +3879,7 @@
       "source_file": "/home/x/t/src/math/sqrt_price_math.ts",
       "source_location": "L34",
       "id": "sqrt_price_math_getnextsqrtpricefromamount0roundingup",
-      "community": 11,
+      "community": 12,
       "norm_label": "getnextsqrtpricefromamount0roundingup()"
     },
     {
@@ -3843,7 +3888,7 @@
       "source_file": "/home/x/t/src/math/sqrt_price_math.ts",
       "source_location": "L77",
       "id": "sqrt_price_math_getnextsqrtpricefromamount1roundingdown",
-      "community": 11,
+      "community": 12,
       "norm_label": "getnextsqrtpricefromamount1roundingdown()"
     },
     {
@@ -3852,7 +3897,7 @@
       "source_file": "/home/x/t/src/math/sqrt_price_math.ts",
       "source_location": "L106",
       "id": "sqrt_price_math_getnextsqrtpricefrominput",
-      "community": 11,
+      "community": 12,
       "norm_label": "getnextsqrtpricefrominput()"
     },
     {
@@ -3861,7 +3906,7 @@
       "source_file": "/home/x/t/src/math/sqrt_price_math.ts",
       "source_location": "L134",
       "id": "sqrt_price_math_getnextsqrtpricefromoutput",
-      "community": 11,
+      "community": 12,
       "norm_label": "getnextsqrtpricefromoutput()"
     },
     {
@@ -3870,7 +3915,7 @@
       "source_file": "/home/x/t/src/math/sqrt_price_math.ts",
       "source_location": "L171",
       "id": "sqrt_price_math_getamount0delta",
-      "community": 11,
+      "community": 12,
       "norm_label": "getamount0delta()"
     },
     {
@@ -3879,7 +3924,7 @@
       "source_file": "/home/x/t/src/math/sqrt_price_math.ts",
       "source_location": "L205",
       "id": "sqrt_price_math_getamount1delta",
-      "community": 11,
+      "community": 12,
       "norm_label": "getamount1delta()"
     },
     {
@@ -3888,7 +3933,7 @@
       "source_file": "/home/x/t/src/math/swap_math.ts",
       "source_location": "L1",
       "id": "home_x_t_src_math_swap_math_ts",
-      "community": 11,
+      "community": 12,
       "norm_label": "swap_math.ts"
     },
     {
@@ -3897,7 +3942,7 @@
       "source_file": "/home/x/t/src/math/swap_math.ts",
       "source_location": "L29",
       "id": "swap_math_computeswapstep",
-      "community": 11,
+      "community": 12,
       "norm_label": "computeswapstep()"
     },
     {
@@ -3906,7 +3951,7 @@
       "source_file": "/home/x/t/src/math/tick_math.ts",
       "source_location": "L1",
       "id": "home_x_t_src_math_tick_math_ts",
-      "community": 11,
+      "community": 12,
       "norm_label": "tick_math.ts"
     },
     {
@@ -3915,7 +3960,7 @@
       "source_file": "/home/x/t/src/math/tick_math.ts",
       "source_location": "L33",
       "id": "tick_math_getsqrtratioattick",
-      "community": 11,
+      "community": 12,
       "norm_label": "getsqrtratioattick()"
     },
     {
@@ -3924,7 +3969,7 @@
       "source_file": "/home/x/t/src/math/tick_math.ts",
       "source_location": "L103",
       "id": "tick_math_gettickatsqrtratio",
-      "community": 11,
+      "community": 12,
       "norm_label": "gettickatsqrtratio()"
     },
     {
@@ -3978,7 +4023,7 @@
       "source_file": "/home/x/t/src/math/uniswap_v3.ts",
       "source_location": "L1",
       "id": "home_x_t_src_math_uniswap_v3_ts",
-      "community": 11,
+      "community": 12,
       "norm_label": "uniswap_v3.ts"
     },
     {
@@ -3987,7 +4032,7 @@
       "source_file": "/home/x/t/src/math/uniswap_v3.ts",
       "source_location": "L27",
       "id": "uniswap_v3_nextinitializedtickoptimized",
-      "community": 11,
+      "community": 12,
       "norm_label": "nextinitializedtickoptimized()"
     },
     {
@@ -3996,7 +4041,7 @@
       "source_file": "/home/x/t/src/math/uniswap_v3.ts",
       "source_location": "L72",
       "id": "uniswap_v3_simulatev3swap",
-      "community": 11,
+      "community": 12,
       "norm_label": "simulatev3swap()"
     },
     {
@@ -4005,7 +4050,7 @@
       "source_file": "/home/x/t/src/math/uniswap_v3.ts",
       "source_location": "L187",
       "id": "uniswap_v3_quotev3",
-      "community": 11,
+      "community": 12,
       "norm_label": "quotev3()"
     },
     {
@@ -4014,7 +4059,7 @@
       "source_file": "/home/x/t/src/utils/logger.ts",
       "source_location": "L1",
       "id": "home_x_t_src_utils_logger_ts",
-      "community": 10,
+      "community": 7,
       "norm_label": "logger.ts"
     },
     {
@@ -4023,7 +4068,7 @@
       "source_file": "/home/x/t/src/utils/logger.ts",
       "source_location": "L12",
       "id": "logger_createdestination",
-      "community": 10,
+      "community": 7,
       "norm_label": "createdestination()"
     },
     {
@@ -4032,7 +4077,7 @@
       "source_file": "/home/x/t/src/utils/metrics.ts",
       "source_location": "L1",
       "id": "home_x_t_src_utils_metrics_ts",
-      "community": 10,
+      "community": 7,
       "norm_label": "metrics.ts"
     },
     {
@@ -4041,7 +4086,7 @@
       "source_file": "/home/x/t/src/utils/metrics.ts",
       "source_location": "L127",
       "id": "metrics_getmetrics",
-      "community": 10,
+      "community": 7,
       "norm_label": "getmetrics()"
     },
     {
@@ -4050,7 +4095,7 @@
       "source_file": "/home/x/t/src/utils/metrics.ts",
       "source_location": "L139",
       "id": "metrics_startmetricsserver",
-      "community": 10,
+      "community": 7,
       "norm_label": "startmetricsserver()"
     },
     {
@@ -4059,7 +4104,7 @@
       "source_file": "/home/x/t/src/utils/metrics.ts",
       "source_location": "L165",
       "id": "metrics_stopmetricsserver",
-      "community": 4,
+      "community": 7,
       "norm_label": "stopmetricsserver()"
     },
     {
@@ -4068,7 +4113,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L1",
       "id": "home_x_t_src_utils_rpc_manager_ts",
-      "community": 7,
+      "community": 8,
       "norm_label": "rpc_manager.ts"
     },
     {
@@ -4077,7 +4122,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L25",
       "id": "rpc_manager_lazymetrics",
-      "community": 7,
+      "community": 8,
       "norm_label": "lazymetrics()"
     },
     {
@@ -4086,7 +4131,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L45",
       "id": "rpc_manager_rpcendpoint",
-      "community": 7,
+      "community": 8,
       "norm_label": "rpcendpoint"
     },
     {
@@ -4095,7 +4140,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L55",
       "id": "rpc_manager_rpcendpoint_constructor",
-      "community": 7,
+      "community": 8,
       "norm_label": ".constructor()"
     },
     {
@@ -4104,7 +4149,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L74",
       "id": "rpc_manager_rpcendpoint_isratelimited",
-      "community": 7,
+      "community": 8,
       "norm_label": ".isratelimited()"
     },
     {
@@ -4113,7 +4158,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L79",
       "id": "rpc_manager_rpcendpoint_iscoolingdown",
-      "community": 7,
+      "community": 8,
       "norm_label": ".iscoolingdown()"
     },
     {
@@ -4122,7 +4167,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L86",
       "id": "rpc_manager_rpcendpoint_markratelimited",
-      "community": 7,
+      "community": 8,
       "norm_label": ".markratelimited()"
     },
     {
@@ -4131,7 +4176,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L114",
       "id": "rpc_manager_rpcendpoint_marksuccess",
-      "community": 7,
+      "community": 8,
       "norm_label": ".marksuccess()"
     },
     {
@@ -4140,7 +4185,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L123",
       "id": "rpc_manager_rpcendpoint_markerror",
-      "community": 7,
+      "community": 8,
       "norm_label": ".markerror()"
     },
     {
@@ -4149,7 +4194,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L137",
       "id": "rpc_manager_rpcendpoint_probe",
-      "community": 7,
+      "community": 8,
       "norm_label": ".probe()"
     },
     {
@@ -4158,7 +4203,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L162",
       "id": "rpc_manager_rpcmanager",
-      "community": 7,
+      "community": 8,
       "norm_label": "rpcmanager"
     },
     {
@@ -4167,7 +4212,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L167",
       "id": "rpc_manager_rpcmanager_constructor",
-      "community": 7,
+      "community": 8,
       "norm_label": ".constructor()"
     },
     {
@@ -4176,7 +4221,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L188",
       "id": "rpc_manager_rpcmanager_getbestendpoint",
-      "community": 7,
+      "community": 8,
       "norm_label": ".getbestendpoint()"
     },
     {
@@ -4185,7 +4230,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L218",
       "id": "rpc_manager_rpcmanager_getbestclient",
-      "community": 7,
+      "community": 8,
       "norm_label": ".getbestclient()"
     },
     {
@@ -4194,7 +4239,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L227",
       "id": "rpc_manager_rpcmanager_msuntilanyendpointavailable",
-      "community": 7,
+      "community": 8,
       "norm_label": ".msuntilanyendpointavailable()"
     },
     {
@@ -4203,7 +4248,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L242",
       "id": "rpc_manager_rpcmanager_checkoutbestendpoint",
-      "community": 7,
+      "community": 8,
       "norm_label": ".checkoutbestendpoint()"
     },
     {
@@ -4212,7 +4257,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L252",
       "id": "rpc_manager_rpcmanager_markratelimited",
-      "community": 7,
+      "community": 8,
       "norm_label": ".markratelimited()"
     },
     {
@@ -4221,7 +4266,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L261",
       "id": "rpc_manager_rpcmanager_markerror",
-      "community": 7,
+      "community": 8,
       "norm_label": ".markerror()"
     },
     {
@@ -4230,7 +4275,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L270",
       "id": "rpc_manager_rpcmanager_marksuccess",
-      "community": 7,
+      "community": 8,
       "norm_label": ".marksuccess()"
     },
     {
@@ -4239,7 +4284,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L279",
       "id": "rpc_manager_rpcmanager_releaseendpoint",
-      "community": 7,
+      "community": 8,
       "norm_label": ".releaseendpoint()"
     },
     {
@@ -4248,7 +4293,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L289",
       "id": "rpc_manager_rpcmanager_probe",
-      "community": 7,
+      "community": 8,
       "norm_label": ".probe()"
     },
     {
@@ -4257,7 +4302,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L295",
       "id": "rpc_manager_rpcmanager_start",
-      "community": 7,
+      "community": 8,
       "norm_label": ".start()"
     },
     {
@@ -4266,7 +4311,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L304",
       "id": "rpc_manager_rpcmanager_stop",
-      "community": 7,
+      "community": 8,
       "norm_label": ".stop()"
     },
     {
@@ -4275,7 +4320,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L313",
       "id": "rpc_manager_rpcmanager_logranking",
-      "community": 7,
+      "community": 8,
       "norm_label": "._logranking()"
     },
     {
@@ -4284,7 +4329,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L340",
       "id": "rpc_manager_rpcmanager_selectendpoint",
-      "community": 7,
+      "community": 8,
       "norm_label": "._selectendpoint()"
     },
     {
@@ -4293,7 +4338,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L371",
       "id": "rpc_manager_rpcmanager_comparescores",
-      "community": 7,
+      "community": 8,
       "norm_label": "._comparescores()"
     },
     {
@@ -4302,7 +4347,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L381",
       "id": "rpc_manager_rpcmanager_roundrobintiebreak",
-      "community": 7,
+      "community": 8,
       "norm_label": "._roundrobintiebreak()"
     },
     {
@@ -4311,7 +4356,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L394",
       "id": "rpc_manager_rpcmanagershorturl",
-      "community": 7,
+      "community": 8,
       "norm_label": "rpcmanagershorturl()"
     },
     {
@@ -4320,7 +4365,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L454",
       "id": "rpc_manager_isratelimiterror",
-      "community": 7,
+      "community": 8,
       "norm_label": "isratelimiterror()"
     },
     {
@@ -4329,7 +4374,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L471",
       "id": "rpc_manager_isendpointcapabilityerror",
-      "community": 7,
+      "community": 8,
       "norm_label": "isendpointcapabilityerror()"
     },
     {
@@ -4338,7 +4383,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L490",
       "id": "rpc_manager_isretryableerror",
-      "community": 7,
+      "community": 8,
       "norm_label": "isretryableerror()"
     },
     {
@@ -4347,7 +4392,7 @@
       "source_file": "/home/x/t/src/utils/rpc_manager.ts",
       "source_location": "L500",
       "id": "rpc_manager_ismethodunavailableerror",
-      "community": 7,
+      "community": 8,
       "norm_label": "_ismethodunavailableerror()"
     },
     {
@@ -4356,7 +4401,7 @@
       "source_file": "/home/x/t/src/utils/validation_job.ts",
       "source_location": "L1",
       "id": "home_x_t_src_utils_validation_job_ts",
-      "community": 4,
+      "community": 7,
       "norm_label": "validation_job.ts"
     },
     {
@@ -4365,7 +4410,7 @@
       "source_file": "/home/x/t/src/utils/validation_job.ts",
       "source_location": "L35",
       "id": "validation_job_runvalidation",
-      "community": 4,
+      "community": 5,
       "norm_label": "runvalidation()"
     },
     {
@@ -4374,7 +4419,7 @@
       "source_file": "/home/x/t/src/utils/validation_job.ts",
       "source_location": "L103",
       "id": "validation_job_startvalidationjob",
-      "community": 4,
+      "community": 7,
       "norm_label": "startvalidationjob()"
     },
     {
@@ -4383,7 +4428,7 @@
       "source_file": "/home/x/t/src/utils/validation_job.ts",
       "source_location": "L138",
       "id": "validation_job_stopvalidationjob",
-      "community": 4,
+      "community": 7,
       "norm_label": "stopvalidationjob()"
     },
     {
@@ -4392,7 +4437,7 @@
       "source_file": "/home/x/t/src/state/cache_utils.ts",
       "source_location": "L1",
       "id": "home_x_t_src_state_cache_utils_ts",
-      "community": 1,
+      "community": 7,
       "norm_label": "cache_utils.ts"
     },
     {
@@ -4401,7 +4446,7 @@
       "source_file": "/home/x/t/src/state/cache_utils.ts",
       "source_location": "L11",
       "id": "cache_utils_mergestateintocache",
-      "community": 1,
+      "community": 7,
       "norm_label": "mergestateintocache()"
     },
     {
@@ -4410,7 +4455,7 @@
       "source_file": "/home/x/t/src/state/cache_utils.ts",
       "source_location": "L31",
       "id": "cache_utils_reloadcachefromregistry",
-      "community": 1,
+      "community": 7,
       "norm_label": "reloadcachefromregistry()"
     },
     {
@@ -4894,7 +4939,7 @@
       "label": "toTopicArray()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L10",
+      "source_location": "L13",
       "id": "watcher_state_ops_totopicarray",
       "community": 1,
       "norm_label": "totopicarray()"
@@ -4903,7 +4948,7 @@
       "label": "handleWatcherLogs()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L14",
+      "source_location": "L17",
       "id": "watcher_state_ops_handlewatcherlogs",
       "community": 1,
       "norm_label": "handlewatcherlogs()"
@@ -4912,7 +4957,7 @@
       "label": "updateV2State()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L73",
+      "source_location": "L77",
       "id": "watcher_state_ops_updatev2state",
       "community": 1,
       "norm_label": "updatev2state()"
@@ -4921,7 +4966,7 @@
       "label": "updateV3SwapState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L78",
+      "source_location": "L82",
       "id": "watcher_state_ops_updatev3swapstate",
       "community": 1,
       "norm_label": "updatev3swapstate()"
@@ -4930,7 +4975,7 @@
       "label": "updateV3LiquidityState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L85",
+      "source_location": "L89",
       "id": "watcher_state_ops_updatev3liquiditystate",
       "community": 1,
       "norm_label": "updatev3liquiditystate()"
@@ -4939,7 +4984,7 @@
       "label": "updateTickState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L101",
+      "source_location": "L105",
       "id": "watcher_state_ops_updatetickstate",
       "community": 1,
       "norm_label": "updatetickstate()"
@@ -4948,7 +4993,7 @@
       "label": "cloneWatcherState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L115",
+      "source_location": "L119",
       "id": "watcher_state_ops_clonewatcherstate",
       "community": 1,
       "norm_label": "clonewatcherstate()"
@@ -4957,7 +5002,7 @@
       "label": "validateWatcherStateOrThrow()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L132",
+      "source_location": "L136",
       "id": "watcher_state_ops_validatewatcherstateorthrow",
       "community": 1,
       "norm_label": "validatewatcherstateorthrow()"
@@ -4966,7 +5011,7 @@
       "label": "mergeWatcherState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L152",
+      "source_location": "L156",
       "id": "watcher_state_ops_mergewatcherstate",
       "community": 1,
       "norm_label": "mergewatcherstate()"
@@ -4975,7 +5020,7 @@
       "label": "commitWatcherState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L156",
+      "source_location": "L160",
       "id": "watcher_state_ops_commitwatcherstate",
       "community": 1,
       "norm_label": "commitwatcherstate()"
@@ -4984,7 +5029,7 @@
       "label": "persistWatcherState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L163",
+      "source_location": "L167",
       "id": "watcher_state_ops_persistwatcherstate",
       "community": 1,
       "norm_label": "persistwatcherstate()"
@@ -5011,7 +5056,7 @@
       "label": "watcherSleep()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L70",
+      "source_location": "L74",
       "id": "watcher_watchersleep",
       "community": 1,
       "norm_label": "watchersleep()"
@@ -5020,7 +5065,7 @@
       "label": "watcherCheckpointFromNextBlock()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L74",
+      "source_location": "L78",
       "id": "watcher_watchercheckpointfromnextblock",
       "community": 1,
       "norm_label": "watchercheckpointfromnextblock()"
@@ -5029,7 +5074,7 @@
       "label": "StateWatcher",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L81",
+      "source_location": "L85",
       "id": "watcher_statewatcher",
       "community": 1,
       "norm_label": "statewatcher"
@@ -5038,7 +5083,7 @@
       "label": ".constructor()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L96",
+      "source_location": "L100",
       "id": "watcher_statewatcher_constructor",
       "community": 1,
       "norm_label": ".constructor()"
@@ -5047,7 +5092,7 @@
       "label": ".start()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L113",
+      "source_location": "L117",
       "id": "watcher_statewatcher_start",
       "community": 1,
       "norm_label": ".start()"
@@ -5056,7 +5101,7 @@
       "label": ".wait()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L143",
+      "source_location": "L147",
       "id": "watcher_statewatcher_wait",
       "community": 1,
       "norm_label": ".wait()"
@@ -5065,7 +5110,7 @@
       "label": ".addPools()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L147",
+      "source_location": "L151",
       "id": "watcher_statewatcher_addpools",
       "community": 1,
       "norm_label": ".addpools()"
@@ -5074,7 +5119,7 @@
       "label": ".restart()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L163",
+      "source_location": "L167",
       "id": "watcher_statewatcher_restart",
       "community": 1,
       "norm_label": ".restart()"
@@ -5083,7 +5128,7 @@
       "label": ".stop()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L172",
+      "source_location": "L176",
       "id": "watcher_statewatcher_stop",
       "community": 1,
       "norm_label": ".stop()"
@@ -5092,7 +5137,7 @@
       "label": ".lastBlock()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L181",
+      "source_location": "L185",
       "id": "watcher_statewatcher_lastblock",
       "community": 1,
       "norm_label": ".lastblock()"
@@ -5101,7 +5146,7 @@
       "label": "._buildQuery()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L185",
+      "source_location": "L189",
       "id": "watcher_statewatcher_buildquery",
       "community": 1,
       "norm_label": "._buildquery()"
@@ -5110,7 +5155,7 @@
       "label": "._loop()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L212",
+      "source_location": "L214",
       "id": "watcher_statewatcher_loop",
       "community": 1,
       "norm_label": "._loop()"
@@ -5119,7 +5164,7 @@
       "label": "._handleLogs()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L294",
+      "source_location": "L296",
       "id": "watcher_statewatcher_handlelogs",
       "community": 1,
       "norm_label": "._handlelogs()"
@@ -5128,7 +5173,7 @@
       "label": "._enqueueEnrichment()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L310",
+      "source_location": "L312",
       "id": "watcher_statewatcher_enqueueenrichment",
       "community": 1,
       "norm_label": "._enqueueenrichment()"
@@ -5137,7 +5182,7 @@
       "label": "._refreshBalancer()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L333",
+      "source_location": "L335",
       "id": "watcher_statewatcher_refreshbalancer",
       "community": 1,
       "norm_label": "._refreshbalancer()"
@@ -5146,7 +5191,7 @@
       "label": "._refreshCurve()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L339",
+      "source_location": "L341",
       "id": "watcher_statewatcher_refreshcurve",
       "community": 1,
       "norm_label": "._refreshcurve()"
@@ -5155,7 +5200,7 @@
       "label": "._commitState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L345",
+      "source_location": "L347",
       "id": "watcher_statewatcher_commitstate",
       "community": 1,
       "norm_label": "._commitstate()"
@@ -5164,7 +5209,7 @@
       "label": "._mergeState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L349",
+      "source_location": "L351",
       "id": "watcher_statewatcher_mergestate",
       "community": 1,
       "norm_label": "._mergestate()"
@@ -5173,7 +5218,7 @@
       "label": "._persistState()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L353",
+      "source_location": "L355",
       "id": "watcher_statewatcher_persiststate",
       "community": 1,
       "norm_label": "._persiststate()"
@@ -5182,7 +5227,7 @@
       "label": "._reloadCacheFromRegistry()",
       "file_type": "code",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L357",
+      "source_location": "L359",
       "id": "watcher_statewatcher_reloadcachefromregistry",
       "community": 1,
       "norm_label": "._reloadcachefromregistry()"
@@ -5319,7 +5364,7 @@
       "source_file": "/home/x/t/src/util/pool_record.ts",
       "source_location": "L1",
       "id": "home_x_t_src_util_pool_record_ts",
-      "community": 3,
+      "community": 7,
       "norm_label": "pool_record.ts"
     },
     {
@@ -5328,7 +5373,7 @@
       "source_file": "/home/x/t/src/util/pool_record.ts",
       "source_location": "L6",
       "id": "pool_record_parsepooltokensvalue",
-      "community": 3,
+      "community": 7,
       "norm_label": "parsepooltokensvalue()"
     },
     {
@@ -5337,7 +5382,7 @@
       "source_file": "/home/x/t/src/util/pool_record.ts",
       "source_location": "L14",
       "id": "pool_record_parsepoolmetadatavalue",
-      "community": 3,
+      "community": 7,
       "norm_label": "parsepoolmetadatavalue()"
     },
     {
@@ -5346,7 +5391,7 @@
       "source_file": "/home/x/t/src/util/pool_record.ts",
       "source_location": "L19",
       "id": "pool_record_getpooltokens",
-      "community": 3,
+      "community": 7,
       "norm_label": "getpooltokens()"
     },
     {
@@ -5355,7 +5400,7 @@
       "source_file": "/home/x/t/src/util/pool_record.ts",
       "source_location": "L41",
       "id": "pool_record_getpoolmetadata",
-      "community": 3,
+      "community": 7,
       "norm_label": "getpoolmetadata()"
     },
     {
@@ -5364,7 +5409,7 @@
       "source_file": "/home/x/t/src/util/pool_record.ts",
       "source_location": "L64",
       "id": "pool_record_haszeroaddresstoken",
-      "community": 3,
+      "community": 7,
       "norm_label": "haszeroaddresstoken()"
     },
     {
@@ -5373,7 +5418,7 @@
       "source_file": "/home/x/t/src/util/bigint.ts",
       "source_location": "L1",
       "id": "home_x_t_src_util_bigint_ts",
-      "community": 3,
+      "community": 4,
       "norm_label": "bigint.ts"
     },
     {
@@ -5382,7 +5427,7 @@
       "source_file": "/home/x/t/src/util/bigint.ts",
       "source_location": "L6",
       "id": "bigint_tofinitenumber",
-      "community": 3,
+      "community": 4,
       "norm_label": "tofinitenumber()"
     },
     {
@@ -5470,7 +5515,7 @@
       "label": "createExecutionCoordinator()",
       "file_type": "code",
       "source_file": "/home/x/t/src/arb/execution_coordinator.ts",
-      "source_location": "L38",
+      "source_location": "L39",
       "id": "execution_coordinator_createexecutioncoordinator",
       "community": 6,
       "norm_label": "createexecutioncoordinator()"
@@ -5499,7 +5544,7 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L1",
       "id": "home_x_t_src_arb_search_ts",
-      "community": 12,
+      "community": 13,
       "norm_label": "search.ts"
     },
     {
@@ -5508,7 +5553,7 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L13",
       "id": "search_torouteresultlike",
-      "community": 12,
+      "community": 13,
       "norm_label": "torouteresultlike()"
     },
     {
@@ -5517,7 +5562,7 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L26",
       "id": "search_mergecandidatebatch",
-      "community": 3,
+      "community": 13,
       "norm_label": "mergecandidatebatch()"
     },
     {
@@ -5526,7 +5571,7 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L40",
       "id": "search_normalisecandidatebatch",
-      "community": 12,
+      "community": 13,
       "norm_label": "normalisecandidatebatch()"
     },
     {
@@ -5535,7 +5580,7 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L84",
       "id": "search_createarbsearcher",
-      "community": 12,
+      "community": 13,
       "norm_label": "createarbsearcher()"
     },
     {
@@ -5544,7 +5589,7 @@
       "source_file": "/home/x/t/src/arb/topology_cache.ts",
       "source_location": "L1",
       "id": "home_x_t_src_arb_topology_cache_ts",
-      "community": 5,
+      "community": 3,
       "norm_label": "topology_cache.ts"
     },
     {
@@ -5553,7 +5598,7 @@
       "source_file": "/home/x/t/src/arb/topology_cache.ts",
       "source_location": "L29",
       "id": "topology_cache_createtopologycache",
-      "community": 5,
+      "community": 3,
       "norm_label": "createtopologycache()"
     },
     {
@@ -5614,7 +5659,7 @@
       "label": "createShutdownHandler()",
       "file_type": "code",
       "source_file": "/home/x/t/src/bootstrap/lifecycle.ts",
-      "source_location": "L49",
+      "source_location": "L65",
       "id": "lifecycle_createshutdownhandler",
       "community": 16,
       "norm_label": "createshutdownhandler()"
@@ -5623,7 +5668,7 @@
       "label": "configureWatcherCallbacks()",
       "file_type": "code",
       "source_file": "/home/x/t/src/bootstrap/lifecycle.ts",
-      "source_location": "L81",
+      "source_location": "L99",
       "id": "lifecycle_configurewatchercallbacks",
       "community": 16,
       "norm_label": "configurewatchercallbacks()"
@@ -5688,6 +5733,18 @@
       "_tgt": "home_x_t_src_hypersync_client_ts",
       "source": "home_x_t_src_hypersync_client_ts",
       "target": "home_x_t_src_hypersync_paginate_ts",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/hypersync/query_policy.ts",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_src": "home_x_t_src_hypersync_query_policy_ts",
+      "_tgt": "home_x_t_src_hypersync_client_ts",
+      "source": "home_x_t_src_hypersync_client_ts",
+      "target": "home_x_t_src_hypersync_query_policy_ts",
       "confidence_score": 1.0
     },
     {
@@ -5829,16 +5886,16 @@
       "source_location": "L18",
       "weight": 1.0,
       "_src": "home_x_t_src_hypersync_paginate_ts",
-      "_tgt": "home_x_t_src_config_index_ts",
+      "_tgt": "home_x_t_src_hypersync_query_policy_ts",
       "source": "home_x_t_src_hypersync_paginate_ts",
-      "target": "home_x_t_src_config_index_ts",
+      "target": "home_x_t_src_hypersync_query_policy_ts",
       "confidence_score": 1.0
     },
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/hypersync/paginate.ts",
-      "source_location": "L29",
+      "source_location": "L26",
       "weight": 1.0,
       "_src": "home_x_t_src_hypersync_paginate_ts",
       "_tgt": "paginate_fetchalllogs",
@@ -5857,6 +5914,18 @@
       "source": "home_x_t_src_hypersync_paginate_ts",
       "target": "home_x_t_src_discovery_discover_ts",
       "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "/home/x/t/src/hypersync/paginate.ts",
+      "source_location": "L28",
+      "weight": 1.0,
+      "_src": "paginate_fetchalllogs",
+      "_tgt": "query_policy_applyhistoricalhypersyncquerypolicy",
+      "source": "paginate_fetchalllogs",
+      "target": "query_policy_applyhistoricalhypersyncquerypolicy"
     },
     {
       "relation": "calls",
@@ -5895,6 +5964,102 @@
       "target": "discover_discovercurveremovals"
     },
     {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/hypersync/query_policy.ts",
+      "source_location": "L2",
+      "weight": 1.0,
+      "_src": "home_x_t_src_hypersync_query_policy_ts",
+      "_tgt": "home_x_t_src_config_index_ts",
+      "source": "home_x_t_src_hypersync_query_policy_ts",
+      "target": "home_x_t_src_config_index_ts",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/hypersync/query_policy.ts",
+      "source_location": "L36",
+      "weight": 1.0,
+      "_src": "home_x_t_src_hypersync_query_policy_ts",
+      "_tgt": "query_policy_buildhypersynclogquery",
+      "source": "home_x_t_src_hypersync_query_policy_ts",
+      "target": "query_policy_buildhypersynclogquery",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/hypersync/query_policy.ts",
+      "source_location": "L62",
+      "weight": 1.0,
+      "_src": "home_x_t_src_hypersync_query_policy_ts",
+      "_tgt": "query_policy_applyhistoricalhypersyncquerypolicy",
+      "source": "home_x_t_src_hypersync_query_policy_ts",
+      "target": "query_policy_applyhistoricalhypersyncquerypolicy",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/discovery/discover.ts",
+      "source_location": "L17",
+      "weight": 1.0,
+      "_src": "home_x_t_src_discovery_discover_ts",
+      "_tgt": "home_x_t_src_hypersync_query_policy_ts",
+      "source": "home_x_t_src_hypersync_query_policy_ts",
+      "target": "home_x_t_src_discovery_discover_ts",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/state/watcher.ts",
+      "source_location": "L15",
+      "weight": 1.0,
+      "_src": "home_x_t_src_state_watcher_ts",
+      "_tgt": "home_x_t_src_hypersync_query_policy_ts",
+      "source": "home_x_t_src_hypersync_query_policy_ts",
+      "target": "home_x_t_src_state_watcher_ts",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "/home/x/t/src/discovery/discover.ts",
+      "source_location": "L139",
+      "weight": 1.0,
+      "_src": "discover_discoverprotocol",
+      "_tgt": "query_policy_buildhypersynclogquery",
+      "source": "query_policy_buildhypersynclogquery",
+      "target": "discover_discoverprotocol"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "/home/x/t/src/discovery/discover.ts",
+      "source_location": "L198",
+      "weight": 1.0,
+      "_src": "discover_discovercurveremovals",
+      "_tgt": "query_policy_buildhypersynclogquery",
+      "source": "query_policy_buildhypersynclogquery",
+      "target": "discover_discovercurveremovals"
+    },
+    {
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "/home/x/t/src/state/watcher.ts",
+      "source_location": "L204",
+      "weight": 1.0,
+      "_src": "watcher_statewatcher_buildquery",
+      "_tgt": "query_policy_buildhypersynclogquery",
+      "source": "query_policy_buildhypersynclogquery",
+      "target": "watcher_statewatcher_buildquery"
+    },
+    {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/config/index.ts",
@@ -5922,7 +6087,19 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/config/index.ts",
-      "source_location": "L127",
+      "source_location": "L81",
+      "weight": 1.0,
+      "_src": "home_x_t_src_config_index_ts",
+      "_tgt": "index_withenviotoken",
+      "source": "home_x_t_src_config_index_ts",
+      "target": "index_withenviotoken",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/config/index.ts",
+      "source_location": "L151",
       "weight": 1.0,
       "_src": "home_x_t_src_config_index_ts",
       "_tgt": "index_deduperpcurls",
@@ -5934,7 +6111,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L22",
+      "source_location": "L26",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "home_x_t_src_config_index_ts",
@@ -6078,7 +6255,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L26",
+      "source_location": "L30",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "home_x_t_src_config_index_ts",
@@ -6090,7 +6267,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L17",
+      "source_location": "L21",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "home_x_t_src_db_registry_ts",
@@ -6102,7 +6279,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L18",
+      "source_location": "L22",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "home_x_t_src_protocols_index_ts",
@@ -6114,7 +6291,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L19",
+      "source_location": "L23",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "home_x_t_src_reorg_detect_ts",
@@ -6126,7 +6303,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L20",
+      "source_location": "L24",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "home_x_t_src_enrichment_rpc_ts",
@@ -6138,7 +6315,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L24",
+      "source_location": "L28",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "discover_discoverycheckpointfromnextblock",
@@ -6150,7 +6327,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L31",
+      "source_location": "L35",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "discover_decodediscoverylogs",
@@ -6162,7 +6339,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L62",
+      "source_location": "L66",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "discover_enrichdiscoveredpools",
@@ -6174,7 +6351,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L83",
+      "source_location": "L87",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "discover_builddiscoveredpoolbatch",
@@ -6186,7 +6363,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L103",
+      "source_location": "L107",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "discover_discoverprotocol",
@@ -6198,7 +6375,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L198",
+      "source_location": "L187",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "discover_discovercurveremovals",
@@ -6210,7 +6387,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L262",
+      "source_location": "L247",
       "weight": 1.0,
       "_src": "home_x_t_src_discovery_discover_ts",
       "_tgt": "discover_discoverpools",
@@ -6222,7 +6399,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L162",
+      "source_location": "L151",
       "weight": 1.0,
       "_src": "discover_discoverprotocol",
       "_tgt": "discover_discoverycheckpointfromnextblock",
@@ -6234,7 +6411,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L231",
+      "source_location": "L216",
       "weight": 1.0,
       "_src": "discover_discovercurveremovals",
       "_tgt": "discover_discoverycheckpointfromnextblock",
@@ -6246,7 +6423,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L175",
+      "source_location": "L164",
       "weight": 1.0,
       "_src": "discover_discoverprotocol",
       "_tgt": "discover_decodediscoverylogs",
@@ -6270,7 +6447,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L176",
+      "source_location": "L165",
       "weight": 1.0,
       "_src": "discover_discoverprotocol",
       "_tgt": "discover_enrichdiscoveredpools",
@@ -6294,7 +6471,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L177",
+      "source_location": "L166",
       "weight": 1.0,
       "_src": "discover_discoverprotocol",
       "_tgt": "discover_builddiscoveredpoolbatch",
@@ -6306,7 +6483,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L282",
+      "source_location": "L267",
       "weight": 1.0,
       "_src": "discover_discoverpools",
       "_tgt": "discover_discoverprotocol",
@@ -6378,7 +6555,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/discovery/discover.ts",
-      "source_location": "L302",
+      "source_location": "L287",
       "weight": 1.0,
       "_src": "discover_discoverpools",
       "_tgt": "discover_discovercurveremovals",
@@ -7113,8 +7290,8 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L32",
       "weight": 1.0,
-      "_src": "search_mergecandidatebatch",
-      "_tgt": "finder_routekeyfromedges",
+      "_src": "finder_routekeyfromedges",
+      "_tgt": "search_mergecandidatebatch",
       "source": "finder_routekeyfromedges",
       "target": "search_mergecandidatebatch"
     },
@@ -8589,8 +8766,8 @@
       "source_file": "/home/x/t/src/arb/route_revalidation.ts",
       "source_location": "L47",
       "weight": 1.0,
-      "_src": "route_revalidation_createrouterevalidator",
-      "_tgt": "simulator_simulateroute",
+      "_src": "simulator_simulateroute",
+      "_tgt": "route_revalidation_createrouterevalidator",
       "source": "simulator_simulateroute",
       "target": "route_revalidation_createrouterevalidator"
     },
@@ -8613,8 +8790,8 @@
       "source_file": "/home/x/t/src/arb/route_revalidation.ts",
       "source_location": "L75",
       "weight": 1.0,
-      "_src": "route_revalidation_createrouterevalidator",
-      "_tgt": "simulator_optimizeinputamount",
+      "_src": "simulator_optimizeinputamount",
+      "_tgt": "route_revalidation_createrouterevalidator",
       "source": "simulator_optimizeinputamount",
       "target": "route_revalidation_createrouterevalidator"
     },
@@ -9465,8 +9642,8 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L164",
       "weight": 1.0,
-      "_src": "search_createarbsearcher",
-      "_tgt": "candidate_pipeline_evaluatecandidatepipeline",
+      "_src": "candidate_pipeline_evaluatecandidatepipeline",
+      "_tgt": "search_createarbsearcher",
       "source": "candidate_pipeline_evaluatecandidatepipeline",
       "target": "search_createarbsearcher"
     },
@@ -9489,8 +9666,8 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L182",
       "weight": 1.0,
-      "_src": "search_createarbsearcher",
-      "_tgt": "filter_fresh_candidates_partitionfreshcandidates",
+      "_src": "filter_fresh_candidates_partitionfreshcandidates",
+      "_tgt": "search_createarbsearcher",
       "source": "filter_fresh_candidates_partitionfreshcandidates",
       "target": "search_createarbsearcher"
     },
@@ -9522,7 +9699,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L15",
+      "source_location": "L19",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "home_x_t_src_reorg_detect_ts",
@@ -11061,6 +11238,18 @@
       "source_location": "L55",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
+      "_tgt": "send_tx_hastrackedpendingtx",
+      "source": "home_x_t_src_execution_send_tx_ts",
+      "target": "send_tx_hastrackedpendingtx",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/execution/send_tx.ts",
+      "source_location": "L64",
+      "weight": 1.0,
+      "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_polltrackedreceipt",
       "source": "home_x_t_src_execution_send_tx_ts",
       "target": "send_tx_polltrackedreceipt",
@@ -11070,7 +11259,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L92",
+      "source_location": "L101",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_pollpendingreceipts",
@@ -11082,7 +11271,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L105",
+      "source_location": "L114",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_tracksubmittedtx",
@@ -11094,7 +11283,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L130",
+      "source_location": "L139",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_dryrun",
@@ -11106,7 +11295,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L144",
+      "source_location": "L153",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_rawtxhash",
@@ -11118,7 +11307,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L148",
+      "source_location": "L157",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_submitsignedtransactionsindividually",
@@ -11130,7 +11319,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L203",
+      "source_location": "L212",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_sendtx",
@@ -11142,7 +11331,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L373",
+      "source_location": "L382",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_sendtxbundle",
@@ -11154,7 +11343,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L537",
+      "source_location": "L546",
       "weight": 1.0,
       "_src": "home_x_t_src_execution_send_tx_ts",
       "_tgt": "send_tx_logfailure",
@@ -11178,7 +11367,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L101",
+      "source_location": "L110",
       "weight": 1.0,
       "_src": "send_tx_pollpendingreceipts",
       "_tgt": "send_tx_stopreceiptpollerifidle",
@@ -11190,7 +11379,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L67",
+      "source_location": "L76",
       "weight": 1.0,
       "_src": "send_tx_polltrackedreceipt",
       "_tgt": "send_tx_cleartrackedreceipt",
@@ -11202,7 +11391,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L346",
+      "source_location": "L355",
       "weight": 1.0,
       "_src": "send_tx_sendtx",
       "_tgt": "send_tx_cleartrackedreceipt",
@@ -11214,7 +11403,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L508",
+      "source_location": "L517",
       "weight": 1.0,
       "_src": "send_tx_sendtxbundle",
       "_tgt": "send_tx_cleartrackedreceipt",
@@ -11226,7 +11415,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L60",
+      "source_location": "L69",
       "weight": 1.0,
       "_src": "send_tx_polltrackedreceipt",
       "_tgt": "send_tx_logfailure",
@@ -11238,7 +11427,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L97",
+      "source_location": "L106",
       "weight": 1.0,
       "_src": "send_tx_pollpendingreceipts",
       "_tgt": "send_tx_polltrackedreceipt",
@@ -11250,7 +11439,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L181",
+      "source_location": "L190",
       "weight": 1.0,
       "_src": "send_tx_submitsignedtransactionsindividually",
       "_tgt": "send_tx_tracksubmittedtx",
@@ -11262,7 +11451,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L292",
+      "source_location": "L301",
       "weight": 1.0,
       "_src": "send_tx_sendtx",
       "_tgt": "send_tx_tracksubmittedtx",
@@ -11274,7 +11463,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L488",
+      "source_location": "L497",
       "weight": 1.0,
       "_src": "send_tx_sendtxbundle",
       "_tgt": "send_tx_tracksubmittedtx",
@@ -11286,7 +11475,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L231",
+      "source_location": "L240",
       "weight": 1.0,
       "_src": "send_tx_sendtx",
       "_tgt": "send_tx_dryrun",
@@ -11298,7 +11487,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L403",
+      "source_location": "L412",
       "weight": 1.0,
       "_src": "send_tx_sendtxbundle",
       "_tgt": "send_tx_dryrun",
@@ -11310,7 +11499,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L466",
+      "source_location": "L475",
       "weight": 1.0,
       "_src": "send_tx_sendtxbundle",
       "_tgt": "send_tx_submitsignedtransactionsindividually",
@@ -11322,7 +11511,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/execution/send_tx.ts",
-      "source_location": "L349",
+      "source_location": "L358",
       "weight": 1.0,
       "_src": "send_tx_sendtx",
       "_tgt": "send_tx_logfailure",
@@ -11493,8 +11682,8 @@
       "source_file": "/home/x/t/src/arb/assessment.ts",
       "source_location": "L75",
       "weight": 1.0,
-      "_src": "assessment_assessrouteresult",
-      "_tgt": "compute_computeprofit",
+      "_src": "compute_computeprofit",
+      "_tgt": "assessment_assessrouteresult",
       "source": "compute_computeprofit",
       "target": "assessment_assessrouteresult"
     },
@@ -14718,7 +14907,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L209",
+      "source_location": "L213",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_invalidatepoolmetacache",
@@ -14730,7 +14919,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L213",
+      "source_location": "L217",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpoolmetacache",
@@ -14742,7 +14931,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L217",
+      "source_location": "L221",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_upsertpool",
@@ -14754,7 +14943,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L226",
+      "source_location": "L230",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_removepool",
@@ -14766,7 +14955,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L234",
+      "source_location": "L238",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_updatepoolstate",
@@ -14778,7 +14967,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L238",
+      "source_location": "L242",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpools",
@@ -14790,7 +14979,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L242",
+      "source_location": "L246",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getactivepools",
@@ -14802,7 +14991,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L246",
+      "source_location": "L250",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getactivepoolsmeta",
@@ -14814,7 +15003,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L250",
+      "source_location": "L254",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpoolmeta",
@@ -14826,7 +15015,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L254",
+      "source_location": "L258",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpool",
@@ -14838,7 +15027,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L258",
+      "source_location": "L262",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpoolcount",
@@ -14850,7 +15039,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L262",
+      "source_location": "L266",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getactivepoolcount",
@@ -14862,7 +15051,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L268",
+      "source_location": "L272",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getcheckpoint",
@@ -14874,7 +15063,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L272",
+      "source_location": "L276",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_setcheckpoint",
@@ -14886,7 +15075,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L276",
+      "source_location": "L280",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getglobalcheckpoint",
@@ -14898,7 +15087,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L282",
+      "source_location": "L286",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_setrollbackguard",
@@ -14910,7 +15099,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L286",
+      "source_location": "L290",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getrollbackguard",
@@ -14922,7 +15111,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L292",
+      "source_location": "L296",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_rollbacktoblock",
@@ -14934,7 +15123,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L300",
+      "source_location": "L304",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_batchupsertpools",
@@ -14946,7 +15135,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L314",
+      "source_location": "L318",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_batchupdatestates",
@@ -14958,7 +15147,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L322",
+      "source_location": "L326",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpoolswithstate",
@@ -14970,7 +15159,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L332",
+      "source_location": "L336",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getstalestatepools",
@@ -14982,7 +15171,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L340",
+      "source_location": "L344",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpoolcountbyprotocol",
@@ -14994,7 +15183,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L346",
+      "source_location": "L350",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_loadsnapshot",
@@ -15006,7 +15195,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L350",
+      "source_location": "L354",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_savesnapshot",
@@ -15018,7 +15207,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L364",
+      "source_location": "L368",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_upserttokenmeta",
@@ -15030,7 +15219,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L374",
+      "source_location": "L378",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_gettokenmeta",
@@ -15042,7 +15231,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L384",
+      "source_location": "L388",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_gettokendecimals",
@@ -15054,7 +15243,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L393",
+      "source_location": "L397",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_batchupserttokenmeta",
@@ -15066,7 +15255,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L407",
+      "source_location": "L411",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_upsertpoolfee",
@@ -15078,7 +15267,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L417",
+      "source_location": "L421",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getpoolfee",
@@ -15090,7 +15279,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L430",
+      "source_location": "L434",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_disablepool",
@@ -15102,7 +15291,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L446",
+      "source_location": "L450",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_enablepool",
@@ -15114,7 +15303,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L459",
+      "source_location": "L463",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getdisabledpools",
@@ -15126,7 +15315,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L474",
+      "source_location": "L478",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_recordliquidityevent",
@@ -15138,7 +15327,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L492",
+      "source_location": "L496",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_hasrecentliquidityevent",
@@ -15150,7 +15339,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L509",
+      "source_location": "L513",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_detectliquiditychange",
@@ -15162,7 +15351,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L535",
+      "source_location": "L539",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_validatepoolmetadata",
@@ -15174,7 +15363,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L544",
+      "source_location": "L548",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_validateallpools",
@@ -15186,7 +15375,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L571",
+      "source_location": "L575",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_logarbresult",
@@ -15198,7 +15387,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L585",
+      "source_location": "L589",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getarbhistory",
@@ -15210,7 +15399,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L599",
+      "source_location": "L603",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_getarbstats",
@@ -15222,7 +15411,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L605",
+      "source_location": "L609",
       "weight": 1.0,
       "_src": "registry_registryservice",
       "_tgt": "registry_registryservice_close",
@@ -15294,7 +15483,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L294",
+      "source_location": "L298",
       "weight": 1.0,
       "_src": "registry_registryservice_rollbacktoblock",
       "_tgt": "registry_registryservice_invalidatepoolmetacache",
@@ -15318,7 +15507,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L243",
+      "source_location": "L247",
       "weight": 1.0,
       "_src": "registry_registryservice_getactivepools",
       "_tgt": "registry_registryservice_getpools",
@@ -15330,7 +15519,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/db/registry.ts",
-      "source_location": "L460",
+      "source_location": "L464",
       "weight": 1.0,
       "_src": "registry_registryservice_getdisabledpools",
       "_tgt": "registry_registryservice_getpools",
@@ -15717,8 +15906,8 @@
       "source_file": "/home/x/t/src/arb/search.ts",
       "source_location": "L33",
       "weight": 1.0,
-      "_src": "search_mergecandidatebatch",
-      "_tgt": "sqlite_compatstatement_get",
+      "_src": "sqlite_compatstatement_get",
+      "_tgt": "search_mergecandidatebatch",
       "source": "sqlite_compatstatement_get",
       "target": "search_mergecandidatebatch"
     },
@@ -16841,8 +17030,20 @@
     {
       "relation": "imports_from",
       "confidence": "EXTRACTED",
+      "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
+      "source_location": "L9",
+      "weight": 1.0,
+      "_src": "home_x_t_src_state_watcher_state_ops_ts",
+      "_tgt": "home_x_t_src_utils_logger_ts",
+      "source": "home_x_t_src_utils_logger_ts",
+      "target": "home_x_t_src_state_watcher_state_ops_ts",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L27",
+      "source_location": "L31",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "home_x_t_src_utils_logger_ts",
@@ -17934,7 +18135,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L16",
+      "source_location": "L20",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "home_x_t_src_state_poll_balancer_ts",
@@ -18162,7 +18363,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L17",
+      "source_location": "L21",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "home_x_t_src_state_poll_curve_ts",
@@ -18750,7 +18951,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L10",
+      "source_location": "L13",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_totopicarray",
@@ -18762,7 +18963,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L14",
+      "source_location": "L17",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_handlewatcherlogs",
@@ -18774,7 +18975,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L73",
+      "source_location": "L77",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_updatev2state",
@@ -18786,7 +18987,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L78",
+      "source_location": "L82",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_updatev3swapstate",
@@ -18798,7 +18999,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L85",
+      "source_location": "L89",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_updatev3liquiditystate",
@@ -18810,7 +19011,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L101",
+      "source_location": "L105",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_updatetickstate",
@@ -18822,7 +19023,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L115",
+      "source_location": "L119",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_clonewatcherstate",
@@ -18834,7 +19035,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L132",
+      "source_location": "L136",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_validatewatcherstateorthrow",
@@ -18846,7 +19047,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L152",
+      "source_location": "L156",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_mergewatcherstate",
@@ -18858,7 +19059,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L156",
+      "source_location": "L160",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_commitwatcherstate",
@@ -18870,7 +19071,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L163",
+      "source_location": "L167",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_state_ops_ts",
       "_tgt": "watcher_state_ops_persistwatcherstate",
@@ -18894,7 +19095,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L18",
+      "source_location": "L22",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "home_x_t_src_state_watcher_state_ops_ts",
@@ -18906,7 +19107,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L47",
+      "source_location": "L50",
       "weight": 1.0,
       "_src": "watcher_state_ops_handlewatcherlogs",
       "_tgt": "watcher_state_ops_totopicarray",
@@ -18918,7 +19119,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L44",
+      "source_location": "L47",
       "weight": 1.0,
       "_src": "watcher_state_ops_handlewatcherlogs",
       "_tgt": "watcher_state_ops_clonewatcherstate",
@@ -18942,7 +19143,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L97",
+      "source_location": "L101",
       "weight": 1.0,
       "_src": "watcher_state_ops_updatev3liquiditystate",
       "_tgt": "watcher_state_ops_updatetickstate",
@@ -18954,7 +19155,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher_state_ops.ts",
-      "source_location": "L157",
+      "source_location": "L161",
       "weight": 1.0,
       "_src": "watcher_state_ops_commitwatcherstate",
       "_tgt": "watcher_state_ops_validatewatcherstateorthrow",
@@ -19014,7 +19215,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L70",
+      "source_location": "L74",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "watcher_watchersleep",
@@ -19026,7 +19227,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L74",
+      "source_location": "L78",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "watcher_watchercheckpointfromnextblock",
@@ -19038,7 +19239,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L81",
+      "source_location": "L85",
       "weight": 1.0,
       "_src": "home_x_t_src_state_watcher_ts",
       "_tgt": "watcher_statewatcher",
@@ -19050,7 +19251,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L284",
+      "source_location": "L286",
       "weight": 1.0,
       "_src": "watcher_statewatcher_loop",
       "_tgt": "watcher_watchersleep",
@@ -19062,7 +19263,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L267",
+      "source_location": "L269",
       "weight": 1.0,
       "_src": "watcher_statewatcher_loop",
       "_tgt": "watcher_watchercheckpointfromnextblock",
@@ -19074,7 +19275,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L96",
+      "source_location": "L100",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_constructor",
@@ -19086,7 +19287,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L113",
+      "source_location": "L117",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_start",
@@ -19098,7 +19299,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L143",
+      "source_location": "L147",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_wait",
@@ -19110,7 +19311,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L147",
+      "source_location": "L151",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_addpools",
@@ -19122,7 +19323,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L163",
+      "source_location": "L167",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_restart",
@@ -19134,7 +19335,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L172",
+      "source_location": "L176",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_stop",
@@ -19146,7 +19347,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L181",
+      "source_location": "L185",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_lastblock",
@@ -19158,7 +19359,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L185",
+      "source_location": "L189",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_buildquery",
@@ -19170,7 +19371,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L212",
+      "source_location": "L214",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_loop",
@@ -19182,7 +19383,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L294",
+      "source_location": "L296",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_handlelogs",
@@ -19194,7 +19395,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L310",
+      "source_location": "L312",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_enqueueenrichment",
@@ -19206,7 +19407,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L333",
+      "source_location": "L335",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_refreshbalancer",
@@ -19218,7 +19419,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L339",
+      "source_location": "L341",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_refreshcurve",
@@ -19230,7 +19431,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L345",
+      "source_location": "L347",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_commitstate",
@@ -19242,7 +19443,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L349",
+      "source_location": "L351",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_mergestate",
@@ -19254,7 +19455,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L353",
+      "source_location": "L355",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_persiststate",
@@ -19266,7 +19467,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L357",
+      "source_location": "L359",
       "weight": 1.0,
       "_src": "watcher_statewatcher",
       "_tgt": "watcher_statewatcher_reloadcachefromregistry",
@@ -19278,7 +19479,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L140",
+      "source_location": "L144",
       "weight": 1.0,
       "_src": "watcher_statewatcher_start",
       "_tgt": "watcher_statewatcher_loop",
@@ -19290,7 +19491,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L165",
+      "source_location": "L169",
       "weight": 1.0,
       "_src": "watcher_statewatcher_restart",
       "_tgt": "watcher_statewatcher_stop",
@@ -19302,7 +19503,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L169",
+      "source_location": "L173",
       "weight": 1.0,
       "_src": "watcher_statewatcher_restart",
       "_tgt": "watcher_statewatcher_loop",
@@ -19314,7 +19515,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L227",
+      "source_location": "L229",
       "weight": 1.0,
       "_src": "watcher_statewatcher_loop",
       "_tgt": "watcher_statewatcher_buildquery",
@@ -19326,7 +19527,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L241",
+      "source_location": "L243",
       "weight": 1.0,
       "_src": "watcher_statewatcher_loop",
       "_tgt": "watcher_statewatcher_reloadcachefromregistry",
@@ -19338,7 +19539,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L258",
+      "source_location": "L260",
       "weight": 1.0,
       "_src": "watcher_statewatcher_loop",
       "_tgt": "watcher_statewatcher_handlelogs",
@@ -19350,7 +19551,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L335",
+      "source_location": "L337",
       "weight": 1.0,
       "_src": "watcher_statewatcher_refreshbalancer",
       "_tgt": "watcher_statewatcher_mergestate",
@@ -19362,7 +19563,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L336",
+      "source_location": "L338",
       "weight": 1.0,
       "_src": "watcher_statewatcher_refreshbalancer",
       "_tgt": "watcher_statewatcher_commitstate",
@@ -19374,7 +19575,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L341",
+      "source_location": "L343",
       "weight": 1.0,
       "_src": "watcher_statewatcher_refreshcurve",
       "_tgt": "watcher_statewatcher_mergestate",
@@ -19386,7 +19587,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/state/watcher.ts",
-      "source_location": "L342",
+      "source_location": "L344",
       "weight": 1.0,
       "_src": "watcher_statewatcher_refreshcurve",
       "_tgt": "watcher_statewatcher_commitstate",
@@ -19809,8 +20010,8 @@
       "source_file": "/home/x/t/src/arb/route_revalidation.ts",
       "source_location": "L52",
       "weight": 1.0,
-      "_src": "route_revalidation_createrouterevalidator",
-      "_tgt": "assessment_assessrouteresult",
+      "_src": "assessment_assessrouteresult",
+      "_tgt": "route_revalidation_createrouterevalidator",
       "source": "assessment_assessrouteresult",
       "target": "route_revalidation_createrouterevalidator"
     },
@@ -19821,8 +20022,8 @@
       "source_file": "/home/x/t/src/arb/route_revalidation.ts",
       "source_location": "L78",
       "weight": 1.0,
-      "_src": "route_revalidation_createrouterevalidator",
-      "_tgt": "assessment_getassessmentoptimizationoptions",
+      "_src": "assessment_getassessmentoptimizationoptions",
+      "_tgt": "route_revalidation_createrouterevalidator",
       "source": "assessment_getassessmentoptimizationoptions",
       "target": "route_revalidation_createrouterevalidator"
     },
@@ -19842,7 +20043,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/arb/execution_coordinator.ts",
-      "source_location": "L38",
+      "source_location": "L39",
       "weight": 1.0,
       "_src": "home_x_t_src_arb_execution_coordinator_ts",
       "_tgt": "execution_coordinator_createexecutioncoordinator",
@@ -19962,7 +20163,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/bootstrap/lifecycle.ts",
-      "source_location": "L49",
+      "source_location": "L65",
       "weight": 1.0,
       "_src": "home_x_t_src_bootstrap_lifecycle_ts",
       "_tgt": "lifecycle_createshutdownhandler",
@@ -19974,7 +20175,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "/home/x/t/src/bootstrap/lifecycle.ts",
-      "source_location": "L81",
+      "source_location": "L99",
       "weight": 1.0,
       "_src": "home_x_t_src_bootstrap_lifecycle_ts",
       "_tgt": "lifecycle_configurewatchercallbacks",

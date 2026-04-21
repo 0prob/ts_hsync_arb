@@ -210,6 +210,10 @@ export class RegistryService {
     this._metaCache.invalidate();
   }
 
+  invalidatePoolMetaCache() {
+    this._invalidatePoolMetaCache();
+  }
+
   _getPoolMetaCache() {
     return this._metaCache.getAll();
   }

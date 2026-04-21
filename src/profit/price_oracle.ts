@@ -298,7 +298,7 @@ export class PriceOracle {
     if (!pairQuotes.has(baseKey)) pairQuotes.set(baseKey, new Map());
     const quotes = pairQuotes.get(baseKey)!;
     const existing = quotes.get(quoteKey) ?? 0n;
-    if (scaledRate > existing) {
+    if (existing === 0n || scaledRate < existing) {
       quotes.set(quoteKey, scaledRate);
     }
   }

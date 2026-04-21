@@ -12,8 +12,12 @@
  */
 
 import { encodeEventTopics, parseAbiItem } from "viem";
-import { client, Decoder, LogField, BlockField, JoinMode } from "../hypersync/client.ts";
+import { client, Decoder, LogField } from "../hypersync/client.ts";
 import { fetchAllLogs } from "../hypersync/paginate.ts";
+import {
+  buildHyperSyncLogQuery,
+  DEFAULT_HYPERSYNC_LOG_FIELDS,
+} from "../hypersync/query_policy.ts";
 import { RegistryService } from "../db/registry.ts";
 import { PROTOCOLS, CURVE_POOL_REMOVED } from "../protocols/index.ts";
 import { detectReorg } from "../reorg/detect.ts";
@@ -132,7 +136,7 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
   const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
   const topic0 = topics[0];
 
-  const query = {
+  const query = buildHyperSyncLogQuery({
     fromBlock,
     logs: [
       {
@@ -140,23 +144,8 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
         topics: [[topic0]],
       },
     ],
-    joinMode: JoinMode.JoinNothing,
-    fieldSelection: {
-      log: [
-        LogField.Address,
-        LogField.Data,
-        LogField.Topic0,
-        LogField.Topic1,
-        LogField.Topic2,
-        LogField.Topic3,
-        LogField.BlockNumber,
-        LogField.TransactionHash,
-        LogField.LogIndex,
-        LogField.TransactionIndex,
-      ],
-      block: [BlockField.Number, BlockField.Timestamp],
-    },
-  };
+    logFields: DEFAULT_HYPERSYNC_LOG_FIELDS,
+  });
 
   const { logs, rollbackGuard, nextBlock } = await fetchAllLogs(query);
   const checkpointBlock = discoveryCheckpointFromNextBlock(nextBlock, fromBlock);
@@ -206,7 +195,7 @@ async function discoverCurveRemovals(registry: any) {
   const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
   const topic0 = topics[0];
 
-  const query = {
+  const query = buildHyperSyncLogQuery({
     fromBlock,
     logs: [
       {
@@ -214,18 +203,14 @@ async function discoverCurveRemovals(registry: any) {
         topics: [[topic0]],
       },
     ],
-    joinMode: JoinMode.JoinNothing,
-    fieldSelection: {
-      log: [
-        LogField.Address,
-        LogField.Topic0,
-        LogField.Topic1,
-        LogField.BlockNumber,
-        LogField.TransactionHash,
-      ],
-      block: [BlockField.Number, BlockField.Timestamp],
-    },
-  };
+    logFields: [
+      LogField.Address,
+      LogField.Topic0,
+      LogField.Topic1,
+      LogField.BlockNumber,
+      LogField.TransactionHash,
+    ],
+  });
 
   const { logs, rollbackGuard, nextBlock } = await fetchAllLogs(query);
   const checkpointBlock = discoveryCheckpointFromNextBlock(nextBlock, fromBlock);

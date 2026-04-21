@@ -35,7 +35,14 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
     });
 
     const feeSnapshot = await deps.getCurrentFeeSnapshot();
-    const gasPriceWei = feeSnapshot?.maxFee ?? 50n * 10n ** 9n;
+    if (!feeSnapshot?.maxFee) {
+      deps.log("[fast-revalidate] Skipping because the fee snapshot is stale or unavailable", "warn", {
+        event: "fast_revalidate_skip_stale_gas",
+        affectedRoutes: affected.length,
+      });
+      return;
+    }
+    const gasPriceWei = feeSnapshot.maxFee;
 
     const profitable: ExecutableCandidate[] = [];
     let quickRejected = 0;

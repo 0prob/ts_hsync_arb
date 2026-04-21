@@ -14,11 +14,8 @@
  *     so sparse backfills stay within HyperSync's query-time budget.
  */
 
-import { client, JoinMode } from "./client.ts";
-import {
-  HYPERSYNC_BATCH_SIZE,
-  HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
-} from "../config/index.ts";
+import { client } from "./client.ts";
+import { applyHistoricalHyperSyncQueryPolicy } from "./query_policy.ts";
 
 /**
  * Fetch all logs matching `query` from `fromBlock` to the current archive tip.
@@ -28,12 +25,7 @@ import {
  */
 export async function fetchAllLogs(query: any) {
   const allLogs = [];
-  let currentQuery = {
-    ...query,
-    joinMode: query.joinMode ?? JoinMode.JoinNothing,
-    maxNumLogs: query.maxNumLogs ?? HYPERSYNC_BATCH_SIZE,
-    maxNumBlocks: query.maxNumBlocks ?? HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
-  };
+  let currentQuery = applyHistoricalHyperSyncQueryPolicy(query);
   let archiveHeight = null;
   let rollbackGuard = null;
   let lastNextBlock = null;

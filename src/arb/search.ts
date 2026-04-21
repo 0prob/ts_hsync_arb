@@ -155,7 +155,13 @@ export function createArbSearcher(deps: SearchDeps) {
     if (candidates.length === 0) return [];
 
     const feeSnapshot = await deps.getCurrentFeeSnapshot();
-    const gasPriceWei = feeSnapshot?.maxFee ?? 50n * 10n ** 9n;
+    if (!feeSnapshot?.maxFee) {
+      deps.log("Skipping arb search because the fee snapshot is stale or unavailable", "warn", {
+        event: "scan_skip_stale_gas",
+      });
+      return [];
+    }
+    const gasPriceWei = feeSnapshot.maxFee;
 
     const {
       shortlisted: topCandidates,

@@ -21,12 +21,10 @@
  *   --interval <sec>  Override poll/heartbeat interval (legacy; sets heartbeat)
  */
 
-import { toFiniteNumber as normaliseLogWeight } from "./src/util/bigint.ts";
 import { RegistryService } from "./src/db/registry.ts";
 import { discoverPools } from "./src/discovery/discover.ts";
 import { buildGraph, buildHubGraph, HUB_4_TOKENS, POLYGON_HUB_TOKENS, serializeTopology } from "./src/routing/graph.ts";
 import { enumerateCycles, enumerateCyclesDual } from "./src/routing/enumerate_cycles.ts";
-import { RouteCache } from "./src/routing/route_cache.ts";
 import { evaluateCandidatePipeline } from "./src/routing/candidate_pipeline.ts";
 import { routeKeyFromEdges } from "./src/routing/finder.ts";
 import { partitionFreshCandidates } from "./src/routing/filter_fresh_candidates.ts";
@@ -59,23 +57,19 @@ import {
 import type { BotState } from "./src/tui/types.ts";
 import { getPoolMetadata, getPoolTokens } from "./src/util/pool_record.ts";
 import {
-  assessRouteResult,
-  compareAssessmentProfit,
-  getAssessmentOptimizationOptions,
   minProfitInTokenUnits,
   type ArbPathLike,
   type AssessmentLike,
   type CandidateEntry,
-  type ExecutableCandidate,
   type RouteResultLike,
 } from "./src/arb/assessment.ts";
-import { createExecutionCoordinator } from "./src/arb/execution_coordinator.ts";
-import { createRouteRevalidator } from "./src/arb/route_revalidation.ts";
-import { createArbSearcher, toRouteResultLike } from "./src/arb/search.ts";
-import { createTopologyCache, type SerializedPathLike } from "./src/arb/topology_cache.ts";
+import { createOpportunityEngine } from "./src/arb/opportunity_engine.ts";
 import { createWarmupManager } from "./src/bootstrap/warmup.ts";
 import { createDiscoveryCoordinator } from "./src/bootstrap/discovery.ts";
 import { configureWatcherCallbacks, createArbScheduler, createShutdownHandler } from "./src/bootstrap/lifecycle.ts";
+import { createRuntimeContext } from "./src/runtime/runtime_context.ts";
+import { createTopologyService } from "./src/runtime/topology_service.ts";
+import { createRegistryRepositories } from "./src/db/repositories.ts";
 import {
   DB_PATH,
   POLYGON_RPC,
@@ -107,20 +101,6 @@ type PoolRecord = {
   metadata?: unknown;
   status?: string;
   state?: { data?: Record<string, unknown> };
-};
-type WarmupStats = {
-  scheduled: number;
-  fetched: number;
-  normalized: number;
-  disabled: number;
-  failed: number;
-  protocols: Record<string, {
-    scheduled: number;
-    fetched: number;
-    normalized: number;
-    disabled: number;
-    failed: number;
-  }>;
 };
 // ─── CLI Arguments ─────────────────────────────────────────────
 
@@ -158,27 +138,13 @@ const HEARTBEAT_INTERVAL_MS = Math.max(POLL_INTERVAL_SEC * 1000, 30_000);
 
 // ─── Globals ───────────────────────────────────────────────────
 
-const stateCache  = new Map<string, Record<string, any>>();
-const routeCache  = new RouteCache(1_000); // top-1000 profitable routes
 let registry: RegistryService | null = null;
-let watcher: StateWatcher | null = null;
-let priceOracle: PriceOracle | null = null;
-let nonceManager: NonceManager | null = null;
 let stopTui: (() => void) | null = null;
-let running       = true;
-let cachedCycles: ArbPathLike[] = [];
-// Two routing graphs: hubGraph (HUB_4_TOKENS only) + fullGraph (all pools).
-// Both are rebuilt when new pools are discovered (topology change).
-let hubGraph: any = null;
-let fullGraph: any = null;
-let topologyVersion = 0;
-let topologyDirty = true;
-
-let passCount          = 0;
-let consecutiveErrors  = 0;
 
 // Shared live state — the TUI polls this; the hot path never calls into tui/
-const botState: BotState = {
+const runtime = createRuntimeContext({
+  routeCacheSize: 1_000,
+  initialBotState: {
   status: 'idle',
   passCount: 0,
   consecutiveErrors: 0,
@@ -187,13 +153,10 @@ const botState: BotState = {
   lastArbMs: 0,
   opportunities: [],
   logs: [],
-};
+  },
+});
 
-// Discovery
-let lastCycleRefreshMs = 0;
-
-// Cycle refresh reentrancy guard
-let cycleRefreshRunning = false;
+const { stateCache, routeCache, botState } = runtime;
 
 let _arbActivityWindow: Array<{ ts: number; changedPools: number }> = [];
 
@@ -201,6 +164,9 @@ let _arbActivityWindow: Array<{ ts: number; changedPools: number }> = [];
 
 const runnerLogger: any = logger.child({ component: "runner" });
 const rootLogger: any = logger;
+let repositories: ReturnType<typeof createRegistryRepositories> | null = null;
+let topologyService: ReturnType<typeof createTopologyService> | null = null;
+let opportunityEngine: ReturnType<typeof createOpportunityEngine> | null = null;
 
 function summarizeLogForTui(msg: string, payload: LogMeta | undefined) {
   const event = typeof payload?.event === "string" ? payload.event : null;
@@ -235,10 +201,6 @@ function log(msg: string, level: LogLevel = "info", meta: LogMetaInput = undefin
 const runnerSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MIN_PROBE_AMOUNT = 1_000n;
 
-function poolTokenList(pool: PoolRecord) {
-  return getPoolTokens(pool);
-}
-
 function uniqueSortedBigInts(values: Array<string | number | bigint>) {
   return [...new Set(values.map(String))]
     .map((value) => BigInt(value))
@@ -246,7 +208,7 @@ function uniqueSortedBigInts(values: Array<string | number | bigint>) {
 }
 
 function getProbeAmountsForToken(tokenAddress: string) {
-  let decimals = registry?.getTokenMeta?.(tokenAddress)?.decimals;
+  let decimals = repositories?.tokens.getMeta(tokenAddress)?.decimals;
   if (decimals == null) decimals = 18;
 
   const rawUnit = 10n ** BigInt(Math.max(0, Math.min(Number(decimals), 18)));
@@ -260,9 +222,6 @@ function getProbeAmountsForToken(tokenAddress: string) {
 
   return probes.filter((amount) => amount >= MIN_PROBE_AMOUNT);
 }
-
-const topologyCache = createTopologyCache(MAX_TOTAL_PATHS);
-
 function roiForCandidate(result: RouteResultLike | null | undefined) {
   if (!result?.amountIn || result.amountIn <= 0n) return -Infinity;
   return Number((result.profit * 1_000_000n) / result.amountIn);
@@ -284,7 +243,7 @@ async function getCurrentFeeSnapshot() {
 }
 
 function getFreshTokenToMaticRate(tokenAddress: string) {
-  return priceOracle?.getFreshRate?.(tokenAddress, MAX_PRICE_AGE_MS) ?? 0n;
+  return runtime.getPriceOracle()?.getFreshRate?.(tokenAddress, MAX_PRICE_AGE_MS) ?? 0n;
 }
 
 function pruneArbActivityWindow(now = Date.now()) {
@@ -305,64 +264,6 @@ function getAdaptiveDebounceMs() {
   return changedPools > ARB_BURST_POOL_THRESHOLD ? FAST_ARB_DEBOUNCE_MS : BASE_ARB_DEBOUNCE_MS;
 }
 
-function edgeLiquidityWmatic(edge: any, getRateWei: ((token: string) => bigint) | null) {
-  if (!getRateWei) return 0n;
-  const state = edge?.stateRef;
-  if (!state?.reserve0 || !state?.reserve1) return 0n;
-  const token0 = edge.zeroForOne ? edge.tokenIn : edge.tokenOut;
-  const token1 = edge.zeroForOne ? edge.tokenOut : edge.tokenIn;
-  const token0Rate = getRateWei(token0);
-  const token1Rate = getRateWei(token1);
-  if (token0Rate <= 0n || token1Rate <= 0n) return 0n;
-  return state.reserve0 * token0Rate + state.reserve1 * token1Rate;
-}
-
-function selectHighLiquidityHubTokens(graph: any, getRateWei: ((token: string) => bigint) | null) {
-  const ranked = [...POLYGON_HUB_TOKENS]
-    .filter((token) => graph?.hasToken?.(token))
-    .map((token) => {
-      const outgoing = graph.getEdges(token) as any[];
-      const seenPools = new Set<string>();
-      let liquidityScore = 0n;
-
-      for (const edge of outgoing) {
-        if (seenPools.has(edge.poolAddress)) continue;
-        seenPools.add(edge.poolAddress);
-        liquidityScore += edgeLiquidityWmatic(edge, getRateWei);
-      }
-
-      return {
-        token,
-        liquidityScore,
-        degree: seenPools.size,
-      };
-    })
-    .filter((entry) => entry.degree > 0)
-    .sort((a, b) => {
-      if (a.liquidityScore === b.liquidityScore) return b.degree - a.degree;
-      return a.liquidityScore > b.liquidityScore ? -1 : 1;
-    });
-
-  return ranked.slice(0, SELECTIVE_4HOP_TOKEN_LIMIT).map((entry) => entry.token);
-}
-
-function mergeArbPaths(...groups: ArbPathLike[][]) {
-  const merged: ArbPathLike[] = [];
-  const seen = new Set<string>();
-
-  for (const group of groups) {
-    for (const path of group) {
-      const key = routeKeyFromEdges(path.startToken, path.edges as any);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      merged.push(path);
-    }
-  }
-
-  merged.sort((a, b) => normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight));
-  return merged.length > MAX_TOTAL_PATHS ? merged.slice(0, MAX_TOTAL_PATHS) : merged;
-}
-
 function deriveOnChainMinProfit(assessment: AssessmentLike | null | undefined, tokenToMaticRate: bigint) {
   const minProfitTokens = minProfitInTokenUnits(tokenToMaticRate, MIN_PROFIT_WEI);
   const modeledNet = assessment && assessment.netProfitAfterGas > 0n
@@ -379,70 +280,6 @@ function getRouteFreshness(path: ArbPathLike) {
   });
 }
 
-const executionCoordinator = createExecutionCoordinator({
-  liveMode: LIVE_MODE,
-  privateKey: PRIVATE_KEY,
-  executorAddress: EXECUTOR_ADDRESS,
-  rpcUrl: POLYGON_RPC,
-  getNonceManager: () => nonceManager,
-  maxExecutionBatch: MAX_EXECUTION_BATCH,
-  executionRouteQuarantineMs: EXECUTION_ROUTE_QUARANTINE_MS,
-  minProfitWei: MIN_PROFIT_WEI,
-  log,
-  fmtPath,
-  getRouteFreshness,
-  getCurrentFeeSnapshot,
-  getFreshTokenToMaticRate,
-  deriveOnChainMinProfit,
-  buildArbTx,
-  sendTx,
-  sendTxBundle,
-  hasPendingExecution: hasTrackedPendingTx,
-  scalePriorityFeeByProfitMargin,
-  onPreparedCandidateError: (candidate, reason, quarantine) => {
-    log(`[runner] Quarantining route after execution preparation failure: ${reason}`, "warn", {
-      event: "execute_quarantine_add",
-      route: fmtPath(candidate.path),
-      hopCount: candidate.path.hopCount,
-      failures: quarantine.failures,
-      quarantineMs: Math.max(0, quarantine.until - Date.now()),
-      reason,
-    });
-  },
-});
-
-const {
-  clearExecutionRouteQuarantine,
-  executeBatchIfIdle,
-  filterQuarantinedCandidates,
-} = executionCoordinator;
-
-const revalidateCachedRoutes = createRouteRevalidator({
-  getAffectedRoutes: (changedPools) =>
-    (routeCache.getByPools(changedPools) as Array<{ path: any; result: any }>).map(({ path, result }) => ({
-      path: path as ArbPathLike,
-      result: toRouteResultLike(result),
-    })),
-  stateCache,
-  testAmountWei: TEST_AMOUNT_WEI,
-  minProfitWei: MIN_PROFIT_WEI,
-  maxExecutionBatch: MAX_EXECUTION_BATCH,
-  log,
-  getCurrentFeeSnapshot,
-  getFreshTokenToMaticRate,
-  getRouteFreshness,
-  simulateRoute: (path, amountIn, cache) =>
-    simulateRoute(path, amountIn, cache) as unknown as RouteResultLike,
-  optimizeInputAmount: (path, cache, options) =>
-    (optimizeInputAmount(path, cache, options) as unknown as RouteResultLike | null),
-  filterQuarantinedCandidates,
-  executeBatchIfIdle,
-});
-
-async function evaluateCandidatesMultiProbe(paths: ArbPathLike[]) {
-  return [];
-}
-
 function formatDuration(ms: number) {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
@@ -450,7 +287,7 @@ function formatDuration(ms: number) {
 }
 
 function fmtSym(addr: string) {
-  return registry?.getTokenMeta?.(addr)?.symbol ?? addr.slice(2, 8).toUpperCase();
+  return repositories?.tokens.getMeta(addr)?.symbol ?? addr.slice(2, 8).toUpperCase();
 }
 
 function fmtPath(path: ArbPathLike) {
@@ -460,7 +297,7 @@ function fmtPath(path: ArbPathLike) {
 }
 
 function fmtProfit(netWei: bigint, tokenAddr: string) {
-  const meta = registry?.getTokenMeta?.(tokenAddr);
+  const meta = repositories?.tokens.getMeta(tokenAddr);
   const dec  = meta?.decimals ?? 18;
   const sym  = meta?.symbol   ?? tokenAddr.slice(2, 8).toUpperCase();
   return `${(Number(netWei) / 10 ** dec).toFixed(6)} ${sym}`;
@@ -484,53 +321,6 @@ function partitionChangedPools(changedPools: Set<string>) {
   }
 
   return { valid, invalid };
-}
-
-function getRoutablePools(pools: PoolRecord[]) {
-  return pools.filter((pool: PoolRecord) => {
-    const addr = pool.pool_address.toLowerCase();
-    return validatePoolState(stateCache.get(addr)).valid;
-  });
-}
-
-function poolTouchesHubTokens(pool: PoolRecord, hubTokens: Set<string> = HUB_4_TOKENS) {
-  const tokens = poolTokenList(pool);
-  if (!tokens || tokens.length < 2) return false;
-  return tokens.slice(0, 2).some((token) => hubTokens.has(token));
-}
-
-function admitPoolsToGraphs(poolAddresses: Set<string>) {
-  if (!fullGraph || !hubGraph || !poolAddresses || poolAddresses.size === 0) return 0;
-
-  let admitted = 0;
-  for (const addr of poolAddresses) {
-    if (fullGraph._edgesByPool.has(addr)) continue;
-
-    const pool = registry?.getPoolMeta(addr);
-    if (!pool || pool.status !== "active") continue;
-
-    fullGraph.addPool(pool, stateCache);
-    if (fullGraph._edgesByPool.has(addr)) {
-      admitted++;
-      if (poolTouchesHubTokens(pool)) {
-        hubGraph.addPool(pool, stateCache);
-      }
-    }
-  }
-
-  return admitted;
-}
-
-function removePoolsFromGraphs(poolAddresses: Set<string>) {
-  if (!fullGraph || !hubGraph || !poolAddresses || poolAddresses.size === 0) return 0;
-
-  let removed = 0;
-  for (const addr of poolAddresses) {
-    removed += fullGraph.removePool(addr);
-    hubGraph.removePool(addr);
-  }
-
-  return removed;
 }
 
 const warmupManager = createWarmupManager({
@@ -565,208 +355,145 @@ const discoveryCoordinator = createDiscoveryCoordinator({
 });
 const maybeRunDiscovery = discoveryCoordinator.maybeRunDiscovery;
 const { scheduleArb, cancelScheduledArb } = createArbScheduler({
-  isRunning: () => running,
+  isRunning: () => runtime.isRunning(),
   recordArbActivity,
   getAdaptiveDebounceMs,
   runPass: () => runPass(),
 });
 
-// ─── Cycle enumeration ────────────────────────────────────────
+topologyService = createTopologyService({
+  maxTotalPaths: MAX_TOTAL_PATHS,
+  polygonHubTokens: POLYGON_HUB_TOKENS,
+  hub4Tokens: HUB_4_TOKENS,
+  workerCount: WORKER_COUNT,
+  workerPool,
+  cycleRefreshIntervalMs: CYCLE_REFRESH_INTERVAL_MS,
+  routeCache,
+  stateCache,
+  registry: {
+    getActivePoolsMeta: () => registry?.getActivePoolsMeta() ?? [],
+    getPoolMeta: (address: string) => registry?.getPoolMeta(address),
+  },
+  buildGraph,
+  buildHubGraph,
+  serializeTopology,
+  enumerateCycles,
+  enumerateCyclesDual,
+  validatePoolState,
+  clearGasEstimateCache,
+  log,
+});
 
 async function refreshCycles(force = false) {
-  // Skip if already built and not forced — graph state stays live via stateRefs.
-  // Only rebuild topology (force=true) when new pools are discovered.
-  const now = Date.now();
-  const intervalElapsed =
-    lastCycleRefreshMs <= 0 || now - lastCycleRefreshMs >= CYCLE_REFRESH_INTERVAL_MS;
-  if (!force && !topologyDirty && cachedCycles.length > 0 && !intervalElapsed) return;
-
-  // Prevent concurrent rebuilds: a second caller would clobber cachedCycles /
-  // hubGraph mid-iteration.  The forced flag is preserved so the next call
-  // after the in-flight one finishes will still do a full rebuild if needed.
-  if (cycleRefreshRunning) {
-    if (force) topologyDirty = true;
-    return;
+  const oracle = runtime.getPriceOracle();
+  if (oracle && !oracle.isFresh(MAX_PRICE_AGE_MS)) {
+    oracle.update();
   }
-  cycleRefreshRunning = true;
-
-  try {
-  log("Refreshing cycle enumeration...", "info", {
-    event: "cycle_refresh_start",
-    forced: force,
-    topologyVersion: topologyVersion + 1,
-  });
-  const activePools = registry?.getActivePoolsMeta() ?? [];
-  const pools = getRoutablePools(activePools);
-  log(
-    `Routing universe: ${pools.length} routable / ${activePools.length} active pools`,
-    "info",
-    {
-      event: "routing_universe",
-      activePools: activePools.length,
-      routablePools: pools.length,
-    }
-  );
-
-  const rebuildGraphs = force || !fullGraph || !hubGraph || intervalElapsed;
-
-  // Build graphs only when absent or explicitly forced. For watcher-driven
-  // admissions/removals we mutate the live graphs in place and only need
-  // to re-enumerate cycles against the updated adjacency.
-  if (rebuildGraphs) {
-    fullGraph = buildGraph(pools, stateCache);
-    hubGraph  = buildHubGraph(pools, HUB_4_TOKENS, stateCache);
-    topologyCache.invalidateSerializedTopologies();
-    clearGasEstimateCache();
-    if (force || topologyDirty) {
-      clearExecutionRouteQuarantine("topology_changed");
-    }
-  }
-  const topologyKeyBase = `topology:${++topologyVersion}`;
-
-  // $5k USD ≈ 7 143 WMATIC ≈ 7_143n * 10n**18n at $0.70/WMATIC
-  const MIN_LIQ_WMATIC = 7_143n * 10n ** 18n;
-
-  if (priceOracle && !priceOracle.isFresh(MAX_PRICE_AGE_MS)) {
-    priceOracle.update();
-  }
-  // getRateWei bridges priceOracle into the enumerate options
-  const getRateWei = priceOracle
-    ? ((oracle: PriceOracle) => (addr: string) => oracle.getFreshRate(addr, MAX_PRICE_AGE_MS))(priceOracle)
+  const getRateWei = oracle
+    ? ((currentOracle: PriceOracle) => (addr: string) => currentOracle.getFreshRate(addr, MAX_PRICE_AGE_MS))(oracle)
     : null;
-  const selective4HopTokens = selectHighLiquidityHubTokens(fullGraph, getRateWei);
 
-  if (WORKER_COUNT >= 2 && (workerPool as any)._initialized) {
-    // Offload enumeration to workers: split HUB_4_TOKENS tokens across threads
-    const hubTopo    = topologyCache.getSerializedTopologyCached("hub", hubGraph, serializeTopology);
-    const fullTopo   = topologyCache.getSerializedTopologyCached("full", fullGraph, serializeTopology);
-    const hubTokens  = [...HUB_4_TOKENS].filter((t) => hubGraph.hasToken(t));
-    // Full-graph enumeration starts only from POLYGON_HUB_TOKENS to bound search space
-    const fullTokens = [...POLYGON_HUB_TOKENS].filter((t) => fullGraph.hasToken(t));
-
-    const [hubSer, fullSer, selective4HopSer] = await Promise.all([
-      workerPool.enumerate(hubTopo, hubTokens, {
-        include2Hop: true, include3Hop: true, include4Hop: true,
-        maxPathsPerToken: Math.ceil(MAX_TOTAL_PATHS * 0.5 / Math.max(hubTokens.length, 1)),
-        max4HopPathsPerToken: 2_000,
-        topologyKey: `${topologyKeyBase}:hub`,
-      }),
-      workerPool.enumerate(fullTopo, fullTokens, {
-        include2Hop: true, include3Hop: true, include4Hop: false,
-        maxPathsPerToken: Math.ceil(MAX_TOTAL_PATHS * 0.35 / Math.max(fullTokens.length, 1)),
-        topologyKey: `${topologyKeyBase}:full`,
-      }),
-      selective4HopTokens.length > 0
-        ? workerPool.enumerate(fullTopo, selective4HopTokens, {
-            include2Hop: true,
-            include3Hop: true,
-            include4Hop: true,
-            maxPathsPerToken: Math.min(
-              SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
-              Math.ceil(SELECTIVE_4HOP_PATH_BUDGET / Math.max(selective4HopTokens.length, 1)),
-            ),
-            max4HopPathsPerToken: SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
-            topologyKey: `${topologyKeyBase}:full_selective_4hop`,
-          })
-        : Promise.resolve([]),
-    ]);
-
-    // Re-hydrate serialised paths back to full edge objects from live graphs
-    cachedCycles = mergeArbPaths(
-      topologyCache.hydratePaths(hubSer, hubGraph, fullGraph),
-      topologyCache.hydratePaths(fullSer, hubGraph, fullGraph),
-      topologyCache.hydratePaths(selective4HopSer, hubGraph, fullGraph),
-    );
-  } else {
-    // Synchronous enumeration on main thread
-    const baseCycles = enumerateCyclesDual(hubGraph, fullGraph, {
-      include2Hop:          true,
-      include3Hop:          true,
-      maxPathsPerToken:     Math.ceil(MAX_TOTAL_PATHS / 7),
-      max4HopPathsPerToken: 2_000,
-      maxTotalPaths:        MAX_TOTAL_PATHS,
-      minLiquidityWmatic:   getRateWei ? MIN_LIQ_WMATIC : 0n,
-      getRateWei,
-    });
-    const selective4HopCycles = selective4HopTokens.length > 0
-      ? enumerateCycles(fullGraph, {
-          startTokens: new Set(selective4HopTokens),
-          include2Hop: true,
-          include3Hop: true,
-          include4Hop: true,
-          maxPathsPerToken: Math.min(
-            SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
-            Math.ceil(SELECTIVE_4HOP_PATH_BUDGET / Math.max(selective4HopTokens.length, 1)),
-          ),
-          max4HopPathsPerToken: SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
-          maxTotalPaths: SELECTIVE_4HOP_PATH_BUDGET,
-          minLiquidityWmatic: getRateWei ? MIN_LIQ_WMATIC : 0n,
-          getRateWei,
-        })
-      : [];
-    cachedCycles = mergeArbPaths(baseCycles, selective4HopCycles);
-  }
-
-  // Prune stale cached routes after topology rebuild
-  routeCache.prune(stateCache);
-  topologyDirty = false;
-  lastCycleRefreshMs = Date.now();
-
-  log(`Cycle refresh: ${cachedCycles.length} paths (hub+full, max ${MAX_TOTAL_PATHS}).`, "info", {
-    event: "cycle_refresh_complete",
-    forced: force,
-    topologyVersion,
-    cachedPaths: cachedCycles.length,
-    maxTotalPaths: MAX_TOTAL_PATHS,
-    selective4HopTokens: selective4HopTokens.length,
-    routeCacheSize: routeCache.routes.length,
+  return topologyService?.refreshCycles({
+    force,
+    minLiquidityWmatic: 7_143n * 10n ** 18n,
+    selective4HopPathBudget: SELECTIVE_4HOP_PATH_BUDGET,
+    selective4HopMaxPathsPerToken: SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
+    getRateWei,
+    clearExecutionRouteQuarantine: (reason) => opportunityEngine?.clearExecutionRouteQuarantine(reason),
   });
-  } finally {
-    cycleRefreshRunning = false;
-  }
 }
 
-// ─── Arb search ────────────────────────────────────────────────
-
-const findArbs = createArbSearcher({
-  cachedCycles: () => cachedCycles,
-  topologyDirty: () => topologyDirty,
-  refreshCycles,
-  passCount: () => passCount,
-  maxPathsToOptimize: MAX_PATHS_TO_OPTIMIZE,
-  minProfitWei: MIN_PROFIT_WEI,
-  stateCache,
-  log,
-  getCurrentFeeSnapshot,
-  getFreshTokenToMaticRate,
-  getRouteFreshness,
-  getProbeAmountsForToken,
-  evaluatePathsParallel,
-  optimizeInputAmount: (path, cache, options) =>
-    optimizeInputAmount(path, cache, options) as unknown as RouteResultLike | null,
-  evaluateCandidatePipeline,
-  partitionFreshCandidates,
-  filterQuarantinedCandidates,
-  routeCacheUpdate: (candidates) => routeCache.update(candidates),
-  routeKeyFromEdges,
-  fmtPath,
-  fmtProfit,
-  onPathsEvaluated: (count) => pathsEvaluated.inc({ pass: passCount }, count),
-  onCandidateMetrics: ({ topCandidates, optimizedCandidates, profitableRoutes }) => {
-    candidateShortlistSize.observe(topCandidates);
-    candidateOptimizedCount.observe(optimizedCandidates);
-    candidateProfitableCount.observe(profitableRoutes);
-    candidateProfitableYield.observe(topCandidates > 0 ? profitableRoutes / topCandidates : 0);
+opportunityEngine = createOpportunityEngine({
+  execution: {
+    liveMode: LIVE_MODE,
+    privateKey: PRIVATE_KEY,
+    executorAddress: EXECUTOR_ADDRESS,
+    rpcUrl: POLYGON_RPC,
+    getNonceManager: () => runtime.getNonceManager(),
+    maxExecutionBatch: MAX_EXECUTION_BATCH,
+    executionRouteQuarantineMs: EXECUTION_ROUTE_QUARANTINE_MS,
+    minProfitWei: MIN_PROFIT_WEI,
+    log,
+    fmtPath,
+    getRouteFreshness,
+    getCurrentFeeSnapshot,
+    getFreshTokenToMaticRate,
+    deriveOnChainMinProfit,
+    buildArbTx,
+    sendTx,
+    sendTxBundle,
+    hasPendingExecution: hasTrackedPendingTx,
+    scalePriorityFeeByProfitMargin,
+    onPreparedCandidateError: (candidate: CandidateEntry, reason: string, quarantine: any) => {
+      log(`[runner] Quarantining route after execution preparation failure: ${reason}`, "warn", {
+        event: "execute_quarantine_add",
+        route: fmtPath(candidate.path),
+        hopCount: candidate.path.hopCount,
+        failures: quarantine.failures,
+        quarantineMs: Math.max(0, quarantine.until - Date.now()),
+        reason,
+      });
+    },
   },
-  onArbsFound: (count) => arbsFound.inc({ pass: passCount }, count),
-  workerCount: WORKER_COUNT,
+  search: {
+    cachedCycles: () => topologyService?.getCachedCycles() ?? [],
+    topologyDirty: () => topologyService?.isTopologyDirty() ?? true,
+    refreshCycles,
+    passCount: () => runtime.getPassCount(),
+    maxPathsToOptimize: MAX_PATHS_TO_OPTIMIZE,
+    minProfitWei: MIN_PROFIT_WEI,
+    stateCache,
+    log,
+    getCurrentFeeSnapshot,
+    getFreshTokenToMaticRate,
+    getRouteFreshness,
+    getProbeAmountsForToken,
+    evaluatePathsParallel,
+    optimizeInputAmount: (path: ArbPathLike, cache: Map<string, Record<string, any>>, options: any) =>
+      optimizeInputAmount(path, cache, options) as unknown as RouteResultLike | null,
+    evaluateCandidatePipeline,
+    partitionFreshCandidates,
+    routeCacheUpdate: (candidates: any) => routeCache.update(candidates),
+    routeKeyFromEdges,
+    fmtPath,
+    fmtProfit,
+    onPathsEvaluated: (count: number) => pathsEvaluated.inc({ pass: runtime.getPassCount() }, count),
+    onCandidateMetrics: ({ topCandidates, optimizedCandidates, profitableRoutes }: any) => {
+      candidateShortlistSize.observe(topCandidates);
+      candidateOptimizedCount.observe(optimizedCandidates);
+      candidateProfitableCount.observe(profitableRoutes);
+      candidateProfitableYield.observe(topCandidates > 0 ? profitableRoutes / topCandidates : 0);
+    },
+    onArbsFound: (count: number) => arbsFound.inc({ pass: runtime.getPassCount() }, count),
+    workerCount: WORKER_COUNT,
+  },
+  revalidation: {
+    getAffectedRoutes: (changedPools: Set<string>) =>
+      (routeCache.getByPools(changedPools) as Array<{ path: any; result: any }>).map(({ path, result }) => ({
+        path: path as ArbPathLike,
+        result: opportunityEngine!.toRouteResultLike(result),
+      })),
+    stateCache,
+    testAmountWei: TEST_AMOUNT_WEI,
+    minProfitWei: MIN_PROFIT_WEI,
+    maxExecutionBatch: MAX_EXECUTION_BATCH,
+    log,
+    getCurrentFeeSnapshot,
+    getFreshTokenToMaticRate,
+    getRouteFreshness,
+    simulateRoute: (path: ArbPathLike, amountIn: bigint, cache: Map<string, Record<string, any>>) =>
+      simulateRoute(path, amountIn, cache) as unknown as RouteResultLike,
+    optimizeInputAmount: (path: ArbPathLike, cache: Map<string, Record<string, any>>, options: any) =>
+      optimizeInputAmount(path, cache, options) as unknown as RouteResultLike | null,
+  },
 });
 
 // ─── Arb pass ──────────────────────────────────────────────────
 
 async function runPass() {
   const t0 = Date.now();
-  passCount++;
+  const passCount = runtime.incrementPassCount();
+  const cachedCycles = topologyService?.getCachedCycles() ?? [];
   log(`Pass #${passCount} — state: ${stateCache.size} pools, paths: ${cachedCycles.length}`, "info", {
     event: "pass_start",
     pass: passCount,
@@ -778,8 +505,9 @@ async function runPass() {
     // Background discovery (non-blocking, self-throttled)
     maybeRunDiscovery().then(async (result: any) => {
       if (result?.totalDiscovered > 0) {
+        repositories?.pools.invalidateMetaCache();
         // Seed stateCache for new pools and extend the HyperSync stream filter
-        const allPools = registry?.getActivePoolsMeta() ?? [];
+        const allPools = repositories?.pools.getActiveMeta() ?? [];
         const newPools = allPools.filter(
           (p: PoolRecord) => !stateCache.has(p.pool_address.toLowerCase())
         );
@@ -797,14 +525,14 @@ async function runPass() {
               timestamp: 0,
             });
           }
-          if (watcher) {
-            watcher.addPools(newPools.map((p: PoolRecord) => p.pool_address.toLowerCase()));
+          if (runtime.getWatcher()) {
+            runtime.getWatcher().addPools(newPools.map((p: PoolRecord) => p.pool_address.toLowerCase()));
           }
           // Fetch live state for newly discovered pools before rebuilding topology
           await _fetchAndCacheStates(newPools);
         }
         // Rebuild cycle topology with the new pool set
-        topologyDirty = true;
+        topologyService?.invalidate("background_discovery");
         await refreshCycles(true);
       }
     }).catch((err: any) => {
@@ -818,13 +546,14 @@ async function runPass() {
     await refreshCycles();
 
     // Update price oracle from live state only when stale; watcher batches do incremental refreshes.
+    const priceOracle = runtime.getPriceOracle();
     if (priceOracle && !priceOracle.isFresh(MAX_PRICE_AGE_MS)) {
       priceOracle.update();
     }
 
-    const opportunities = await findArbs();
+    const opportunities = await opportunityEngine!.search();
     botState.passCount         = passCount;
-    botState.consecutiveErrors = consecutiveErrors;
+    botState.consecutiveErrors = runtime.getConsecutiveErrors();
     botState.opportunities     = opportunities.slice(0, 5).map((o: CandidateEntry) => ({
       Route:  o.path.edges.map(e => e.protocol).join(' -> '),
       Profit: `${(Number(o.result.profit) / 1e18).toFixed(4)} MATIC`,
@@ -835,7 +564,7 @@ async function runPass() {
       pass: passCount,
       opportunities: opportunities.length,
       stateSize: stateCache.size,
-      cachedPaths: cachedCycles.length,
+      cachedPaths: (topologyService?.getCachedCycles() ?? []).length,
       lastPass: formatDuration(Date.now() - t0),
     });
 
@@ -845,7 +574,7 @@ async function runPass() {
         pass: passCount,
         opportunities: Math.min(opportunities.length, MAX_EXECUTION_BATCH),
       });
-      await executeBatchIfIdle(opportunities.slice(0, MAX_EXECUTION_BATCH), "run_pass");
+      await opportunityEngine!.executeBatchIfIdle(opportunities.slice(0, MAX_EXECUTION_BATCH), "run_pass");
     }
 
     log(`Pass #${passCount} complete in ${formatDuration(Date.now() - t0)}`, "info", {
@@ -854,19 +583,19 @@ async function runPass() {
       durationMs: Date.now() - t0,
       opportunities: opportunities.length,
     });
-    consecutiveErrors = 0;
+    runtime.resetConsecutiveErrors();
   } catch (err: any) {
     log(`Pass #${passCount} failed: ${err.message}`, "error", {
       event: "pass_failed",
       pass: passCount,
-      consecutiveErrors: consecutiveErrors + 1,
+      consecutiveErrors: runtime.getConsecutiveErrors() + 1,
       err,
     });
-    consecutiveErrors++;
+    const consecutiveErrors = runtime.incrementConsecutiveErrors();
     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
       log(`${MAX_CONSECUTIVE_ERRORS} consecutive errors — backing off 30s`, "warn");
       await runnerSleep(30_000);
-      consecutiveErrors = 0;
+      runtime.resetConsecutiveErrors();
     }
   }
 }
@@ -876,12 +605,12 @@ async function runPass() {
 // ─── Shutdown ──────────────────────────────────────────────────
 const shutdown = createShutdownHandler({
   log,
-  setRunning: (next) => { running = next; },
+  setRunning: (next) => { runtime.setRunning(next); },
   stopTui: () => {
     stopTui?.();
     stopTui = null;
   },
-  getWatcher: () => watcher,
+  getWatcher: () => runtime.getWatcher(),
   gasOracle,
   getRegistry: () => registry,
   workerPool,
@@ -907,8 +636,9 @@ async function main() {
   }
 
   registry     = new RegistryService(DB_PATH);
-  priceOracle  = new PriceOracle(stateCache, registry);
-  nonceManager = new NonceManager();
+  repositories = createRegistryRepositories(registry);
+  runtime.setPriceOracle(new PriceOracle(stateCache, registry));
+  runtime.setNonceManager(new NonceManager());
 
   process.on("SIGINT",  shutdown);
   process.on("SIGTERM", shutdown);
@@ -935,7 +665,7 @@ async function main() {
   // Post-warmup sanity check: if no paths were found the hub-pair state is
   // entirely missing (RPC failures or empty DB).  The watcher replay will
   // still populate state incrementally, but warn so the operator knows.
-  if (cachedCycles.length === 0) {
+  if ((topologyService?.getCachedCycles() ?? []).length === 0) {
     log(
       "Post-warmup: 0 arbitrage paths enumerated. " +
       "Hub-pair pools may be unavailable or RPC failed. " +
@@ -962,25 +692,75 @@ async function main() {
     throw new Error("ENVIO_API_TOKEN is required for --loop watcher mode");
   }
 
-  watcher = new StateWatcher(registry, stateCache);
+  const watcher = new StateWatcher(registry, stateCache);
+  runtime.setWatcher(watcher);
 
   configureWatcherCallbacks({
     watcher,
     log,
-    partitionChangedPools,
-    removePoolsFromGraphs,
-    routeCache,
-    topologyCache,
-    setTopologyDirty: (dirty) => { topologyDirty = dirty; },
-    admitPoolsToGraphs,
-    priceOracle,
-    revalidateCachedRoutes,
-    scheduleArb,
-    setCachedCycles: (cycles) => { cachedCycles = cycles; },
-    resetGraphs: () => {
-      hubGraph = null;
-      fullGraph = null;
+    onPoolsChanged: async ({ changedPools }) => {
+      const { valid: validChangedAddrs, invalid: invalidChangedAddrs } = partitionChangedPools(changedPools);
+      if (validChangedAddrs.size === 0 && invalidChangedAddrs.size === 0) {
+        log("[runner] No usable pool changes in watcher batch", "debug", {
+          event: "watcher_batch_skip",
+          changedPools: changedPools.size,
+        });
+        return;
+      }
+
+      if (invalidChangedAddrs.size > 0) {
+        const removedEdges = topologyService?.removePools(invalidChangedAddrs) ?? 0;
+        const removedRoutes = routeCache.removeByPools(invalidChangedAddrs);
+        log(
+          `[runner] ${invalidChangedAddrs.size} pool(s) became unroutable; ${removedEdges / 2} removed from topology.`,
+          "info",
+          {
+            event: "watcher_batch_remove_unroutable",
+            changedPools: changedPools.size,
+            invalidPools: invalidChangedAddrs.size,
+            removedPools: removedEdges / 2,
+            removedRoutes,
+          },
+        );
+      }
+
+      if (validChangedAddrs.size > 0) {
+        log(`[watcher] ${validChangedAddrs.size}/${changedPools.size} pool state(s) updated`, "info", {
+          event: "watcher_batch_valid",
+          changedPools: changedPools.size,
+          validPools: validChangedAddrs.size,
+        });
+        const admitted = topologyService?.admitPools(validChangedAddrs) ?? 0;
+        if (admitted > 0) {
+          log(`[runner] Admitted ${admitted} newly routable pool(s); refreshing cycles soon.`, "info", {
+            event: "watcher_batch_admit",
+            changedPools: changedPools.size,
+            validPools: validChangedAddrs.size,
+            admittedPools: admitted,
+          });
+        }
+        runtime.getPriceOracle()?.update(validChangedAddrs);
+        await opportunityEngine?.revalidateCachedRoutes(validChangedAddrs);
+      }
     },
+    onReorgDetected: ({ reorgBlock, changedPools }) => {
+      log(`[runner] Reorg rollback to block ${reorgBlock}; clearing cached routes and topology`, "warn", {
+        event: "watcher_reorg",
+        reorgBlock,
+        changedPools: changedPools.size,
+      });
+      routeCache.clear();
+      topologyService?.setCachedCycles([]);
+      topologyService?.resetGraphs();
+      runtime.getPriceOracle()?.update();
+      if (changedPools.size > 0) {
+        log(`[runner] Reorg cache reload touched ${changedPools.size} active pool(s)`, "debug", {
+          event: "watcher_reorg_reload",
+          changedPools: changedPools.size,
+        });
+      }
+    },
+    scheduleArb,
   });
 
   log(`Starting HyperSync stream (debounce: ${FAST_ARB_DEBOUNCE_MS}-${BASE_ARB_DEBOUNCE_MS}ms adaptive, heartbeat: ${formatDuration(HEARTBEAT_INTERVAL_MS)})...`, "info", {
