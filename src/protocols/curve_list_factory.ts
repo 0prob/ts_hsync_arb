@@ -24,6 +24,14 @@ const POOL_LIST_ABI = [
   },
 ];
 
+function isMissingPoolListEntryError(error: unknown) {
+  const message = String((error as any)?.message ?? error ?? "").toLowerCase();
+  return (
+    message.includes("missing or invalid parameters") ||
+    message.includes("metadata is not found")
+  );
+}
+
 function getCoinsAbi(slotCount: number) {
   return [
     {
@@ -131,6 +139,11 @@ export async function discoverCurveListedFactory({
           status: "active",
         };
       } catch (error: any) {
+        // Some Curve factories expose sparse pool_list indexes after removals.
+        // Treat those missing entries as skips, but keep surfacing unexpected failures.
+        if (isMissingPoolListEntryError(error)) {
+          return null;
+        }
         console.warn(`  [${protocolName}] Failed to enumerate pool #${index}: ${error.message}`);
         return null;
       }

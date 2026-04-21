@@ -10,9 +10,15 @@
  *   - `nextBlock` is the authoritative resume cursor.
  *   - `joinMode: JoinNothing` is enforced unless the caller explicitly sets one,
  *     preventing unnecessary transaction/trace joins for log-only workloads.
+ *   - historical `get()` pages are bounded with `maxNumLogs` and `maxNumBlocks`
+ *     so sparse backfills stay within HyperSync's query-time budget.
  */
 
 import { client, JoinMode } from "./client.ts";
+import {
+  HYPERSYNC_BATCH_SIZE,
+  HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
+} from "../config/index.ts";
 
 /**
  * Fetch all logs matching `query` from `fromBlock` to the current archive tip.
@@ -25,6 +31,8 @@ export async function fetchAllLogs(query: any) {
   let currentQuery = {
     ...query,
     joinMode: query.joinMode ?? JoinMode.JoinNothing,
+    maxNumLogs: query.maxNumLogs ?? HYPERSYNC_BATCH_SIZE,
+    maxNumBlocks: query.maxNumBlocks ?? HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
   };
   let archiveHeight = null;
   let rollbackGuard = null;

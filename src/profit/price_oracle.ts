@@ -30,6 +30,7 @@ import { getPoolTokens } from "../util/pool_record.ts";
 
 /** 1 MATIC in wei (used for V3 sqrtPriceX96 math only) */
 const WEI = 10n ** 18n;
+const RATE_SCALE = 10n ** 18n;
 
 /** Q96 / Q192 constants for Uniswap V3 price decoding */
 const Q192 = 2n ** 192n;
@@ -67,10 +68,17 @@ const KNOWN_DECIMALS = new Map([
   [TOKENS.WBTC,   8],
 ]);
 
+const PIVOT_TOKENS = [
+  TOKENS.USDC_N,
+  TOKENS.USDC,
+  TOKENS.WETH,
+];
+
 export class PriceOracle {
   private _cache: Map<string, any>;
   private _registry: any;
   private _updatedAt: number;
+  private _updatedAtByToken: Map<string, number>;
   private _poolMeta: Map<string, any>;
   private _rates: Map<string, bigint>;
 
@@ -78,6 +86,7 @@ export class PriceOracle {
     this._cache    = stateCache;
     this._registry = registry;
     this._updatedAt = 0;
+    this._updatedAtByToken = new Map();
     this._poolMeta = new Map();
     this._rates = new Map();
     this._setDefaults();
@@ -105,11 +114,14 @@ export class PriceOracle {
    * updates only improve on previous rate (never zeroes it out).
    */
   update(changedPools?: Iterable<string>) {
+    const now = Date.now();
     let updatedCount = 0;
     let inspectedCount = 0;
+    const pairQuotes = new Map<string, Map<string, bigint>>();
 
     // WMATIC is always 1:1 with MATIC (rate = 1)
     this._rates.set(TOKENS.WMATIC, 1n);
+    this._updatedAtByToken.set(TOKENS.WMATIC, now);
 
     const entries = changedPools
       ? [...changedPools].map((addr) => [addr.toLowerCase(), this._cache.get(addr.toLowerCase())] as const)
@@ -132,23 +144,50 @@ export class PriceOracle {
       const t1 = tokens[1].toLowerCase();
       const isWmatic0 = t0 === TOKENS.WMATIC;
       const isWmatic1 = t1 === TOKENS.WMATIC;
-      if (!isWmatic0 && !isWmatic1) continue;
+      const quote01 = this._deriveQuoteRateScaled(state, true);
+      const quote10 = this._deriveQuoteRateScaled(state, false);
+      this._storePairQuote(pairQuotes, t0, t1, quote01);
+      this._storePairQuote(pairQuotes, t1, t0, quote10);
 
-      const otherToken = isWmatic0 ? t1 : t0;
+      if (isWmatic0) {
+        const rate = this._scaledRateToWei(quote10);
+        if (rate > 0n) {
+          this._rates.set(t1, rate);
+          this._updatedAtByToken.set(t1, now);
+          updatedCount++;
+        }
+        continue;
+      }
+      if (isWmatic1) {
+        const rate = this._scaledRateToWei(quote01);
+        if (rate > 0n) {
+          this._rates.set(t0, rate);
+          this._updatedAtByToken.set(t0, now);
+          updatedCount++;
+        }
+      }
+    }
 
-      // Resolve decimals for the other token
-      const dec = this._getDecimals(otherToken);
-      if (dec === null) continue; // unknown decimals — skip
+    for (const [token, quotes] of pairQuotes.entries()) {
+      if (token === TOKENS.WMATIC) continue;
 
-      const rate = this._deriveRate(state, isWmatic0, dec);
-      if (rate > 0n) {
-        this._rates.set(otherToken, rate);
-        updatedCount++;
+      for (const pivot of PIVOT_TOKENS) {
+        const quoteToPivot = quotes.get(pivot) ?? 0n;
+        const pivotRate = this._rates.get(pivot) ?? 0n;
+        if (quoteToPivot <= 0n || pivotRate <= 0n) continue;
+
+        const derived = this._scaledRateToWei((quoteToPivot * pivotRate) / RATE_SCALE);
+        if (derived > 0n) {
+          this._rates.set(token, derived);
+          this._updatedAtByToken.set(token, now);
+          updatedCount++;
+          break;
+        }
       }
     }
 
     if (updatedCount > 0 || !changedPools || inspectedCount > 0) {
-      this._updatedAt = Date.now();
+      this._updatedAt = now;
     }
     if (updatedCount > 0) {
       logger.debug(`[price_oracle] Updated ${updatedCount} rates from state cache`);
@@ -168,10 +207,12 @@ export class PriceOracle {
   }
 
   getFreshRate(tokenAddress: string, maxAgeMs = 30_000) {
-    if (this._updatedAt <= 0 || Date.now() - this._updatedAt > maxAgeMs) {
+    const key = tokenAddress.toLowerCase();
+    const updatedAt = this._updatedAtByToken.get(key) ?? 0;
+    if (updatedAt <= 0 || Date.now() - updatedAt > maxAgeMs) {
       return 0n;
     }
-    return this.getRate(tokenAddress);
+    return this._rates.get(key) ?? 0n;
   }
 
   isFresh(maxAgeMs = 30_000) {
@@ -250,7 +291,25 @@ export class PriceOracle {
    * @param {number}  _otherDec    Decimals of the other token (unused — for docs)
    * @returns {bigint}  Rate or 0n if not derivable
    */
-  _deriveRate(state: PoolStateLike, isWmatic0: boolean, _otherDec: number | null) {
+  _storePairQuote(pairQuotes: Map<string, Map<string, bigint>>, base: string, quote: string, scaledRate: bigint) {
+    if (scaledRate <= 0n) return;
+    const baseKey = base.toLowerCase();
+    const quoteKey = quote.toLowerCase();
+    if (!pairQuotes.has(baseKey)) pairQuotes.set(baseKey, new Map());
+    const quotes = pairQuotes.get(baseKey)!;
+    const existing = quotes.get(quoteKey) ?? 0n;
+    if (scaledRate > existing) {
+      quotes.set(quoteKey, scaledRate);
+    }
+  }
+
+  _scaledRateToWei(rateScaled: bigint) {
+    if (rateScaled <= 0n) return 0n;
+    const floored = rateScaled / RATE_SCALE;
+    return floored > 0n ? floored : 1n;
+  }
+
+  _deriveQuoteRateScaled(state: PoolStateLike, token0AsBase: boolean) {
     try {
       // ── Uniswap V2 ──────────────────────────────────────────
       if (state.reserve0 !== undefined && state.reserve1 !== undefined) {
@@ -258,12 +317,9 @@ export class PriceOracle {
         const r1 = state.reserve1;
         if (r0 === 0n || r1 === 0n) return 0n;
 
-        // 1 raw otherToken unit = rWmatic / rOther raw WMATIC units = rWmatic/rOther wei
-        if (isWmatic0) {
-          return r0 / r1; // 1 raw token1 unit = r0/r1 wei WMATIC
-        } else {
-          return r1 / r0; // 1 raw token0 unit = r1/r0 wei WMATIC
-        }
+        return token0AsBase
+          ? (r1 * RATE_SCALE) / r0
+          : (r0 * RATE_SCALE) / r1;
       }
 
       // ── Uniswap V3 ──────────────────────────────────────────
@@ -274,16 +330,9 @@ export class PriceOracle {
         if (sqrtP === 0n) return 0n;
         const priceX192 = sqrtP * sqrtP; // = (token1/token0) * 2^192
 
-        if (isWmatic0) {
-          // 1 raw token1 unit = Q192 / priceX192 raw WMATIC units
-          // (price = token1/token0, so 1 token1 = 1/price token0)
-          if (priceX192 === 0n) return 0n;
-          return Q192 / priceX192;
-        } else {
-          // 1 raw token0 unit = priceX192 / Q192 raw WMATIC units
-          // (price = token1/token0 = WMATIC/otherToken)
-          return priceX192 / Q192;
-        }
+        return token0AsBase
+          ? (priceX192 * RATE_SCALE) / Q192
+          : (Q192 * RATE_SCALE) / priceX192;
       }
     } catch {
       return 0n;

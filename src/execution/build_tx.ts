@@ -17,7 +17,7 @@
 
 import { encodeRoute, encodeExecuteArb, buildFlashParams } from "./calldata.ts";
 import { BALANCER_VAULT } from "./addresses.ts";
-import { recommendGasParams } from "./gas.ts";
+import { gasEstimateCacheKey, recommendGasParams } from "./gas.ts";
 
 // ─── Defaults ─────────────────────────────────────────────────
 
@@ -25,6 +25,42 @@ const DEFAULT_DEADLINE_OFFSET_S = 120;
 const DEFAULT_SLIPPAGE_BPS = 50;
 const DEFAULT_MIN_PROFIT = 0n;
 const DEFAULT_GAS_MULTIPLIER = 1.25;
+
+function assertValidRouteForExecution(route: any) {
+  if (!route?.path || !route?.result) {
+    throw new Error("buildArbTx: route path/result required");
+  }
+  if (!route.path.startToken) {
+    throw new Error("buildArbTx: path.startToken required");
+  }
+  if (!Array.isArray(route.path.edges) || route.path.edges.length === 0) {
+    throw new Error("buildArbTx: path.edges must be non-empty");
+  }
+  if (route.result.amountIn == null || route.result.amountIn <= 0n) {
+    throw new Error("buildArbTx: result.amountIn must be > 0");
+  }
+  if (route.result.amountOut == null || route.result.amountOut <= 0n) {
+    throw new Error("buildArbTx: result.amountOut must be > 0");
+  }
+  if (route.result.profit == null || route.result.profit !== route.result.amountOut - route.result.amountIn) {
+    throw new Error("buildArbTx: inconsistent result.profit");
+  }
+  if (!Array.isArray(route.result.hopAmounts) || route.result.hopAmounts.length !== route.path.edges.length + 1) {
+    throw new Error("buildArbTx: hopAmounts length mismatch");
+  }
+  if (!Array.isArray(route.result.tokenPath) || route.result.tokenPath.length !== route.path.edges.length + 1) {
+    throw new Error("buildArbTx: tokenPath length mismatch");
+  }
+  if (!Array.isArray(route.result.poolPath) || route.result.poolPath.length !== route.path.edges.length) {
+    throw new Error("buildArbTx: poolPath length mismatch");
+  }
+
+  for (const [index, edge] of route.path.edges.entries()) {
+    if (!edge?.protocol) throw new Error(`buildArbTx: edge ${index} missing protocol`);
+    if (!edge?.poolAddress) throw new Error(`buildArbTx: edge ${index} missing poolAddress`);
+    if (!edge?.tokenIn || !edge?.tokenOut) throw new Error(`buildArbTx: edge ${index} missing token addresses`);
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -40,7 +76,6 @@ function resolveFlashLoan(route: any) {
     flashAmount: route.result.amountIn,
   };
 }
-
 // ─── Main builder ─────────────────────────────────────────────
 
 /**
@@ -81,11 +116,23 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
     gasMultiplier = DEFAULT_GAS_MULTIPLIER,
     maxFeeOverride,
     priorityFeeOverride,
+    gasEstimateCacheKey: gasEstimateCacheKeyOverride,
     gasParamsOverride = null,
   } = options;
 
   if (!executorAddress) throw new Error("buildArbTx: executorAddress required");
   if (!fromAddress) throw new Error("buildArbTx: fromAddress required");
+  assertValidRouteForExecution(route);
+  if (!Number.isFinite(deadlineOffsetS) || deadlineOffsetS <= 0) {
+    throw new Error("buildArbTx: deadlineOffsetS must be > 0");
+  }
+  if (!Number.isFinite(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
+    throw new Error("buildArbTx: slippageBps must be between 0 and 10000");
+  }
+  if (!Number.isFinite(gasMultiplier) || gasMultiplier <= 0) {
+    throw new Error("buildArbTx: gasMultiplier must be > 0");
+  }
+  if (minProfit < 0n) throw new Error("buildArbTx: minProfit must be >= 0");
 
   const { flashToken, flashAmount } = resolveFlashLoan(route);
   const profitToken = route.path.startToken;
@@ -116,10 +163,14 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
   };
 
   // Get gas params (estimate + EIP-1559 fees)
+  const gasEstimateKey =
+    gasEstimateCacheKeyOverride ?? gasEstimateCacheKey(skelTx, fromAddress);
+
   const gasParams = gasParamsOverride ?? await recommendGasParams(skelTx, fromAddress, {
     gasMultiplier,
     maxFeeOverride,
     priorityFeeOverride,
+    gasEstimateCacheKey: gasEstimateKey,
   });
 
   // Metadata for logging

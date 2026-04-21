@@ -41,10 +41,12 @@ export class CompatDatabase {
   db: DatabaseSync;
   _statementCache: Map<string, CompatStatement>;
   _savepointId: number;
+  _closed: boolean;
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this._statementCache = new Map();
     this._savepointId = 0;
+    this._closed = false;
   }
 
   prepare(sql: string) {
@@ -95,6 +97,8 @@ export class CompatDatabase {
   }
 
   close() {
+    if (this._closed) return;
+    this._closed = true;
     this._statementCache.clear();
     this.db.close();
   }

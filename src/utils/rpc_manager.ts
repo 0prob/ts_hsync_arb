@@ -94,8 +94,13 @@ class RpcEndpoint {
       ? "unsupported for contract reads"
       : "rate-limited";
     logger.warn(
-      `[rpc_manager] ${rpcManagerShortUrl(this.url)} ${reason} — ` +
-        `cooldown ${Math.max(1, Math.round(cooldownMs / 1000))}s`
+      {
+        event: "rpc_endpoint_backoff",
+        endpoint: rpcManagerShortUrl(this.url),
+        reason,
+        cooldown_s: Math.max(1, Math.round(cooldownMs / 1000)),
+      },
+      "RPC endpoint entered cooldown"
     );
     if (!methodUnavailable) {
       this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
@@ -323,7 +328,13 @@ class RpcManager {
       })
       .join("\n");
 
-    logger.debug(`[rpc_manager] Endpoint ranking:\n${lines}`);
+    logger.debug(
+      {
+        event: "rpc_endpoint_ranking",
+        ranking: lines,
+      },
+      "RPC endpoint ranking updated"
+    );
   }
 
   _selectEndpoint(

@@ -1,12 +1,12 @@
-# Graph Report - /home/x/t  (2026-04-19)
+# Graph Report - /home/x/t  (2026-04-20)
 
 ## Corpus Check
-- 88 files · ~55,074 words
+- 91 files · ~57,047 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 608 nodes · 1212 edges · 34 communities detected
-- Extraction: 72% EXTRACTED · 28% INFERRED · 0% AMBIGUOUS · INFERRED: 337 edges (avg confidence: 0.8)
+- 645 nodes · 1342 edges · 30 communities detected
+- Extraction: 73% EXTRACTED · 27% INFERRED · 0% AMBIGUOUS · INFERRED: 369 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -40,112 +40,108 @@
 - [[_COMMUNITY_Community 27|Community 27]]
 - [[_COMMUNITY_Community 28|Community 28]]
 - [[_COMMUNITY_Community 29|Community 29]]
-- [[_COMMUNITY_Community 30|Community 30]]
-- [[_COMMUNITY_Community 31|Community 31]]
-- [[_COMMUNITY_Community 32|Community 32]]
-- [[_COMMUNITY_Community 33|Community 33]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `RegistryService` - 47 edges
-2. `log()` - 34 edges
-3. `WorkerPool` - 18 edges
-4. `StateWatcher` - 18 edges
-5. `RpcManager` - 17 edges
-6. `refreshCycles()` - 16 edges
-7. `executeWithRpcRetry()` - 16 edges
-8. `findArbs()` - 15 edges
-9. `main()` - 15 edges
-10. `discoverProtocol()` - 15 edges
+2. `log()` - 40 edges
+3. `refreshCycles()` - 20 edges
+4. `WorkerPool` - 18 edges
+5. `StateWatcher` - 18 edges
+6. `RpcManager` - 17 edges
+7. `discoverProtocol()` - 16 edges
+8. `executeWithRpcRetry()` - 16 edges
+9. `findArbs()` - 15 edges
+10. `main()` - 15 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `fetchGasPrice()` --calls--> `executeWithRpcRetry()`  [INFERRED]
-  src/execution/gas.ts → /home/x/t/src/enrichment/rpc.ts
-- `log()` --calls--> `sendPrivateTx()`  [INFERRED]
-  /home/x/t/runner.ts → src/execution/private_tx.ts
-- `getCurrentFeeSnapshot()` --calls--> `fetchEIP1559Fees()`  [INFERRED]
-  /home/x/t/runner.ts → src/execution/gas.ts
+- `main()` --calls--> `startMetricsServer()`  [INFERRED]
+  /home/x/t/runner.ts → src/utils/metrics.ts
 - `refreshCycles()` --calls--> `enumerateCyclesDual()`  [INFERRED]
   /home/x/t/runner.ts → src/routing/enumerate_cycles.ts
-- `execute()` --calls--> `buildArbTx()`  [INFERRED]
-  /home/x/t/runner.ts → src/execution/build_tx.ts
+- `refreshCycles()` --calls--> `enumerateCycles()`  [INFERRED]
+  /home/x/t/runner.ts → src/routing/enumerate_cycles.ts
+- `getFeeBps()` --calls--> `toFiniteNumber()`  [INFERRED]
+  /home/x/t/src/routing/graph.ts → src/util/bigint.ts
+- `simulateHop()` --calls--> `simulateV3Swap()`  [INFERRED]
+  /home/x/t/src/routing/simulator.ts → src/math/uniswap_v3.ts
 
 ## Communities
 
 ### Community 0 - "Community 0"
-Cohesion: 0.04
-Nodes (36): discoverCurveListedFactory(), discover(), discover(), normalizeBalancerState(), normalizeCurveState(), normalizePoolState(), normalizeV2State(), normalizeV3State() (+28 more)
+Cohesion: 0.05
+Nodes (63): applySlippage(), computeProfit(), gasCostWei(), isProfitable(), revertRiskPenalty(), serializeTopology(), _completePass(), _storeBatchResults() (+55 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.06
-Nodes (48): applySlippage(), computeProfit(), gasCostWei(), isProfitable(), revertRiskPenalty(), serializeTopology(), PriceOracle, admitPoolsToGraphs() (+40 more)
+Cohesion: 0.04
+Nodes (21): throwUnsupportedHypersync(), UnsupportedDecoder, detectReorg(), pick(), buildDiscoveredPoolBatch(), decodeDiscoveryLogs(), discoverCurveRemovals(), discoverPools() (+13 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.06
-Nodes (49): assetStmt(), batchUpsertTokenMeta(), getPoolFee(), getTokenDecimals(), getTokenMeta(), upsertPoolFee(), upsertTokenMeta(), checkpointStmt() (+41 more)
+Nodes (50): assetStmt(), batchUpsertTokenMeta(), getPoolFee(), getTokenDecimals(), getTokenMeta(), upsertPoolFee(), upsertTokenMeta(), checkpointStmt() (+42 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.05
-Nodes (6): RegistryMetaCache, loadPoolMetaCache(), RegistryService, removePoolsFromGraphs(), CompatDatabase, runValidation()
+Nodes (28): getBalancerTokens(), enrichTokens(), getCurveTokens(), discoverCurveListedFactory(), enrichTokens(), fetchAndNormalizeBalancerPool(), fetchBalancerPoolState(), readContractWithTimeout() (+20 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.07
-Nodes (25): throwUnsupportedHypersync(), UnsupportedDecoder, detectReorg(), pick(), discoverCurveRemovals(), discoverPools(), discoverProtocol(), discoveryCheckpointFromNextBlock() (+17 more)
+Cohesion: 0.08
+Nodes (15): mergeStateIntoCache(), reloadCacheFromRegistry(), admitPoolsToGraphs(), createWatcherProtocolHandlers(), commitWatcherState(), handleWatcherLogs(), mergeWatcherState(), persistWatcherState() (+7 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.09
-Nodes (9): executeWithRpcRetry(), isEndpointCapabilityError(), _isMethodUnavailableError(), isRateLimitError(), isRetryableError(), lazyMetrics(), RpcEndpoint, RpcManager (+1 more)
+Cohesion: 0.1
+Nodes (29): exp(), getBalancerAmountIn(), getBalancerAmountOut(), ln(), powDown(), simulateBalancerSwap(), toBigInt(), defaultRates() (+21 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.09
-Nodes (12): createWatcherProtocolHandlers(), commitWatcherState(), handleWatcherLogs(), mergeWatcherState(), persistWatcherState(), reloadWatcherCache(), toTopicArray(), updateTickState() (+4 more)
-
-### Community 7 - "Community 7"
 Cohesion: 0.12
 Nodes (19): toFiniteNumber(), enumerateCycles(), enumerateCyclesDual(), enumerateCyclesForToken(), pruneByLiquidity(), sortByLogWeight(), annotatePath(), deduplicatePaths() (+11 more)
 
+### Community 7 - "Community 7"
+Cohesion: 0.11
+Nodes (9): executeWithRpcRetry(), isEndpointCapabilityError(), _isMethodUnavailableError(), isRateLimitError(), isRetryableError(), lazyMetrics(), RpcEndpoint, RpcManager (+1 more)
+
 ### Community 8 - "Community 8"
-Cohesion: 0.12
-Nodes (21): exp(), getBalancerAmountIn(), getBalancerAmountOut(), ln(), powDown(), simulateBalancerSwap(), defaultRates(), getCurveAmountIn() (+13 more)
+Cohesion: 0.11
+Nodes (20): buildArbTx(), buildTransferTx(), gasEstimateCacheKeyForRoute(), resolveFlashLoan(), buildFlashParams(), computeRouteHash(), encodeBalancerHop(), encodeCurveHop() (+12 more)
 
 ### Community 9 - "Community 9"
-Cohesion: 0.12
-Nodes (17): buildArbTx(), buildTransferTx(), resolveFlashLoan(), buildFlashParams(), computeRouteHash(), encodeBalancerHop(), encodeCurveHop(), encodeExecuteArb() (+9 more)
+Cohesion: 0.13
+Nodes (15): addPoolEdges(), buildGraph(), buildHubGraph(), createSwapEdge(), deserializeTopology(), getFeeBps(), getLiveStateRef(), getProtocolKind() (+7 more)
 
 ### Community 10 - "Community 10"
+Cohesion: 0.09
+Nodes (14): PollBalancer, PollCurve, PollUniv2, PollUniv3, _startLoop(), jsonRpc(), polygonPrivateMempoolHeaders(), privateMempoolSupportsBundles() (+6 more)
+
+### Community 11 - "Community 11"
+Cohesion: 0.08
+Nodes (7): routeKeyFromEdges(), clearGasEstimateCache(), startMetricsServer(), stopMetricsServer(), RouteCache, mergeArbPaths(), shutdown()
+
+### Community 12 - "Community 12"
 Cohesion: 0.12
 Nodes (6): buildChunkStateObject(), buildEvaluationChunks(), getStateVersion(), serialisedPathKey(), summariseEvaluationChunks(), WorkerPool
 
-### Community 11 - "Community 11"
+### Community 13 - "Community 13"
+Cohesion: 0.21
+Nodes (11): NonceManager, clearTrackedReceipt(), dryRun(), logFailure(), pollPendingReceipts(), pollTrackedReceipt(), sendTx(), sendTxBundle() (+3 more)
+
+### Community 14 - "Community 14"
 Cohesion: 0.23
 Nodes (15): divRoundingUp(), mulDiv(), mulDivRoundingUp(), getAmount0Delta(), getAmount1Delta(), getNextSqrtPriceFromAmount0RoundingUp(), getNextSqrtPriceFromAmount1RoundingDown(), getNextSqrtPriceFromInput() (+7 more)
 
-### Community 12 - "Community 12"
-Cohesion: 0.23
-Nodes (14): mergeStateIntoCache(), reloadCacheFromRegistry(), buildGraph(), buildHubGraph(), createSwapEdge(), deserializeTopology(), getFeeBps(), getLiveStateRef() (+6 more)
-
-### Community 13 - "Community 13"
-Cohesion: 0.16
-Nodes (2): routeKeyFromEdges(), RouteCache
-
-### Community 14 - "Community 14"
-Cohesion: 0.24
-Nodes (4): NonceManager, dryRun(), logFailure(), sendTx()
-
 ### Community 15 - "Community 15"
-Cohesion: 0.44
-Nodes (7): jsonRpc(), racePublicRPCs(), sendBundleAlchemy(), sendBundleBloXroute(), sendPrivateTransaction(), sendPrivateTx(), sendViaBloXroute()
+Cohesion: 0.4
+Nodes (3): formatOpportunities(), renderFrame(), startTui()
 
 ### Community 16 - "Community 16"
 Cohesion: 0.7
 Nodes (4): estimateGasCostWei(), rankRoutes(), scoreRoute(), selectBestRoute()
 
 ### Community 17 - "Community 17"
-Cohesion: 0.5
-Nodes (2): getBalancerTokens(), enrichTokens()
+Cohesion: 1.0
+Nodes (0): 
 
 ### Community 18 - "Community 18"
-Cohesion: 0.5
-Nodes (2): getCurveTokens(), enrichTokens()
+Cohesion: 1.0
+Nodes (0): 
 
 ### Community 19 - "Community 19"
 Cohesion: 1.0
@@ -191,34 +187,22 @@ Nodes (0):
 Cohesion: 1.0
 Nodes (0): 
 
-### Community 30 - "Community 30"
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 31 - "Community 31"
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 32 - "Community 32"
-Cohesion: 1.0
-Nodes (0): 
-
-### Community 33 - "Community 33"
-Cohesion: 1.0
-Nodes (0): 
-
 ## Knowledge Gaps
-- **Thin community `Community 19`** (2 nodes): `decode()`, `curve_crypto_factory.ts`
+- **Thin community `Community 17`** (2 nodes): `decode()`, `curve_crypto_factory.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 20`** (2 nodes): `decode()`, `curve_stable_factory.ts`
+- **Thin community `Community 18`** (2 nodes): `decode()`, `curve_stable_factory.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 21`** (2 nodes): `decode()`, `quickswap_v2.ts`
+- **Thin community `Community 19`** (2 nodes): `decode()`, `quickswap_v3.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 22`** (2 nodes): `decode()`, `quickswap_v3.ts`
+- **Thin community `Community 20`** (1 nodes): `index.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 23`** (2 nodes): `sushiswap_v2.ts`, `decode()`
+- **Thin community `Community 21`** (1 nodes): `index.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 24`** (2 nodes): `sushiswap_v3.ts`, `decode()`
+- **Thin community `Community 22`** (1 nodes): `index.ts`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 23`** (1 nodes): `index.ts`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 24`** (1 nodes): `abi_fragments.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 25`** (1 nodes): `index.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -226,33 +210,25 @@ Nodes (0):
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 27`** (1 nodes): `index.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 28`** (1 nodes): `abi_fragments.ts`
+- **Thin community `Community 28`** (1 nodes): `index.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 29`** (1 nodes): `index.ts`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 30`** (1 nodes): `index.ts`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 31`** (1 nodes): `index.ts`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 32`** (1 nodes): `index.ts`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 33`** (1 nodes): `index.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `log()` connect `Community 4` to `Community 0`, `Community 1`, `Community 3`, `Community 6`, `Community 7`, `Community 14`, `Community 15`?**
-  _High betweenness centrality (0.133) - this node is a cross-community bridge._
-- **Why does `RegistryService` connect `Community 3` to `Community 0`, `Community 1`, `Community 2`, `Community 4`, `Community 6`?**
-  _High betweenness centrality (0.122) - this node is a cross-community bridge._
-- **Why does `executeWithRpcRetry()` connect `Community 5` to `Community 0`, `Community 9`?**
-  _High betweenness centrality (0.082) - this node is a cross-community bridge._
-- **Are the 20 inferred relationships involving `log()` (e.g. with `fetchAllLogs()` and `discoverProtocol()`) actually correct?**
-  _`log()` has 20 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `RegistryService` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 4`?**
+  _High betweenness centrality (0.106) - this node is a cross-community bridge._
+- **Why does `log()` connect `Community 0` to `Community 1`, `Community 3`, `Community 4`, `Community 6`, `Community 10`, `Community 13`?**
+  _High betweenness centrality (0.096) - this node is a cross-community bridge._
+- **Why does `executeWithRpcRetry()` connect `Community 7` to `Community 8`, `Community 3`?**
+  _High betweenness centrality (0.090) - this node is a cross-community bridge._
+- **Are the 25 inferred relationships involving `log()` (e.g. with `fetchAllLogs()` and `enrichDiscoveredPools()`) actually correct?**
+  _`log()` has 25 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 9 inferred relationships involving `refreshCycles()` (e.g. with `.getActivePoolsMeta()` and `buildGraph()`) actually correct?**
+  _`refreshCycles()` has 9 INFERRED edges - model-reasoned connections that need verification._
 - **Should `Community 0` be split into smaller, more focused modules?**
-  _Cohesion score 0.04 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
-  _Cohesion score 0.06 - nodes in this community are weakly interconnected._
-- **Should `Community 2` be split into smaller, more focused modules?**
-  _Cohesion score 0.06 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.04 - nodes in this community are weakly interconnected._

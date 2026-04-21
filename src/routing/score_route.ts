@@ -3,18 +3,18 @@
  * src/routing/score_route.js — Route scoring and ranking
  *
  * Assigns a numeric score to a simulated route result to enable
- * fast selection of the best opportunity without running a full
- * profitability calculation.
+ * fast selection of the best opportunity before the full execution-grade
+ * profitability checks in profit/compute.js.
  *
  * Scoring factors (weighted):
- *   1. Raw profit (after gas estimate)
+ *   1. Raw profit after a lightweight gas normalization
  *   2. Profit/input ratio (capital efficiency)
  *   3. Gas estimate (lower is better)
  *   4. Number of hops (fewer is safer)
  *   5. Cross-protocol diversity bonus
  *
- * The score is dimensionless — only useful for relative ranking.
- * Use profit/compute.js for absolute profitability decisions.
+ * The score is dimensionless and ranking-only.
+ * Use profit/compute.js for absolute execution decisions.
  */
 
 // ─── Gas cost helpers ─────────────────────────────────────────
@@ -36,6 +36,12 @@ export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
   return BigInt(gasEstimate) * price;
 }
 
+export function gasCostInStartTokenUnits(gasCostWei: bigint, tokenToMaticRate?: bigint | null) {
+  if (tokenToMaticRate == null) return gasCostWei;
+  if (tokenToMaticRate <= 0n) return null;
+  return gasCostWei / tokenToMaticRate;
+}
+
 // ─── Route scorer ─────────────────────────────────────────────
 
 /**
@@ -54,26 +60,23 @@ export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
  * @param {Object} result         RouteResult
  * @param {Object} [options]
  * @param {bigint} [options.gasPriceWei]     Gas price override
+ * @param {bigint | null} [options.tokenToMaticRate]  1 raw start-token unit in MATIC wei
  * @param {bigint} [options.minNetProfit]    Reject routes with netProfit below this
  * @returns {ScoredRoute|null}    null if route fails minimum thresholds
  */
 export function scoreRoute(path: RouteLike, result: RouteResultLike, options: ScoreOptions = {}): ScoredRoute | null {
-  const { gasPriceWei, minNetProfit = 0n } = options;
+  const { gasPriceWei, tokenToMaticRate = null, minNetProfit = 0n } = options;
 
   if (!result.profitable || result.profit <= 0n) return null;
   if (result.amountIn <= 0n) return null;
 
-  // Gas cost in wei
   const gasCostWei = estimateGasCostWei(result.totalGas, gasPriceWei);
+  const gasCostInTokens = gasCostInStartTokenUnits(gasCostWei, tokenToMaticRate);
+  if (gasCostInTokens == null) return null;
 
-  // Net profit (profit - gas cost). Both in the start token's raw units.
-  // NOTE: Gas cost is in MATIC/wei which may not be the same denomination
-  // as profit (which is in the start token's units). For a precise comparison,
-  // profit must be converted to MATIC at current price. Here we use a
-  // simplified approach: if start token is WMATIC (native), they're directly
-  // comparable. For USDC/WETH, the caller should pass an appropriate offset.
-  // The absolute netProfit is still useful for relative ranking.
-  const netProfit = result.profit - gasCostWei;
+  // Ranking-only gas normalization. If we know the token/MATIC conversion,
+  // compare in raw start-token units; otherwise fall back to native wei math.
+  const netProfit = result.profit - gasCostInTokens;
 
   if (netProfit < minNetProfit) return null;
 
@@ -91,11 +94,11 @@ export function scoreRoute(path: RouteLike, result: RouteResultLike, options: Sc
   // Normalize to a 0-100 range conceptually
   const score =
     roi * 0.6 +
-    Number(netProfit) / 1e12 * 0.3 +  // scale down wei
+    Number(netProfit) / 1e12 * 0.3 +
     diversityBonus * 10 -
     hopPenalty * 5;
 
-  return { path, result, netProfit, score, roi };
+  return { path, result, netProfit, score, roi, gasCostInTokens };
 }
 
 /**
@@ -104,6 +107,7 @@ export function scoreRoute(path: RouteLike, result: RouteResultLike, options: Sc
  * @param {Array<{ path: Object, result: Object }>} candidates
  * @param {Object} [options]
  * @param {bigint} [options.gasPriceWei]
+ * @param {bigint | null} [options.tokenToMaticRate]
  * @param {bigint} [options.minNetProfit]
  * @returns {ScoredRoute[]}  Sorted descending by score
  */
@@ -150,6 +154,7 @@ type RouteResultLike = {
 
 type ScoreOptions = {
   gasPriceWei?: bigint;
+  tokenToMaticRate?: bigint | null;
   minNetProfit?: bigint;
 };
 
@@ -159,4 +164,5 @@ type ScoredRoute = {
   netProfit: bigint;
   score: number;
   roi: number;
+  gasCostInTokens: bigint;
 };

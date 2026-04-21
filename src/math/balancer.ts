@@ -41,6 +41,16 @@ const MAX_POW_ITERATIONS = 255;
 // Error tolerance for power series convergence
 const POW_PRECISION = 10n ** 10n; // 1e-8
 
+function toBigInt(value: any, fallback = 0n): bigint {
+  if (typeof value === "bigint") return value;
+  if (value == null) return fallback;
+  try {
+    return BigInt(value);
+  } catch {
+    return fallback;
+  }
+}
+
 // ─── Fixed-point power (x^y) via log/exp series ───────────────
 
 /**
@@ -132,6 +142,9 @@ function exp(x: bigint): bigint {
  * @returns {bigint}  x^y in 1e18 fixed-point
  */
 function powDown(x: bigint, y: bigint): bigint {
+  if (x <= 0n) return 0n;
+  if (x === ONE) return ONE;
+  if (y === 0n) return ONE;
   const lnX = ln(x);
   return exp((y * lnX) / ONE);
 }
@@ -151,30 +164,41 @@ function powDown(x: bigint, y: bigint): bigint {
  * @returns {bigint}          Output amount (after fees)
  */
 export function getBalancerAmountOut(amountIn: bigint, poolState: any, inIdx: number, outIdx: number): bigint {
+  amountIn = toBigInt(amountIn);
   if (amountIn <= 0n) return 0n;
 
   const { balances, weights, swapFee } = poolState;
   if (!balances || !weights) return 0n;
+  if (!Number.isInteger(inIdx) || !Number.isInteger(outIdx)) return 0n;
+  if (inIdx < 0 || outIdx < 0 || inIdx >= balances.length || outIdx >= balances.length) return 0n;
+  if (inIdx >= weights.length || outIdx >= weights.length || inIdx === outIdx) return 0n;
 
-  const balIn = balances[inIdx];
-  const balOut = balances[outIdx];
-  const wIn = weights[inIdx];
-  const wOut = weights[outIdx];
+  const balIn = toBigInt(balances[inIdx]);
+  const balOut = toBigInt(balances[outIdx]);
+  const wIn = toBigInt(weights[inIdx]);
+  const wOut = toBigInt(weights[outIdx]);
+  const fee = toBigInt(swapFee);
 
-  if (balIn <= 0n || balOut <= 0n) return 0n;
+  if (balIn <= 0n || balOut <= 0n || wIn <= 0n || wOut <= 0n) return 0n;
 
   // amountIn after fee: amountIn * (1 - swapFee)
-  const feeComplement = ONE - swapFee;
+  const feeComplement = ONE - fee;
+  if (feeComplement <= 0n) return 0n;
   const amountInAfterFee = (amountIn * feeComplement) / ONE;
+  const denominator = balIn + amountInAfterFee;
+  if (denominator <= 0n) return 0n;
 
   // ratio = balIn / (balIn + amountInAfterFee) in 1e18
-  const base = (balIn * ONE) / (balIn + amountInAfterFee);
+  const base = (balIn * ONE) / denominator;
+  if (base <= 0n || base > ONE) return 0n;
 
   // exponent = wIn / wOut in 1e18
   const exponent = (wIn * ONE) / wOut;
+  if (exponent <= 0n) return 0n;
 
   // base^exponent
   const power = powDown(base, exponent);
+  if (power < 0n || power > ONE) return 0n;
 
   // amountOut = balOut * (1 - power)
   const amountOut = (balOut * (ONE - power)) / ONE;
@@ -195,33 +219,43 @@ export function getBalancerAmountOut(amountIn: bigint, poolState: any, inIdx: nu
  * @returns {bigint}          Required input amount
  */
 export function getBalancerAmountIn(amountOut: bigint, poolState: any, inIdx: number, outIdx: number): bigint {
+  amountOut = toBigInt(amountOut);
   if (amountOut <= 0n) return 0n;
 
   const { balances, weights, swapFee } = poolState;
   if (!balances || !weights) return 0n;
+  if (!Number.isInteger(inIdx) || !Number.isInteger(outIdx)) return 0n;
+  if (inIdx < 0 || outIdx < 0 || inIdx >= balances.length || outIdx >= balances.length) return 0n;
+  if (inIdx >= weights.length || outIdx >= weights.length || inIdx === outIdx) return 0n;
 
-  const balIn = balances[inIdx];
-  const balOut = balances[outIdx];
-  const wIn = weights[inIdx];
-  const wOut = weights[outIdx];
+  const balIn = toBigInt(balances[inIdx]);
+  const balOut = toBigInt(balances[outIdx]);
+  const wIn = toBigInt(weights[inIdx]);
+  const wOut = toBigInt(weights[outIdx]);
+  const fee = toBigInt(swapFee);
 
-  if (balIn <= 0n || balOut <= 0n) return 0n;
+  if (balIn <= 0n || balOut <= 0n || wIn <= 0n || wOut <= 0n) return 0n;
   if (amountOut >= balOut) return 0n; // Not enough liquidity
 
   // exponent = wOut / wIn
   const exponent = (wOut * ONE) / wIn;
+  if (exponent <= 0n) return 0n;
 
   // base = balOut / (balOut - amountOut)
-  const base = (balOut * ONE) / (balOut - amountOut);
+  const denominator = balOut - amountOut;
+  if (denominator <= 0n) return 0n;
+  const base = (balOut * ONE) / denominator;
+  if (base < ONE) return 0n;
 
   // power = base^exponent
   const power = powDown(base, exponent);
+  if (power < ONE) return 0n;
 
   // amountInBeforeFee = balIn * (power - 1)
   const amountInBeforeFee = (balIn * (power - ONE)) / ONE;
 
   // amountIn = amountInBeforeFee / (1 - fee)
-  const feeComplement = ONE - swapFee;
+  const feeComplement = ONE - fee;
   if (feeComplement <= 0n) return 0n;
 
   return (amountInBeforeFee * ONE) / feeComplement + 1n;
@@ -244,9 +278,15 @@ export function simulateBalancerSwap(
   inIdx = 0,
   outIdx = 1
 ): { amountOut: bigint; gasEstimate: number } {
+  amountIn = toBigInt(amountIn);
   if (amountIn <= 0n) return { amountOut: 0n, gasEstimate: 0 };
 
-  const amountOut = getBalancerAmountOut(amountIn, poolState, inIdx, outIdx);
+  let amountOut = 0n;
+  try {
+    amountOut = getBalancerAmountOut(amountIn, poolState, inIdx, outIdx);
+  } catch {
+    amountOut = 0n;
+  }
 
   // Balancer swaps: ~150k gas
   return { amountOut, gasEstimate: 150_000 };

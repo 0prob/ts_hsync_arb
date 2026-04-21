@@ -4,7 +4,7 @@ import InkTable from 'ink-table';
 import Gradient from 'ink-gradient';
 import BigText from 'ink-big-text';
 import type { JSX } from 'react';
-import type { BotState } from './index.tsx';
+import type { BotState } from './types.ts';
 
 const Table = InkTable as unknown as (props: { data: BotState["opportunities"] }) => JSX.Element;
 

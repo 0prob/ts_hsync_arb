@@ -5,6 +5,10 @@
 
 import { mergeStateIntoCache, reloadCacheFromRegistry } from "./cache_utils.ts";
 import { createWatcherProtocolHandlers } from "./watcher_protocol_handlers.ts";
+import { validatePoolState } from "./normalizer.ts";
+import { logger } from "../utils/logger.ts";
+
+const watcherStateLogger: any = logger.child({ component: "watcher_state_ops" });
 
 export function toTopicArray(log: any) {
   return [log.topic0, log.topic1, log.topic2, log.topic3].filter((v) => v != null);
@@ -40,7 +44,7 @@ export async function handleWatcherLogs({
     const pool = registry.getPoolMeta(addr);
     if (!pool) continue;
 
-    const state = cache.get(addr);
+    const state = cloneWatcherState(cache.get(addr));
     if (!state) continue;
 
     const topic0 = toTopicArray(log)[0];
@@ -62,7 +66,8 @@ export async function handleWatcherLogs({
         changedAddrs.add(addr);
       }
     } catch (err: any) {
-      console.warn(`[watcher] Failed to update ${addr}: ${err.message}`);
+      watcherStateLogger.error({ poolAddress: addr, err }, "Watcher state update failed");
+      throw new Error(`watcher update failed for ${addr}: ${err?.message ?? err}`);
     }
   }
 
@@ -111,26 +116,60 @@ export function updateTickState(state: any, tick: any, amount: any, isNetPositiv
   state._sortedTicks = null;
 }
 
+function cloneWatcherState(state: any) {
+  if (!state) return state;
+  const cloned = { ...state };
+  if (state.ticks instanceof Map) {
+    cloned.ticks = new Map(
+      [...state.ticks.entries()].map(([tick, data]: any) => [
+        tick,
+        {
+          liquidityGross: data?.liquidityGross ?? 0n,
+          liquidityNet: data?.liquidityNet ?? 0n,
+        },
+      ]),
+    );
+  }
+  return cloned;
+}
+
+function validateWatcherStateOrThrow(state: any) {
+  const verdict = validatePoolState(state);
+  if (!verdict.valid) {
+    throw new Error(verdict.reason ?? "invalid watcher state");
+  }
+
+  if (state.protocol?.includes("V3")) {
+    if (state.liquidity == null || state.liquidity < 0n) {
+      throw new Error("V3: negative liquidity");
+    }
+    if (state.ticks instanceof Map) {
+      for (const [tick, data] of state.ticks.entries()) {
+        if (data.liquidityGross < 0n) {
+          throw new Error(`V3: negative liquidityGross at tick ${tick}`);
+        }
+      }
+    }
+  }
+}
+
 export function mergeWatcherState(cache: any, addr: any, nextState: any) {
   return mergeStateIntoCache(cache, addr, nextState);
 }
 
 export function commitWatcherState(cache: any, persistState: any, addr: any, state: any, rawLog: any) {
+  validateWatcherStateOrThrow(state);
   state.timestamp = Date.now();
   cache.set(addr, state);
   persistState(addr, state, rawLog);
 }
 
 export function persistWatcherState(registry: any, addr: any, state: any, rawLog: any, fallbackBlock: any) {
-  try {
-    registry.updatePoolState({
-      pool_address: addr,
-      block: Number(rawLog?.blockNumber ?? fallbackBlock),
-      data: state,
-    });
-  } catch (err: any) {
-    console.warn(`[watcher] Failed to persist state for ${addr}: ${err.message}`);
-  }
+  registry.updatePoolState({
+    pool_address: addr,
+    block: Number(rawLog?.blockNumber ?? fallbackBlock),
+    data: state,
+  });
 }
 
 export function reloadWatcherCache(registry: any, cache: any, pendingEnrichment: any) {

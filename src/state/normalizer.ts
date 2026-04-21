@@ -73,6 +73,8 @@ const BALANCER_PROTOCOLS = new Set([
   "BALANCER_V2",
 ]);
 
+const ONE = 10n ** 18n;
+
 // ─── Normalizers ──────────────────────────────────────────────
 
 /**
@@ -173,12 +175,26 @@ export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any
  */
 export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   const n = tokens.length;
-  const ONE = 10n ** 18n;
+  const toBigInt = (value: any, fallback = 0n): bigint => {
+    if (typeof value === "bigint") return value;
+    if (value == null) return fallback;
+    try {
+      return BigInt(value);
+    } catch {
+      return fallback;
+    }
+  };
 
   // Default: equal weights
-  const weights = rawState.weights ||
-    (meta?.weights?.map(BigInt)) ||
-    Array(n).fill(ONE / BigInt(n));
+  const weights = Array.isArray(rawState.weights)
+    ? rawState.weights.map((value: any) => toBigInt(value))
+    : Array.isArray(meta?.weights)
+      ? meta.weights.map((value: any) => toBigInt(value))
+      : Array(n).fill(ONE / BigInt(n));
+  const swapFee = toBigInt(rawState.swapFee ?? meta?.swapFee ?? 3_000_000_000_000_000n);
+  const balances = Array.isArray(rawState.balances)
+    ? rawState.balances.map((value: any) => toBigInt(value))
+    : [];
 
   return {
     poolId: poolAddress.toLowerCase(),
@@ -186,10 +202,10 @@ export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: 
     token0: (tokens[0] || "").toLowerCase(),
     token1: (tokens[1] || "").toLowerCase(),
     tokens: tokens.map((t: any) => t.toLowerCase()),
-    fee: rawState.swapFee || BigInt(meta?.swapFee || 3_000_000_000_000_000n), // 0.3%
-    balances: rawState.balances || [],
+    fee: swapFee,
+    balances,
     weights,
-    swapFee: rawState.swapFee || BigInt(meta?.swapFee || 3_000_000_000_000_000n) as any,
+    swapFee,
     timestamp: rawState.fetchedAt || Date.now(),
   };
 }
@@ -212,25 +228,28 @@ export function normalizePoolState(poolAddress: any, protocol: any, tokens: any,
   if (!rawState) return null;
 
   const addr = poolAddress.toLowerCase();
+  let normalized = null;
 
   if (V2_PROTOCOLS.has(protocol)) {
-    return normalizeV2State(addr, protocol, tokens, rawState, meta);
+    normalized = normalizeV2State(addr, protocol, tokens, rawState, meta);
+  } else if (V3_PROTOCOLS.has(protocol)) {
+    normalized = normalizeV3State(addr, protocol, tokens, rawState, meta);
+  } else if (CURVE_PROTOCOLS.has(protocol)) {
+    normalized = normalizeCurveState(addr, protocol, tokens, rawState, meta);
+  } else if (BALANCER_PROTOCOLS.has(protocol)) {
+    normalized = normalizeBalancerState(addr, protocol, tokens, rawState, meta);
+  } else {
+    console.warn(`[normalizer] Unknown protocol: ${protocol} for pool ${addr}`);
+    return null;
   }
 
-  if (V3_PROTOCOLS.has(protocol)) {
-    return normalizeV3State(addr, protocol, tokens, rawState, meta);
+  const verdict = validatePoolState(normalized);
+  if (!verdict.valid) {
+    console.warn(`[normalizer] Rejecting invalid ${protocol} state for pool ${addr}: ${verdict.reason}`);
+    return null;
   }
 
-  if (CURVE_PROTOCOLS.has(protocol)) {
-    return normalizeCurveState(addr, protocol, tokens, rawState, meta);
-  }
-
-  if (BALANCER_PROTOCOLS.has(protocol)) {
-    return normalizeBalancerState(addr, protocol, tokens, rawState, meta);
-  }
-
-  console.warn(`[normalizer] Unknown protocol: ${protocol} for pool ${addr}`);
-  return null;
+  return normalized;
 }
 
 /**
@@ -245,12 +264,16 @@ export function validatePoolState(state: any) {
   if (!state.protocol) return { valid: false, reason: "missing protocol" };
   if (!state.tokens || state.tokens.length < 2)
     return { valid: false, reason: "fewer than 2 tokens" };
+  if (!Number.isFinite(Number(state.timestamp)) || Number(state.timestamp) <= 0)
+    return { valid: false, reason: "invalid timestamp" };
 
   if (V2_PROTOCOLS.has(state.protocol)) {
     if (state.reserve0 == null || state.reserve1 == null)
       return { valid: false, reason: "V2: missing reserves" };
     if (state.reserve0 <= 0n || state.reserve1 <= 0n)
       return { valid: false, reason: "V2: zero reserves" };
+    if (state.fee == null || state.fee <= 0n || state.fee >= 1000n)
+      return { valid: false, reason: "V2: invalid fee" };
   } else if (V3_PROTOCOLS.has(state.protocol)) {
     if (!state.initialized)
       return { valid: false, reason: "V3: not initialized" };
@@ -258,6 +281,8 @@ export function validatePoolState(state: any) {
       return { valid: false, reason: "V3: zero sqrtPrice" };
     if (!state.liquidity || state.liquidity === 0n)
       return { valid: false, reason: "V3: zero liquidity" };
+    if (state.fee == null || state.fee < 0n)
+      return { valid: false, reason: "V3: invalid fee" };
   } else if (CURVE_PROTOCOLS.has(state.protocol)) {
     if (!state.balances || state.balances.length < 2)
       return { valid: false, reason: "Curve: missing balances" };
@@ -265,13 +290,27 @@ export function validatePoolState(state: any) {
       return { valid: false, reason: "Curve: zero balance" };
     if (!state.A || state.A <= 0n)
       return { valid: false, reason: "Curve: missing A" };
+    if (!state.rates || state.rates.length !== state.balances.length)
+      return { valid: false, reason: "Curve: invalid rates" };
+    if (state.rates.some((r: any) => r <= 0n))
+      return { valid: false, reason: "Curve: non-positive rate" };
+    if (state.fee == null || state.fee < 0n)
+      return { valid: false, reason: "Curve: invalid fee" };
   } else if (BALANCER_PROTOCOLS.has(state.protocol)) {
     if (!state.balances || state.balances.length < 2)
       return { valid: false, reason: "Balancer: missing balances" };
     if (!state.weights || state.weights.length < 2)
       return { valid: false, reason: "Balancer: missing weights" };
+    if (state.balances.length !== state.weights.length)
+      return { valid: false, reason: "Balancer: balances/weights length mismatch" };
+    if (state.balances.length !== state.tokens.length)
+      return { valid: false, reason: "Balancer: token count mismatch" };
     if (state.balances.some((b: any) => b <= 0n))
       return { valid: false, reason: "Balancer: zero balance" };
+    if (state.weights.some((w: any) => w <= 0n))
+      return { valid: false, reason: "Balancer: non-positive weight" };
+    if (state.swapFee == null || state.swapFee < 0n || state.swapFee >= ONE)
+      return { valid: false, reason: "Balancer: invalid swapFee" };
   }
 
   return { valid: true };

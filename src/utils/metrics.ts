@@ -38,6 +38,38 @@ export const arbsFound = new client.Counter({
   registers: [register],
 });
 
+/** Histogram for per-pass shortlist size entering optimization */
+export const candidateShortlistSize = new client.Histogram({
+  name: "arb_candidate_shortlist_size",
+  help: "Number of candidates shortlisted for optimization in a pass",
+  buckets: [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144],
+  registers: [register],
+});
+
+/** Histogram for per-pass optimized candidate count */
+export const candidateOptimizedCount = new client.Histogram({
+  name: "arb_candidate_optimized_count",
+  help: "Number of shortlisted candidates that were optimized in a pass",
+  buckets: [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144],
+  registers: [register],
+});
+
+/** Histogram for per-pass profitable candidate count after assessment */
+export const candidateProfitableCount = new client.Histogram({
+  name: "arb_candidate_profitable_count",
+  help: "Number of profitable candidates remaining after assessment in a pass",
+  buckets: [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144],
+  registers: [register],
+});
+
+/** Histogram for the profitable yield ratio of the candidate pipeline */
+export const candidateProfitableYield = new client.Histogram({
+  name: "arb_candidate_profitable_yield_ratio",
+  help: "Profitable candidates divided by shortlisted candidates in a pass",
+  buckets: [0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1],
+  registers: [register],
+});
+
 /** Histogram for transaction latency (ms) */
 export const txLatency = new client.Histogram({
   name: "arb_tx_latency_ms",

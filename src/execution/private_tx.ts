@@ -14,7 +14,10 @@ import {
   POLYGON_RPC,
   PRIVATE_MEMPOOL_URL,
   PRIVATE_MEMPOOL_METHOD,
-  BLOXROUTE_AUTH,
+  POLYGON_PRIVATE_MEMPOOL_URL,
+  POLYGON_PRIVATE_MEMPOOL_METHOD,
+  POLYGON_PRIVATE_MEMPOOL_AUTH_HEADER,
+  POLYGON_PRIVATE_MEMPOOL_AUTH_TOKEN,
 } from "../config/index.ts";
 
 // ─── Constants ────────────────────────────────────────────────
@@ -55,6 +58,15 @@ async function jsonRpc(url: any, method: any, params: any, headers: any = {}) {
   return res.json();
 }
 
+function polygonPrivateMempoolHeaders() {
+  if (!POLYGON_PRIVATE_MEMPOOL_AUTH_HEADER || !POLYGON_PRIVATE_MEMPOOL_AUTH_TOKEN) {
+    return {};
+  }
+  return {
+    [POLYGON_PRIVATE_MEMPOOL_AUTH_HEADER]: POLYGON_PRIVATE_MEMPOOL_AUTH_TOKEN,
+  };
+}
+
 // ─── Sign transaction ─────────────────────────────────────────
 
 export async function signTransaction(tx: any, privateKey: any, nonce: any, chainId = 137) {
@@ -93,49 +105,25 @@ export async function sendPrivateTransaction(rawTx: any, rpcUrl: any) {
   return response.result;
 }
 
-export async function sendViaBloXroute(rawTx: any, auth: any) {
-  const token = auth || BLOXROUTE_AUTH;
-  if (!token) throw new Error("sendViaBloXroute: no auth token");
+export async function sendPolygonPrivateTransaction(rawTx: any, rpcUrl: any = POLYGON_PRIVATE_MEMPOOL_URL) {
+  const url = rpcUrl || POLYGON_PRIVATE_MEMPOOL_URL;
+  if (!url) throw new Error("sendPolygonPrivateTransaction: no URL");
 
-  const BLOXROUTE_URL = "https://mdn.api.bloxroute.com/";
-  const rawHex = rawTx.startsWith("0x") ? rawTx.slice(2) : rawTx;
-
-  const response: any = await jsonRpc(
-    BLOXROUTE_URL,
-    "blxr_tx",
-    [{ transaction: rawHex }],
-    { Authorization: token }
-  );
-
-  if (response.error) throw new Error(`blxr_tx failed: ${response.error.message}`);
-  return response.result?.tx_hash || response.result;
-}
-
-/**
- * Submit a bundle of transactions to BloXroute.
- * @param {string[]} rawTxs  Array of signed raw transactions
- * @param {Object} options   Bundle options (blockNumber, etc.)
- */
-export async function sendBundleBloXroute(rawTxs: any, options: any = {}, auth: any) {
-  const token = auth || BLOXROUTE_AUTH;
-  if (!token) throw new Error("sendBundleBloXroute: no auth token");
-
-  const BLOXROUTE_URL = "https://mdn.api.bloxroute.com/";
-  const transactions = rawTxs.map((tx: any) => ({ transaction: tx.startsWith("0x") ? tx.slice(2) : tx }));
+  const method = POLYGON_PRIVATE_MEMPOOL_METHOD || "eth_sendRawTransaction";
+  const params =
+    method === "eth_sendPrivateTransaction"
+      ? [{ tx: rawTx }]
+      : [rawTx];
 
   const response: any = await jsonRpc(
-    BLOXROUTE_URL,
-    "blxr_submit_bundle",
-    [{
-      transactions,
-      block_number: options.blockNumber,
-      min_timestamp: options.minTimestamp,
-      max_timestamp: options.maxTimestamp,
-    }],
-    { Authorization: token }
+    url,
+    method,
+    params,
+    polygonPrivateMempoolHeaders(),
   );
-
-  if (response.error) throw new Error(`blxr_submit_bundle failed: ${response.error.message}`);
+  if (response.error) {
+    throw new Error(`${method} failed: ${response.error.message}`);
+  }
   return response.result;
 }
 
@@ -159,6 +147,40 @@ export async function sendBundleAlchemy(rawTxs: any, options: any = {}, rpcUrl: 
 
   if (response.error) throw new Error(`eth_sendBundle failed: ${response.error.message}`);
   return response.result;
+}
+
+function privateMempoolSupportsBundles() {
+  return Boolean(PRIVATE_MEMPOOL_URL && PRIVATE_MEMPOOL_METHOD === "eth_sendBundle");
+}
+
+export async function sendPrivateBundle(rawTxs: any, options: any = {}) {
+  const { blockNumber } = options;
+  if (!blockNumber) throw new Error("sendPrivateBundle: blockNumber required");
+
+  const submissions = [];
+
+  if (privateMempoolSupportsBundles()) {
+    submissions.push(
+      sendBundleAlchemy(rawTxs, { ...options, blockNumber }, PRIVATE_MEMPOOL_URL)
+        .then((bundleHash) => ({ bundleHash, method: "eth_sendBundle" }))
+    );
+  }
+
+  if (submissions.length === 0) {
+    return {
+      submitted: false,
+      retryIndividually: true,
+      error: "No bundle-capable relay configured",
+    };
+  }
+
+  try {
+    const result = await Promise.any(submissions);
+    console.log(`[private_tx] Private bundle submitted via ${result.method}`);
+    return { submitted: true, ...result };
+  } catch (err: any) {
+    return { submitted: false, error: err?.message ?? String(err) };
+  }
 }
 
 export async function racePublicRPCs(rawTx: any, rpcs: any) {
@@ -185,11 +207,11 @@ export async function sendPrivateTx(rawTx: any, options: any = {}) {
   const { allowPublicFallback = true } = options;
   const submissions = [];
 
-  // 1. BloXroute
-  if (BLOXROUTE_AUTH) {
+  // 1. Dedicated Polygon private mempool
+  if (POLYGON_PRIVATE_MEMPOOL_URL) {
     submissions.push(
-      sendViaBloXroute(rawTx, undefined)
-        .then(txHash => ({ txHash, method: "bloxroute" }))
+      sendPolygonPrivateTransaction(rawTx, POLYGON_PRIVATE_MEMPOOL_URL)
+        .then(txHash => ({ txHash, method: `polygon_private_mempool:${POLYGON_PRIVATE_MEMPOOL_METHOD}` }))
     );
   }
 

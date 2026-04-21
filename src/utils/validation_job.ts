@@ -107,13 +107,16 @@ export function startValidationJob(registry: any, options: any = {}) {
   } = options;
 
   if (_timer !== null) {
-    logger.warn("[validation_job] Job already running — ignoring duplicate start");
+    logger.warn(
+      { event: "validation_job_duplicate_start" },
+      "Validation job already running; ignoring duplicate start"
+    );
     return { stop: stopValidationJob };
   }
 
   logger.info(
-    { interval_ms: intervalMs },
-    "[validation_job] Starting periodic registry validation job"
+    { event: "validation_job_start", interval_ms: intervalMs },
+    "Starting periodic registry validation job"
   );
 
   if (runImmediately) {
@@ -136,6 +139,6 @@ export function stopValidationJob() {
   if (_timer !== null) {
     clearInterval(_timer);
     _timer = null;
-    logger.info("[validation_job] Periodic registry validation job stopped");
+    logger.info({ event: "validation_job_stop" }, "Periodic registry validation job stopped");
   }
 }

@@ -47,6 +47,21 @@ const BPS_DENOM = 10_000n;
  */
 const DEFAULT_MIN_PROFIT = 0n;
 
+function invalidAssessment(routeResult: Partial<RouteResultLike>, reason: string): ProfitAssessment {
+  return {
+    shouldExecute: false,
+    grossProfit: routeResult.profit ?? 0n,
+    gasCostWei: 0n,
+    gasCostInTokens: 0n,
+    slippageDeduction: 0n,
+    revertPenalty: 0n,
+    netProfit: 0n,
+    netProfitAfterGas: 0n,
+    roi: 0,
+    rejectReason: reason,
+  };
+}
+
 // ─── Gas model ────────────────────────────────────────────────
 
 /**
@@ -153,7 +168,21 @@ export function computeProfit(routeResult: RouteResultLike, options: ProfitOptio
     hopCount = 2,
   } = options;
 
+  if (!routeResult) return invalidAssessment({}, "missing route result");
+
   const { amountIn, amountOut, profit: grossProfit, totalGas } = routeResult;
+  if (amountIn <= 0n) return invalidAssessment(routeResult, "amountIn <= 0");
+  if (amountOut < 0n) return invalidAssessment(routeResult, "amountOut < 0");
+  if (grossProfit !== amountOut - amountIn) return invalidAssessment(routeResult, "profit mismatch");
+  if (!Number.isFinite(totalGas) || totalGas < 0) return invalidAssessment(routeResult, "invalid totalGas");
+  if (gasPriceWei < 0n) return invalidAssessment(routeResult, "gasPriceWei < 0");
+  if (slippageBps < 0n || slippageBps > BPS_DENOM) return invalidAssessment(routeResult, "invalid slippageBps");
+  if (revertRiskBps < 0n || revertRiskBps > BPS_DENOM) return invalidAssessment(routeResult, "invalid revertRiskBps");
+  if (minNetProfit < 0n) return invalidAssessment(routeResult, "minNetProfit < 0");
+  if (!Number.isFinite(hopCount) || hopCount < 1) return invalidAssessment(routeResult, "invalid hopCount");
+  if (tokenToMaticRate != null && tokenToMaticRate <= 0n) {
+    return invalidAssessment(routeResult, "tokenToMaticRate <= 0");
+  }
 
   // 1. Gas cost in wei
   const gasCost = gasCostWei(totalGas, gasPriceWei);

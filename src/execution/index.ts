@@ -61,7 +61,6 @@ export { buildArbTx, buildTransferTx } from "./build_tx.ts";
 export {
   signTransaction,
   sendPrivateTx,
-  sendBundleBloXroute,
   sendBundleAlchemy,
 } from "./private_tx.ts";
 

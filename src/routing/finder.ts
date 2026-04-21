@@ -21,6 +21,7 @@
 import { simulateCurveSwap } from "../math/curve.ts";
 import { simulateBalancerSwap } from "../math/balancer.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
+import { routeIdentityFromEdges } from "./route_identity.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
@@ -161,12 +162,7 @@ export function annotatePath(path: any) {
  * @returns {string}
  */
 export function routeKeyFromEdges(startToken: any, edges: any) {
-  return [
-    startToken.toLowerCase(),
-    ...edges.map((edge: any) =>
-      `${edge.poolAddress.toLowerCase()}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`
-    ),
-  ].join("|");
+  return routeIdentityFromEdges(startToken, edges);
 }
 
 // ─── Pruning ──────────────────────────────────────────────────

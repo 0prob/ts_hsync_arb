@@ -122,6 +122,17 @@ export class NonceManager {
   }
 
   /**
+   * Mark a submitted transaction as dropped / lost from the mempool.
+   * Force a resync so the next allocation uses chain state instead of the
+   * locally advanced nonce.
+   *
+   * @param {string} address
+   */
+  markDropped(address: any) {
+    this.resync(address);
+  }
+
+  /**
    * Force a resync from chain on next call to next().
    *
    * @param {string} address

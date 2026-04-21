@@ -85,8 +85,6 @@ async function readContractWithTimeout(params: any, label: any) {
 }
 
 export async function fetchBalancerPoolState(poolAddress: string, poolId: string | null | undefined) {
-  const ONE = 10n ** 18n;
-
   let resolvedPoolId = poolId;
   if (!resolvedPoolId) {
     try {
@@ -138,12 +136,17 @@ export async function fetchBalancerPoolState(poolAddress: string, poolId: string
   const [vaultTokens, vaultBalances] = vaultResult.value;
   const balances = Array.from(vaultBalances).map((v) => BigInt(v as any));
 
-  let weights;
-  if (weightsResult.status === "fulfilled") {
-    weights = Array.from(weightsResult.value).map((v) => BigInt(v as any));
-  } else {
-    const n = balances.length;
-    weights = Array(n).fill(ONE / BigInt(n));
+  if (weightsResult.status === "rejected") {
+    throw new Error(
+      `getNormalizedWeights failed: unsupported Balancer pool math or unreadable weights (${weightsResult.reason?.message ?? "unknown error"})`
+    );
+  }
+
+  const weights = Array.from(weightsResult.value).map((v) => BigInt(v as any));
+  if (weights.length !== balances.length) {
+    throw new Error(
+      `getNormalizedWeights length mismatch: weights=${weights.length} balances=${balances.length}`
+    );
   }
 
   const swapFee =

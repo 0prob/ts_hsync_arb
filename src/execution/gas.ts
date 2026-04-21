@@ -27,6 +27,8 @@ export const executionClient = createPublicClient({
   }),
 });
 
+const gasEstimateCache = new Map<string, bigint>();
+
 // ─── Gas Oracle ───────────────────────────────────────────────
 
 /**
@@ -176,6 +178,54 @@ export async function estimateGas(tx: any, fromAddress: any) {
   );
 }
 
+export function clearGasEstimateCache() {
+  gasEstimateCache.clear();
+}
+
+export function gasEstimateCacheKey(tx: any, fromAddress: any) {
+  const to = String(tx?.to ?? "").toLowerCase();
+  const data = String(tx?.data ?? "").toLowerCase();
+  const value = String(tx?.value ?? 0n);
+  const account = String(fromAddress ?? "").toLowerCase();
+  return `${account}|${to}|${value}|${data}`;
+}
+
+function clampBigInt(value: bigint, min: bigint, max: bigint) {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+/**
+ * Scale the priority fee bid up with expected profit margin.
+ *
+ * Margin is expressed in basis points of the input amount. The bid ramps from
+ * 1.0x at 0 bps to 3.0x once the margin reaches 500 bps (5%).
+ */
+export function scalePriorityFeeByProfitMargin(
+  fees: { baseFee: bigint; priorityFee: bigint; maxFee: bigint },
+  profitMarginBps: bigint | number,
+  options: any = {},
+) {
+  const minMultiplierBps = BigInt(options.minMultiplierBps ?? 10_000n);
+  const maxMultiplierBps = BigInt(options.maxMultiplierBps ?? 30_000n);
+  const fullRampMarginBps = BigInt(options.fullRampMarginBps ?? 500n);
+
+  const margin = clampBigInt(BigInt(profitMarginBps ?? 0), 0n, fullRampMarginBps);
+  const multiplierBps =
+    minMultiplierBps +
+    ((maxMultiplierBps - minMultiplierBps) * margin) / fullRampMarginBps;
+  const maxPriorityFeePerGas =
+    (fees.priorityFee * multiplierBps + 9_999n) / 10_000n;
+  const maxFeePerGas = fees.baseFee * 2n + maxPriorityFeePerGas;
+
+  return {
+    multiplierBps,
+    maxPriorityFeePerGas,
+    maxFeePerGas,
+  };
+}
+
 // ─── Recommended gas params ────────────────────────────────────
 
 /**
@@ -183,10 +233,26 @@ export async function estimateGas(tx: any, fromAddress: any) {
  * Uses cached fees from the oracle to minimize hot-path latency.
  */
 export async function recommendGasParams(tx: any, fromAddress: any, options: any = {}) {
-  const { gasMultiplier = 1.25, maxFeeOverride, priorityFeeOverride } = options;
+  const {
+    gasMultiplier = 1.25,
+    maxFeeOverride,
+    priorityFeeOverride,
+    gasEstimateCacheKey,
+    forceRefreshEstimate = false,
+  } = options;
 
-  // Only perform eth_estimateGas on the hot path; fees are cached
-  const gasEstimate = await estimateGas(tx, fromAddress);
+  // Only perform eth_estimateGas on the hot path when the route shape is not
+  // already cached for the current topology version.
+  let gasEstimate: bigint | undefined = undefined;
+  if (gasEstimateCacheKey && !forceRefreshEstimate) {
+    gasEstimate = gasEstimateCache.get(gasEstimateCacheKey);
+  }
+  if (gasEstimate == null) {
+    gasEstimate = await estimateGas(tx, fromAddress);
+    if (gasEstimateCacheKey) {
+      gasEstimateCache.set(gasEstimateCacheKey, gasEstimate as bigint);
+    }
+  }
   const fees = oracle.getFees();
 
   const maxFeePerGas = maxFeeOverride ?? fees.maxFee;

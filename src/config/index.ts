@@ -101,6 +101,16 @@ if (!ENVIO_API_TOKEN) {
 /** Max number of logs to fetch in a single HyperSync batch */
 export const HYPERSYNC_BATCH_SIZE = _num("HYPERSYNC_BATCH_SIZE", "HYPERSYNC_BATCH_SIZE", 5000);
 
+/**
+ * Max number of blocks a single historical HyperSync `get()` page may scan.
+ * Bounding block span keeps sparse backfills within HyperSync's query-time budget.
+ */
+export const HYPERSYNC_MAX_BLOCKS_PER_REQUEST = _num(
+  "HYPERSYNC_MAX_BLOCKS_PER_REQUEST",
+  "HYPERSYNC_MAX_BLOCKS_PER_REQUEST",
+  1_000_000
+);
+
 /** Max number of addresses to include in a HyperSync filter before falling back to topic-only */
 export const HYPERSYNC_MAX_ADDRESS_FILTER = _num("HYPERSYNC_MAX_ADDRESS_FILTER", "HYPERSYNC_MAX_ADDRESS_FILTER", 1000);
 
@@ -186,7 +196,6 @@ export const FREE_RPC_URLS = [...new Set(_allUrls)];
 /**
  * URL of the private mempool endpoint.
  *   Alchemy:  https://polygon-mainnet.g.alchemy.com/v2/<KEY>
- *   BloXroute: set BLOXROUTE_AUTH; URL is hardcoded in private_tx.js
  *   Custom:   any endpoint accepting eth_sendRawTransaction
  */
 export const PRIVATE_MEMPOOL_URL = process.env.PRIVATE_MEMPOOL_URL || "";
@@ -194,16 +203,40 @@ export const PRIVATE_MEMPOOL_URL = process.env.PRIVATE_MEMPOOL_URL || "";
 /**
  * RPC method to use with PRIVATE_MEMPOOL_URL.
  *   "eth_sendPrivateTransaction" — Alchemy / QuickNode private tx
+ *   "eth_sendBundle"             — bundle-capable private relay
  *   "eth_sendRawTransaction"     — standard submission (default if unset)
  */
 export const PRIVATE_MEMPOOL_METHOD =
   process.env.PRIVATE_MEMPOOL_METHOD || "eth_sendRawTransaction";
 
 /**
- * BloXroute Authorization bearer token.
- * If set, BloXroute is tried first (strongest MEV protection on Polygon).
+ * Dedicated Polygon private mempool endpoint. Keep this separate from the
+ * generic PRIVATE_MEMPOOL_URL so provider-specific rollout does not affect
+ * other private relay paths.
  */
-export const BLOXROUTE_AUTH = process.env.BLOXROUTE_AUTH || "";
+export const POLYGON_PRIVATE_MEMPOOL_URL =
+  process.env.POLYGON_PRIVATE_MEMPOOL_URL || "";
+
+/**
+ * RPC method used by the Polygon private mempool endpoint. Default assumes
+ * a drop-in eth_sendRawTransaction-style interface.
+ */
+export const POLYGON_PRIVATE_MEMPOOL_METHOD =
+  process.env.POLYGON_PRIVATE_MEMPOOL_METHOD || "eth_sendRawTransaction";
+
+/**
+ * Optional auth header for Polygon private mempool access. Example:
+ *   "Authorization"
+ *   "x-api-key"
+ */
+export const POLYGON_PRIVATE_MEMPOOL_AUTH_HEADER =
+  process.env.POLYGON_PRIVATE_MEMPOOL_AUTH_HEADER || "";
+
+/**
+ * Optional auth token/value paired with POLYGON_PRIVATE_MEMPOOL_AUTH_HEADER.
+ */
+export const POLYGON_PRIVATE_MEMPOOL_AUTH_TOKEN =
+  process.env.POLYGON_PRIVATE_MEMPOOL_AUTH_TOKEN || "";
 
 // ─── RPC Retry / Rate-Limit ───────────────────────────────────
 

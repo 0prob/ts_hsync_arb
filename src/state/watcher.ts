@@ -24,6 +24,7 @@ import {
 } from "./watcher_state_ops.ts";
 import { parseAbiItem, encodeEventTopics } from "viem";
 import { HYPERSYNC_BATCH_SIZE, HYPERSYNC_MAX_ADDRESS_FILTER } from "../config/index.ts";
+import { logger } from "../utils/logger.ts";
 
 const WATCHER_LOOKBACK_BLOCKS = 100;
 const WATCHER_IDLE_SLEEP_MS = 1_000;
@@ -64,6 +65,7 @@ const LOG_FIELDS = [
   LogField.LogIndex,
   LogField.TransactionIndex,
 ];
+const watcherLogger: any = logger.child({ component: "watcher" });
 
 function watcherSleep(ms: any) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -123,7 +125,10 @@ export class StateWatcher {
         try {
           const height = Number(await client.getHeight());
           this._lastBlock = Math.max(0, height - WATCHER_LOOKBACK_BLOCKS);
-          console.log(`[watcher] No checkpoint — starting from block ${this._lastBlock} (tip − ${WATCHER_LOOKBACK_BLOCKS})`);
+          watcherLogger.info(
+            { startBlock: this._lastBlock, lookbackBlocks: WATCHER_LOOKBACK_BLOCKS },
+            "No checkpoint found; starting from lookback block"
+          );
         } catch {
           this._lastBlock = 0;
         }
@@ -151,7 +156,7 @@ export class StateWatcher {
     }
     if (added.length === 0) return;
 
-    console.log(`[watcher] Adding ${added.length} new pool(s) to watcher filter.`);
+    watcherLogger.info({ addedPools: added.length }, "Adding new pools to watcher filter");
     this._watchedAddresses.push(...added);
   }
 
@@ -212,8 +217,9 @@ export class StateWatcher {
         : addrCount <= HYPERSYNC_MAX_ADDRESS_FILTER
           ? `${addrCount} pool address(es)`
           : `topic-only (${addrCount} pools — address filter exceeds 2 MB budget)`;
-    console.log(
-      `[watcher] Starting manual HyperSync loop from block ${this._lastBlock + 1} — ${filterMode}`
+    watcherLogger.info(
+      { fromBlock: this._lastBlock + 1, filterMode },
+      "Starting manual HyperSync loop"
     );
 
     while (this._running) {
@@ -225,9 +231,12 @@ export class StateWatcher {
         if (res.rollbackGuard) {
           const reorgBlock = detectReorg(this._registry, res.rollbackGuard);
           if (reorgBlock !== false) {
-            console.warn(`[watcher] Reorg detected at block ${reorgBlock}; rolling back registry state.`);
+            watcherLogger.warn({ reorgBlock }, "Reorg detected; rolling back registry state");
             const rb = this._registry.rollbackToBlock(reorgBlock);
-            console.warn(`[watcher] Rolled back ${rb.poolsRemoved} pool(s), ${rb.statesRemoved} state row(s).`);
+            watcherLogger.warn(
+              { reorgBlock, poolsRemoved: rb.poolsRemoved, statesRemoved: rb.statesRemoved },
+              "Registry rollback completed"
+            );
             this._lastBlock = Math.max(0, reorgBlock - 1);
             const changedAddrs = this._reloadCacheFromRegistry();
             this._registry.setCheckpoint(this._checkpointKey, this._lastBlock);
@@ -276,7 +285,7 @@ export class StateWatcher {
         }
       } catch (err: any) {
         if (!this._running) break;
-        console.error(`[watcher] HyperSync poll error: ${err.message}`);
+        watcherLogger.error({ error: err.message }, "HyperSync poll error");
         await watcherSleep(WATCHER_ERROR_SLEEP_MS);
       }
     }

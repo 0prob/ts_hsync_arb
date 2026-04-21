@@ -18,6 +18,7 @@ import { Worker, isMainThread } from "worker_threads";
 import { WORKER_COUNT } from "../config/index.ts";
 import { logger } from "../utils/logger.ts";
 import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
+import { routeIdentityFromEdges, routeIdentityFromSerializedPath } from "./route_identity.ts";
 
 const WORKER_URL = new URL("./persistent_worker.ts", import.meta.url);
 const WORKER_EXEC_ARGV = [...process.execArgv, '--import', 'tsx'];
@@ -201,22 +202,17 @@ function summariseEvaluationChunks(chunks: PathLike[][]) {
 }
 
 function serialisedPathKey(path: SerializedEnumeratedPath) {
-  return [
-    path.startToken.toLowerCase(),
-    ...path.poolAddresses.map((poolAddress: string, i: number) =>
-      `${poolAddress.toLowerCase()}:${path.tokenIns[i].toLowerCase()}:${path.tokenOuts[i].toLowerCase()}`
-    ),
-  ].join("|");
+  return routeIdentityFromSerializedPath(
+    path.startToken,
+    path.poolAddresses,
+    path.tokenIns,
+    path.tokenOuts,
+  );
 }
 
 function serialiseEvaluationPath(path: PathLike): SerializedEvaluationPath {
   return {
-    serialisedKey: [
-      path.startToken.toLowerCase(),
-      ...path.edges.map((edge) =>
-        `${edge.poolAddress.toLowerCase()}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`
-      ),
-    ].join("|"),
+    serialisedKey: routeIdentityFromEdges(path.startToken, path.edges),
     startToken: path.startToken,
     hopCount: path.hopCount,
     logWeight: path.logWeight,
