@@ -41,3 +41,19 @@ cypress/screenshots/
 !/.vscode/settings.json
 !/.vscode/tasks.json
 !/.vscode/launch.json
+
+
+# --- Foundry build + cache ---
+out/
+cache/
+broadcast/
+lib/
+# --- Rust build artifacts (official Foundry rule) ---
+/target*
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+
+# --- Editor noise ---
+*.swp

@@ -47,6 +47,10 @@ const BPS_DENOM = 10_000n;
  */
 const DEFAULT_MIN_PROFIT = 0n;
 
+function ceilDiv(numerator: bigint, denominator: bigint) {
+  return (numerator + denominator - 1n) / denominator;
+}
+
 function invalidAssessment(routeResult: Partial<RouteResultLike>, reason: string): ProfitAssessment {
   return {
     shouldExecute: false,
@@ -211,7 +215,7 @@ export function computeProfit(routeResult: RouteResultLike, options: ProfitOptio
     //   WMATIC (18 dec): rate = 1     → gasCostInTokens = gasCostWei / 1   = gasCostWei
     //   USDC   (6 dec):  rate = 1e12  → gasCostInTokens = gasCostWei / 1e12
     //   WETH   (18 dec): rate = 2500  → gasCostInTokens = gasCostWei / 2500
-    gasCostInTokens = gasCost / tokenToMaticRate;
+    gasCostInTokens = ceilDiv(gasCost, tokenToMaticRate);
     netProfitAfterGas = netProfit - gasCostInTokens;
   }
 

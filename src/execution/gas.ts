@@ -56,8 +56,9 @@ class GasOracle {
    */
   start(intervalMs = 2000) {
     if (this._interval) return;
-    this.update();
+    void this.update();
     this._interval = setInterval(() => this.update(), intervalMs);
+    this._interval.unref?.();
   }
 
   /**

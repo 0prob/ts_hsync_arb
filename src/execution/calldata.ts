@@ -41,6 +41,32 @@ import { MIN_SQRT_RATIO, MAX_SQRT_RATIO } from "../math/tick_math.ts";
 
 // ─── Per-hop encoders ─────────────────────────────────────────
 
+const CALLBACK_PROTOCOL_UNISWAP_V3 = 1;
+const CALLBACK_PROTOCOL_SUSHISWAP_V3 = 2;
+const CALLBACK_PROTOCOL_QUICKSWAP_V3 = 3;
+const CALLBACK_PROTOCOL_KYBER_ELASTIC = 4;
+
+function callbackProtocolId(protocol: any) {
+  switch (protocol) {
+    case "UNISWAP_V3":
+      return CALLBACK_PROTOCOL_UNISWAP_V3;
+    case "SUSHISWAP_V3":
+      return CALLBACK_PROTOCOL_SUSHISWAP_V3;
+    case "QUICKSWAP_V3":
+      return CALLBACK_PROTOCOL_QUICKSWAP_V3;
+    case "KYBERSWAP_ELASTIC":
+      return CALLBACK_PROTOCOL_KYBER_ELASTIC;
+    default:
+      throw new Error(`encodeV3Hop: unsupported callback protocol ${protocol}`);
+  }
+}
+
+function poolTokensFromHop(hop: any) {
+  return hop.zeroForOne
+    ? { token0: getAddress(hop.tokenIn), token1: getAddress(hop.tokenOut) }
+    : { token0: getAddress(hop.tokenOut), token1: getAddress(hop.tokenIn) };
+}
+
 /**
  * Encode a V2 direct pair swap (transfer-first pattern).
  *
@@ -108,7 +134,7 @@ export function encodeV2Hop(hop: any, recipient: any) {
  */
 export function encodeV3Hop(hop: any, recipient: any, options: any = {}) {
   const pool = getAddress(hop.poolAddress);
-  const tokenIn = getAddress(hop.tokenIn);
+  const { token0, token1 } = poolTokensFromHop(hop);
 
   // amountSpecified: positive for exact input
   const amountSpecified = hop.amountIn;
@@ -118,11 +144,23 @@ export function encodeV3Hop(hop: any, recipient: any, options: any = {}) {
     ? MIN_SQRT_RATIO + 1n
     : MAX_SQRT_RATIO - 1n;
 
-  // Callback data: the ArbExecutor needs to know which token to pay
-  // MUST MATCH ArbExecutor.sol: uniswapV3SwapCallback decodes abi.decode(data, (address))
+  // Callback data is rich enough for the executor to authenticate the pool caller.
   const callbackData = encodeAbiParameters(
-    [{ type: "address" }],
-    [tokenIn]
+    [{
+      type: "tuple",
+      components: [
+        { name: "protocolId", type: "uint8" },
+        { name: "token0", type: "address" },
+        { name: "token1", type: "address" },
+        { name: "fee", type: "uint24" },
+      ],
+    }],
+    [{
+      protocolId: callbackProtocolId(hop.protocol),
+      token0,
+      token1,
+      fee: hop.fee ?? 0,
+    }]
   );
 
   const swapData = encodeFunctionData({
@@ -269,24 +307,24 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
     const edge = path.edges[i];
     const amountIn  = result.hopAmounts[i];
     const amountOut = result.hopAmounts[i + 1];
+    const proto = edge.protocol;
 
     const meta = edge.metadata || {};
 
     const hop = {
+      protocol:     proto,
       poolAddress:  edge.poolAddress,
       tokenIn:      edge.tokenIn,
       tokenOut:     edge.tokenOut,
       zeroForOne:   edge.zeroForOne,
       amountIn,
       amountOut,
-      fee:          meta.fee || 0,
+      fee:          edge.fee ?? meta.fee ?? 0,
       tokenInIdx:   edge.tokenInIdx ?? meta.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
       tokenOutIdx:  edge.tokenOutIdx ?? meta.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0),
       isCrypto:     CURVE_CRYPTO_PROTOCOLS.has(edge.protocol),
       poolId:       meta.poolId || meta.pool_id || null,
     };
-
-    const proto = edge.protocol;
 
     if (DIRECT_SWAP_PROTOCOLS.has(proto)) {
       calls.push(...encodeV2Hop(hop, executor));

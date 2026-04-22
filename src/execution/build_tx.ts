@@ -18,6 +18,7 @@
 import { encodeRoute, encodeExecuteArb, buildFlashParams } from "./calldata.ts";
 import { BALANCER_VAULT } from "./addresses.ts";
 import { gasEstimateCacheKey, recommendGasParams } from "./gas.ts";
+import { routeExecutionCacheKey } from "../routing/route_identity.ts";
 
 // ─── Defaults ─────────────────────────────────────────────────
 
@@ -75,6 +76,24 @@ function resolveFlashLoan(route: any) {
     flashToken: route.path.startToken,
     flashAmount: route.result.amountIn,
   };
+}
+
+export function gasEstimateCacheKeyForRoute(route: any) {
+  const startToken = route?.path?.startToken;
+  const edges = route?.path?.edges;
+  const hopCount = route?.path?.hopCount ?? edges?.length;
+
+  if (!startToken) {
+    throw new Error("gasEstimateCacheKeyForRoute: path.startToken required");
+  }
+  if (!Array.isArray(edges) || edges.length === 0) {
+    throw new Error("gasEstimateCacheKeyForRoute: path.edges must be non-empty");
+  }
+  if (!Number.isFinite(hopCount) || hopCount <= 0) {
+    throw new Error("gasEstimateCacheKeyForRoute: path.hopCount must be > 0");
+  }
+
+  return routeExecutionCacheKey(startToken, hopCount, edges);
 }
 // ─── Main builder ─────────────────────────────────────────────
 

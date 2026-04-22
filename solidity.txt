@@ -1,0 +1,191 @@
+
+**Pragma & Compiler Baseline**  
+```solidity
+pragma solidity ^0.8.34;
+```
+- `--via-ir` + optimizer runs ≥ 20,000 (per-contract benchmark).  
+- `memory-safe` on all assembly.  
+- Use `transient` keyword for temp variables where EIP-1153 supported.  
+- ABIEncoderV2 default.
+
+---
+
+**0. First Principles**  
+✅ Profit validation is the **absolute final** operation before callback return or tx end: `finalBalance[profitToken] >= recordedInitial + minProfit`.  
+✅ Single canonical executor — no delegatecall, proxy, or untrusted hops.  
+✅ Gas hotspots: storage writes + external calls + callback entry (minimize).  
+✅ All tx atomic, stateless between arbitrages, deadline-enforced.  
+✅ Emit detailed events (executor, profitToken, profitAmount, routeHash, flashProvider).  
+
+**Audit Checklist**  
+- [ ] Profit validated after every side effect + all flashloan repayments  
+- [ ] Profit token fixed & deterministic per execution  
+- [ ] No delegatecall/proxy anywhere  
+- [ ] Gas hotspots measured (Foundry snapshots + `forge test --gas-report`)  
+
+---
+
+**1. Storage Discipline**  
+- ≤1 permanent SSTORE per slot per tx (use `transient` for all temp flags, locks, route context).  
+- Cache every repeated `SLOAD` in memory or transient.  
+- `immutable` / `constant` for routers, factories, wrapped native, **all flashloan providers (incl. Balancer Vault)**, receiver, whitelist.  
+- Pack structs descending size; `uint256` unless tightly packed.  
+- Prefer `mapping` / `bytes32` / bitmap (≥3 booleans).  
+- Routes & temp context via `calldata` + `transient` only (never permanent storage).  
+- **2026 Mandate**: All reentrancy guards, flashloan context, and multi-hop route buffers must use `transient`.  
+
+**Audit Checklist**  
+- [ ] ≤1 permanent SSTORE/slot/tx  
+- [ ] Repeated SLOADs cached  
+- [ ] All config `immutable`/`constant`  
+- [ ] Structs packed; small ints only when packed  
+- [ ] Transient used for reentrancy + flashloan context + route buffer  
+- [ ] No hot-path dynamic arrays or zero-clears  
+
+---
+
+**2. Execution Model**  
+```solidity
+struct Call { address target; uint256 value; bytes calldata data; }
+```
+- Public entrypoint `executeArb(...)` accepts route params + `Call[] calldata innerCalls` (for multi-hop swaps).  
+- For flashloan tx: entrypoint records initial profit balance → calls provider.flashLoan (Balancer/Aave/etc.) passing encoded `innerCalls` in `userData` → inner execution + repay happens in protected callback → profit check at very end of callback.  
+- Sequential low-level execution of `innerCalls` (revert on first failure).  
+- Zero per-trade approvals (pre-approve once).  
+- Stateless design; deadline + minProfit enforced.  
+- No ERC777/fee-on-transfer tokens.  
+
+**Audit Checklist**  
+- [ ] `Call` struct used for all inner multi-hop/cross-DEX actions  
+- [ ] Flashloan wraps inner `Call[]` execution via `userData`  
+- [ ] Sequential revert-on-failure  
+- [ ] Profit check absolute last (after repay)  
+- [ ] Zero per-trade approvals  
+- [ ] Events emitted with route hash  
+
+---
+
+**3. External Calls**  
+- All swaps batched under single entrypoint + protected callback.  
+- Memory buffers reused across hops (transient for route decoding).  
+- `selfbalance()` / `address(this).balance` for native.  
+- Low-level `call` with full return validation.  
+- Balancer Vault supported as both flashloan provider **and** swap venue (`batchSwap` in `Call[]`).  
+
+**Audit Checklist**  
+- [ ] Memory reused for multi-hop  
+- [ ] Hot paths inlined  
+- [ ] Low-level calls + return checks  
+- [ ] Balancer `batchSwap` allowed in `Call[]` for complex hops  
+- [ ] No redundant views or router-helper chains  
+
+---
+
+**4. Assembly (Only If Proven)**  
+Only in measured hot paths (memory reuse, manual ABI for `userData` encoding, bit checks, transient ops).  
+**2026**: All blocks `memory-safe { ... }`. Transient ops preferred over assembly when possible.  
+
+**Audit Checklist**  
+- [ ] Assembly only hot/measured paths  
+- [ ] `memory-safe` enforced  
+- [ ] Transient preferred over assembly for guards/context  
+
+---
+
+**5. Loops & Control Flow**  
+- Downward loops with `unchecked`.  
+- No nested/dynamic storage-bounded loops (max hops ≤ 12 enforced).  
+- Single-use functions inlined.  
+- Branchless where readable.  
+
+**Audit Checklist**  
+- [ ] Downward `unchecked` loops  
+- [ ] Max hops enforced (gas griefing protection)  
+- [ ] No nested loops  
+
+---
+
+**6. Compiler & Language**  
+- No small-int gas myths (only when packed).  
+- Custom errors only.  
+- All inputs `calldata`.  
+- Full benchmarks (`forge test --gas-report`).  
+
+**Audit Checklist**  
+- [ ] Custom errors  
+- [ ] `calldata` inputs  
+- [ ] Gas benchmarks done  
+
+---
+
+**7. Flashloan Rules (Enhanced for Balancer & Multi-Token)**  
+1. Flashloan initiation = first action (via `executeArb`).  
+2. Repayment + profit validation = last action (inside callback).  
+3. **No permanent state mutation** between borrow & repay (transient only).  
+4. **One flashloan operation per tx** (multi-token allowed via Balancer).  
+5. Strict callback authentication per provider.  
+
+**Balancer-Specific Integration (Recommended for 0-fee + multi-token)**  
+- Implement `IFlashLoanRecipient` with `receiveFlashLoan(IERC20[] memory tokens, uint256[] memory amounts, uint256[] memory feeAmounts, bytes memory userData) external`.  
+- Validate: `msg.sender == vault` (immutable Balancer Vault per chain), tokens/amounts match requested (via transient or userData hash).  
+- Decode `userData` → `innerCall[]` + profit params.  
+- Execute inner multi-hop `Call[]` in callback.  
+- Repay: `for each token: tokens[i].transfer(vault, amounts[i] + feeAmounts[i])`.  
+- Profit check after repayment (handles 0-fee + future fees).  
+- Support other providers (Aave `executeOperation`, etc.) via separate protected callbacks with identical validation pattern.  
+
+**Audit Checklist**  
+- [ ] Flashloan first, repay + profit last  
+- [ ] No permanent state in flash window  
+- [ ] Balancer `receiveFlashLoan` implemented & protected (`msg.sender == vault`)  
+- [ ] Multi-token arrays handled  
+- [ ] `userData` used for route (never trusted without validation)  
+- [ ] One flashloan op/tx  
+- [ ] Transient for callback context  
+
+---
+
+**8. Security Controls**  
+- `executeArb` whitelist/owner only.  
+- Callbacks (`receiveFlashLoan`, etc.) **never public** — strict provider-only.  
+- Reentrancy guard via `transient` (preferred) or modifier.  
+- Every ERC20 transfer/approve return validated.  
+- Route validation: non-empty, valid targets, max hops, token flow sanity (optional off-chain pre-check).  
+- Reject dust, mismatched amounts, stale deadlines.  
+- Invariants tested (profit, no leakage, balance restoration).  
+
+**Audit Checklist**  
+- [ ] Whitelist-only entry  
+- [ ] All callbacks provider-authenticated  
+- [ ] Transient reentrancy guard  
+- [ ] ERC20 returns checked  
+- [ ] Multi-hop route validation + max hops  
+- [ ] All invariants formally tested  
+
+---
+
+**9. Multi-Hop & Cross-DEX Arbitrage (New Dedicated Section)**  
+- Inner `Call[]` supports arbitrary sequenced hops across any DEX (Uniswap V2/V3 exactInput/exactOutput, Curve, Balancer `batchSwap`, etc.).  
+- Balancer Vault encouraged for complex hops (single `batchSwap` call can replace multiple).  
+- Profit token fixed at entry (usually the primary flashed token).  
+- Gas-optimized: pre-approvals, memory-reused token addresses, transient route buffer.  
+- Off-chain route computation; on-chain only execution + final profit check.  
+
+**Audit Checklist**  
+- [ ] Arbitrary cross-DEX hops via `Call[]`  
+- [ ] Balancer `batchSwap` supported  
+- [ ] Max hops ≤ 12  
+- [ ] Profit deterministic & checked post-repay  
+
+---
+
+**10. Final Validation (TL;DR — What Matters Most 2026)**  
+- [ ] Single executor, flashloan-wrapped inner `Call[]` only  
+- [ ] Zero per-trade approvals  
+- [ ] ≤1 permanent storage write per tx  
+- [ ] Profit verified **last** after all repayments  
+- [ ] Balancer flashloan + `receiveFlashLoan` fully integrated (0-fee priority)  
+- [ ] Transient storage for all temp state & guards  
+- [ ] Memory-safe assembly only when proven  
+- [ ] Strict multi-hop/cross-DEX validation + events  
+- [ ] Compiled ^0.8.34 + full gas benchmarks + invariant tests

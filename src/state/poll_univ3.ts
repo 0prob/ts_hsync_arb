@@ -17,6 +17,7 @@
 import { fetchMultipleV3States } from "./index.ts";
 import { normalizeV3State } from "./normalizer.ts";
 import { TimedPoller } from "./poller_base.ts";
+import { mergeStateIntoCache } from "./cache_utils.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
 
@@ -25,6 +26,10 @@ const V3_PROTOCOLS = new Set([
   "QUICKSWAP_V3",
   "SUSHISWAP_V3",
 ]);
+
+function isAlgebraPool(pool: any) {
+  return pool?.protocol === "QUICKSWAP_V3" || pool?.metadata?.isAlgebra === true;
+}
 
 // ─── Poller class ─────────────────────────────────────────────
 
@@ -66,8 +71,7 @@ export class PollUniv3 extends TimedPoller {
     // instead of slot0(), while standard Uniswap V3 forks use slot0().
     const poolMeta = new Map();
     for (const pool of pools) {
-      const meta = pool.metadata || {};
-      if (meta.isAlgebra) {
+      if (isAlgebraPool(pool)) {
         poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
       }
     }
@@ -95,7 +99,7 @@ export class PollUniv3 extends TimedPoller {
         pool.metadata
       );
 
-      this._cache.set(addr, normalized);
+      mergeStateIntoCache(this._cache, addr, normalized);
       updated++;
 
       if (this._verbose) {

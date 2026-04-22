@@ -80,8 +80,9 @@ export function edgeSpotLogWeight(edge: any) {
     const r1 = state.reserve1;
     if (!r0 || !r1 || r0 <= 0n || r1 <= 0n) return null;
     const [rIn, rOut] = edge.zeroForOne ? [r0, r1] : [r1, r0];
-    // Effective output ratio with 0.3 % fee: rOut * 997 / (rIn * 1000)
-    return Math.log(Number(rOut)) - Math.log(Number(rIn)) + Math.log(997 / 1000);
+    const feeNumerator = toFiniteNumber(edge.fee ?? state.fee, 997);
+    if (feeNumerator <= 0 || feeNumerator >= 1000) return null;
+    return Math.log(Number(rOut)) - Math.log(Number(rIn)) + Math.log(feeNumerator / 1000);
   }
 
   if (edge.protocolKind === "v3") {

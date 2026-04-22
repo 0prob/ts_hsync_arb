@@ -25,7 +25,7 @@ import {
 
 // ─── Warn about demo endpoint ──────────────────────────────────
 
-if (POLYGON_RPC.includes("/v2/demo")) {
+if (process.env.NODE_ENV !== "test" && POLYGON_RPC.includes("/v2/demo")) {
   console.warn(
     "WARNING: Using Alchemy demo RPC endpoint — rate limits are extremely low.\n" +
       "         Set POLYGON_RPC in .env to a real endpoint for production use."

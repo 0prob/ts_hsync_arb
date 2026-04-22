@@ -71,6 +71,10 @@ const WARMUP_PROGRESS_LOG_EVERY = 25;
 const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled: 0, failed: 0 };
 
 export function createWarmupManager(deps: WarmupDeps) {
+  function isAlgebraPool(pool: any) {
+    return pool?.protocol === "QUICKSWAP_V3" || deps.getPoolMetadata(pool)?.isAlgebra === true;
+  }
+
   function warmupProgressSnapshot(stats: WarmupStats) {
     const protocolStats = stats.protocols || {};
     return {
@@ -246,8 +250,9 @@ export function createWarmupManager(deps: WarmupDeps) {
         async fetch(group) {
           const poolMeta = new Map();
           for (const pool of group) {
-            const meta = deps.getPoolMetadata(pool);
-            if (meta.isAlgebra) poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
+            if (isAlgebraPool(pool)) {
+              poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
+            }
           }
           let lastV3ProgressLogAt = 0;
           const statesMap = await deps.fetchMultipleV3States(

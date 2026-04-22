@@ -40,6 +40,32 @@ const badAssessment = computeProfit(
 assert.equal(badAssessment.shouldExecute, false, "profit mismatch should reject assessment");
 assert.equal(badAssessment.rejectReason, "profit mismatch");
 
+const roundedGasAssessment = computeProfit(
+  { amountIn: 10_000n, amountOut: 10_010n, profit: 10n, totalGas: 1 },
+  {
+    gasPriceWei: 1n,
+    tokenToMaticRate: 2n,
+    slippageBps: 0n,
+    revertRiskBps: 0n,
+    minNetProfit: 10n,
+  }
+);
+assert.equal(
+  roundedGasAssessment.gasCostInTokens,
+  1n,
+  "token-denominated gas should round up so nonzero gas cannot disappear during conversion",
+);
+assert.equal(
+  roundedGasAssessment.netProfitAfterGas,
+  9n,
+  "rounded gas cost should reduce net profit after gas",
+);
+assert.equal(
+  roundedGasAssessment.shouldExecute,
+  false,
+  "a trade that only clears the floor because gas rounded to zero should be rejected",
+);
+
 await assert.rejects(
   () =>
     buildArbTx(

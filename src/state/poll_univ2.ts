@@ -16,6 +16,7 @@
 import { fetchMultipleV2States } from "./uniswap_v2.ts";
 import { normalizeV2State } from "./normalizer.ts";
 import { TimedPoller } from "./poller_base.ts";
+import { mergeStateIntoCache } from "./cache_utils.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
 
@@ -80,7 +81,7 @@ export class PollUniv2 extends TimedPoller {
         pool.metadata
       );
 
-      this._cache.set(addr, normalized);
+      mergeStateIntoCache(this._cache, addr, normalized);
       updated++;
 
       if (this._verbose) {

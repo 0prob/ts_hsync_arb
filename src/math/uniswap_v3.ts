@@ -16,6 +16,8 @@ import { computeSwapStep } from "./swap_math.ts";
 
 // ─── Optimized Tick Navigation ──────────────────────────────────
 
+const sortedTicksCache = new WeakMap<Map<number, any>, number[]>();
+
 /**
  * Find the next initialized tick in the swap direction using binary search.
  *
@@ -58,6 +60,17 @@ function nextInitializedTickOptimized(sortedTicks: any, currentTick: any, zeroFo
   return result;
 }
 
+function getSortedTicks(ticks: any) {
+  if (!(ticks instanceof Map) || ticks.size === 0) return [];
+
+  const cached = sortedTicksCache.get(ticks);
+  if (cached) return cached;
+
+  const sorted = Array.from(ticks.keys()).sort((a: any, b: any) => a - b);
+  sortedTicksCache.set(ticks, sorted);
+  return sorted;
+}
+
 // ─── V3 Swap Simulator ───────────────────────────────────────
 
 /**
@@ -86,10 +99,7 @@ export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean
     ? getSqrtRatioAtTick(MIN_TICK) + 1n
     : getSqrtRatioAtTick(MAX_TICK) - 1n;
 
-  // OPTIMIZATION: Cache sorted ticks on the state object to avoid re-sorting
-  if (!state._sortedTicks) {
-    state._sortedTicks = Array.from(state.ticks.keys()).sort((a: any, b: any) => a - b);
-  }
+  const sortedTicks = getSortedTicks(state.ticks);
 
   // Mutable swap state
   let sqrtPriceX96 = state.sqrtPriceX96;
@@ -105,7 +115,7 @@ export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean
   for (let i = 0; i < MAX_ITERATIONS && amountRemaining > 0n; i++) {
     // Find the next initialized tick boundary
     const nextTick = nextInitializedTickOptimized(
-      state._sortedTicks,
+      sortedTicks,
       tick,
       zeroForOne
     );

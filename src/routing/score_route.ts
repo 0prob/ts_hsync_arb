@@ -37,7 +37,7 @@ export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
 }
 
 export function gasCostInStartTokenUnits(gasCostWei: bigint, tokenToMaticRate?: bigint | null) {
-  if (tokenToMaticRate == null) return gasCostWei;
+  if (tokenToMaticRate == null) return null;
   if (tokenToMaticRate <= 0n) return null;
   return gasCostWei / tokenToMaticRate;
 }
@@ -69,14 +69,15 @@ export function scoreRoute(path: RouteLike, result: RouteResultLike, options: Sc
 
   if (!result.profitable || result.profit <= 0n) return null;
   if (result.amountIn <= 0n) return null;
+  if (tokenToMaticRate != null && tokenToMaticRate <= 0n) return null;
 
   const gasCostWei = estimateGasCostWei(result.totalGas, gasPriceWei);
   const gasCostInTokens = gasCostInStartTokenUnits(gasCostWei, tokenToMaticRate);
-  if (gasCostInTokens == null) return null;
 
   // Ranking-only gas normalization. If we know the token/MATIC conversion,
-  // compare in raw start-token units; otherwise fall back to native wei math.
-  const netProfit = result.profit - gasCostInTokens;
+  // compare in raw start-token units; otherwise leave profit untouched rather
+  // than subtracting native wei from a non-native-token amount.
+  const netProfit = gasCostInTokens == null ? result.profit : result.profit - gasCostInTokens;
 
   if (netProfit < minNetProfit) return null;
 
@@ -164,5 +165,5 @@ type ScoredRoute = {
   netProfit: bigint;
   score: number;
   roi: number;
-  gasCostInTokens: bigint;
+  gasCostInTokens: bigint | null;
 };

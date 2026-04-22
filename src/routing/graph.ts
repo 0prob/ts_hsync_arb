@@ -40,7 +40,10 @@ function getProtocolKind(protocol: any) {
 }
 
 function getFeeBps(protocolKind: any, fee: any) {
-  if (protocolKind === "v2") return 30;
+  if (protocolKind === "v2") {
+    const numerator = toFiniteNumber(fee, 997);
+    return Math.max(0, Math.round((1000 - numerator) * 10));
+  }
   if (protocolKind === "v3") return Math.round(toFiniteNumber(fee, 3000) / 100);
   return 0;
 }
@@ -89,8 +92,18 @@ function getRoutablePoolContext(pool: any, stateMap: any) {
   const poolAddress = pool.pool_address.toLowerCase();
   const metadata = getPoolMetadata(pool);
   const isV3 = V3_PROTOCOLS.has(pool.protocol);
-  const fee = metadata?.fee !== undefined ? Number(metadata.fee) : undefined;
   const stateRef = getLiveStateRef(stateMap, poolAddress);
+  const fee = isV3
+    ? metadata?.fee !== undefined
+      ? Number(metadata.fee)
+      : stateRef?.fee != null
+        ? Number(stateRef.fee)
+        : undefined
+    : stateRef?.fee != null
+      ? Number(stateRef.fee)
+      : metadata?.feeNumerator !== undefined
+        ? Number(metadata.feeNumerator)
+        : undefined;
 
   return {
     tokens: tokens.map((token: string) => token.toLowerCase()),

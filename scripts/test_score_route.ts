@@ -43,10 +43,16 @@ assert.equal(scoredWithRate.gasCostInTokens, 3_000n);
 const lowProfitWithoutRate = scoreRoute(path, result, {
   gasPriceWei,
 });
+assert(lowProfitWithoutRate, "without a token/MATIC rate, scoring should still preserve the candidate");
 assert.equal(
-  lowProfitWithoutRate,
+  lowProfitWithoutRate.netProfit,
+  result.profit,
+  "without a token/MATIC rate, scoring must not subtract native wei from token-denominated profit",
+);
+assert.equal(
+  lowProfitWithoutRate.gasCostInTokens,
   null,
-  "without a token/MATIC rate, fallback wei math may reject a non-native-token route",
+  "without a token/MATIC rate, gas should remain unpriced instead of being compared in incompatible units",
 );
 
 const nativeLikeResult = {
@@ -59,8 +65,8 @@ const scoredWithoutRate = scoreRoute(path, nativeLikeResult, {
 assert(scoredWithoutRate, "scoring should still work without a conversion rate when profit is native-denominated");
 assert.equal(
   scoredWithoutRate.netProfit,
-  nativeLikeResult.profit - gasCostWei,
-  "without a token/MATIC rate the scorer should fall back to raw wei math",
+  nativeLikeResult.profit,
+  "without a token/MATIC rate the scorer should avoid native-wei subtraction entirely",
 );
 
 assert.equal(
