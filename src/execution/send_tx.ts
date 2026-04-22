@@ -154,6 +154,28 @@ function rawTxHash(rawTx: string) {
   return keccak256(rawTx as `0x${string}`);
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+) {
+  if (items.length === 0) return [];
+
+  const results = new Array<R>(items.length);
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex++;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
+
 async function submitSignedTransactionsIndividually(
   rawTxs: string[],
   builtTxs: any[],
@@ -408,19 +430,22 @@ export async function sendTxBundle(builtTxs: any[], config: any, options: any = 
   const publicClient = publicClientOverride || executionClient;
 
   if (dryRunFirst) {
-    for (const builtTx of builtTxs) {
-      const dryRunResult = await dryRun(builtTx, fromAddress, publicClient);
-      if (!dryRunResult.success) {
-        sendTxLogger.warn(
-          { event: "bundle_dry_run_failed", error: dryRunResult.error, bundleSize: builtTxs.length },
-          "Bundle dry run failed"
-        );
-        return {
-          submitted: false,
-          confirmed: false,
-          error: `Bundle dry run failed: ${dryRunResult.error}`,
-        };
-      }
+    const dryRunResults = await mapWithConcurrency(
+      builtTxs,
+      builtTxs.length,
+      (builtTx) => dryRun(builtTx, fromAddress, publicClient),
+    );
+    const failedDryRun = dryRunResults.find((result) => !result.success);
+    if (failedDryRun) {
+      sendTxLogger.warn(
+        { event: "bundle_dry_run_failed", error: failedDryRun.error, bundleSize: builtTxs.length },
+        "Bundle dry run failed"
+      );
+      return {
+        submitted: false,
+        confirmed: false,
+        error: `Bundle dry run failed: ${failedDryRun.error}`,
+      };
     }
   }
 

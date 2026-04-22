@@ -3,7 +3,8 @@
  * src/state/poll_univ3.js — Continuous V3 tick + liquidity state poller
  *
  * Fetches slot0, liquidity, tick bitmap, and initialized tick data for all
- * active V3 pools (Uniswap V3, QuickSwap V3, SushiSwap V3) and writes
+ * active V3 pools (Uniswap V3, QuickSwap V3, SushiSwap V3, KyberSwap Elastic)
+ * and writes
  * normalized state into a shared in-memory cache.
  *
  * Usage:
@@ -25,6 +26,7 @@ const V3_PROTOCOLS = new Set([
   "UNISWAP_V3",
   "QUICKSWAP_V3",
   "SUSHISWAP_V3",
+  "KYBERSWAP_ELASTIC",
 ]);
 
 function isAlgebraPool(pool: any) {
@@ -67,8 +69,9 @@ export class PollUniv3 extends TimedPoller {
 
     const addresses = pools.map((p: any) => p.pool_address);
 
-    // Build per-pool metadata so Algebra pools (QuickSwap V3) use globalState()
-    // instead of slot0(), while standard Uniswap V3 forks use slot0().
+    // Build per-pool metadata so Algebra-family pools (QuickSwap V3, KyberSwap
+    // Elastic) use globalState() instead of slot0(), while standard Uniswap V3
+    // forks use slot0().
     const poolMeta = new Map();
     for (const pool of pools) {
       if (isAlgebraPool(pool)) {

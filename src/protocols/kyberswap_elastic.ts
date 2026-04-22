@@ -15,8 +15,9 @@ export default {
       metadata: {
         fee: decoded.indexed[2]?.val?.toString(),
         tickSpacing: decoded.body[0]?.val?.toString(),
+        isAlgebra: true,
         isKyberElastic: true,
-        implementationStatus: "discovery_only",
+        implementationStatus: "state_only",
       },
     };
   },

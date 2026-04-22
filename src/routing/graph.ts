@@ -24,8 +24,10 @@ import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/poo
 
 // ─── Protocol sets ────────────────────────────────────────────
 
-const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3"]);
+const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
 const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
+// Keep KyberSwap Elastic out of routing for now: discovery/state coverage is
+// useful, but execution policy remains intentionally conservative.
 const ROUTING_DISABLED_PROTOCOLS = new Set(["KYBERSWAP_ELASTIC"]);
 
 function getLiveStateRef(stateMap: any, poolAddress: any) {

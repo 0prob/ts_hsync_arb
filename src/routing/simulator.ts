@@ -7,7 +7,7 @@
  *
  * Supports:
  *   - Uniswap V2, QuickSwap V2, SushiSwap V2
- *   - Uniswap V3, QuickSwap V3, SushiSwap V3
+ *   - Uniswap V3, QuickSwap V3, SushiSwap V3, KyberSwap Elastic
  *   - Curve StableSwap
  *   - Balancer Weighted
  *
@@ -24,7 +24,7 @@ import { EVAL_WORKER_THRESHOLD, WORKER_COUNT } from "../config/index.ts";
 // ─── Protocol classification ─────────────────────────────────
 
 const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
-const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3"]);
+const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
 const CURVE_PROTOCOLS = new Set([
   "CURVE_STABLE",
   "CURVE_CRYPTO",

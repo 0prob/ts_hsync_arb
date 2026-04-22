@@ -40,6 +40,27 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
   let executionInFlight = false;
   const executionRouteQuarantine = new Map<string, QuarantineEntry>();
 
+  async function mapExecutionCandidates<T, R>(
+    candidates: T[],
+    worker: (candidate: T) => Promise<R>,
+  ): Promise<R[]> {
+    if (candidates.length === 0) return [];
+
+    const concurrency = Math.max(1, Math.min(deps.maxExecutionBatch, candidates.length));
+    const results = new Array<R>(candidates.length);
+    let nextIndex = 0;
+
+    async function runWorker() {
+      while (nextIndex < candidates.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await worker(candidates[currentIndex]);
+      }
+    }
+
+    await Promise.all(Array.from({ length: concurrency }, () => runWorker()));
+    return results;
+  }
+
   function executionRouteKey(path: ArbPathLike) {
     return `${path.startToken.toLowerCase()}::${path.edges.map((edge) => edge.poolAddress.toLowerCase()).join("::")}`;
   }
@@ -233,10 +254,10 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
       const { privateKeyToAccount } = await import("viem/accounts");
       const account = privateKeyToAccount(deps.privateKey as `0x${string}`);
       const prepared = [];
-      for (const candidate of candidates.slice(0, deps.maxExecutionBatch)) {
-        let preparedCandidate = null;
+      const executionCandidates = candidates.slice(0, deps.maxExecutionBatch);
+      const preparedCandidates = await mapExecutionCandidates(executionCandidates, async (candidate) => {
         try {
-          preparedCandidate = await prepareExecutionCandidate(candidate, account);
+          return await prepareExecutionCandidate(candidate, account);
         } catch (err: any) {
           const reason = err?.shortMessage ?? err?.message ?? "execution preparation failed";
           const quarantine = quarantineExecutionRoute(candidate.path, reason);
@@ -246,8 +267,11 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
             until: quarantine.until,
             quarantinedAt: Date.now(),
           });
-          continue;
+          return null;
         }
+      });
+
+      for (const preparedCandidate of preparedCandidates) {
         if (preparedCandidate) prepared.push(preparedCandidate);
       }
 

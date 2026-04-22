@@ -76,6 +76,7 @@ export const V3_SWAP_PROTOCOLS = new Set([
   "UNISWAP_V3",
   "QUICKSWAP_V3",
   "SUSHISWAP_V3",
+  "KYBERSWAP_ELASTIC",
 ]);
 
 /**

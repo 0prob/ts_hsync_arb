@@ -12,6 +12,7 @@ import SUSHISWAP_V2 from "./sushiswap_v2.ts";
 import UNISWAP_V3 from "./uniswap_v3.ts";
 import QUICKSWAP_V3 from "./quickswap_v3.ts";
 import SUSHISWAP_V3 from "./sushiswap_v3.ts";
+import KYBERSWAP_ELASTIC from "./kyberswap_elastic.ts";
 import BALANCER_V2 from "./balancer_v2.ts";
 import CURVE_MAIN_REGISTRY from "./curve_main_registry.ts";
 import CURVE_STABLE_FACTORY from "./curve_stable_factory.ts";
@@ -25,6 +26,7 @@ export const PROTOCOLS = {
   UNISWAP_V3,
   QUICKSWAP_V3,
   SUSHISWAP_V3,
+  KYBERSWAP_ELASTIC,
   BALANCER_V2,
   CURVE_MAIN_REGISTRY,
   CURVE_STABLE_FACTORY,
