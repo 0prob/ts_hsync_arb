@@ -1,12 +1,15 @@
 import { createArbSearcher, toRouteResultLike } from "./search.ts";
 import { createExecutionCoordinator } from "./execution_coordinator.ts";
 import { createRouteRevalidator } from "./route_revalidation.ts";
+import type { ExecutableCandidate, ArbPathLike, RouteResultLike } from "./assessment.ts";
 
-export function createOpportunityEngine(deps: {
-  search: any;
-  execution: any;
-  revalidation: any;
-}) {
+type OpportunityEngineDeps = {
+  search: Omit<Parameters<typeof createArbSearcher>[0], "filterQuarantinedCandidates">;
+  execution: Parameters<typeof createExecutionCoordinator>[0];
+  revalidation: Omit<Parameters<typeof createRouteRevalidator>[0], "filterQuarantinedCandidates" | "executeBatchIfIdle">;
+};
+
+export function createOpportunityEngine(deps: OpportunityEngineDeps) {
   const executionCoordinator = createExecutionCoordinator(deps.execution);
   const {
     clearExecutionRouteQuarantine,
@@ -29,8 +32,10 @@ export function createOpportunityEngine(deps: {
     search: searcher,
     revalidateCachedRoutes,
     clearExecutionRouteQuarantine,
-    executeBatchIfIdle,
-    filterQuarantinedCandidates,
+    executeBatchIfIdle: (candidates: ExecutableCandidate[], source?: string) =>
+      executeBatchIfIdle(candidates, source),
+    filterQuarantinedCandidates: <T extends { path: ArbPathLike }>(candidates: T[], source: string) =>
+      filterQuarantinedCandidates(candidates, source),
     toRouteResultLike,
   };
 }

@@ -1,3 +1,22 @@
+type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
+
+type StoppableWatcher = {
+  stop: () => Promise<void>;
+};
+
+type ShutdownRegistry = {
+  close: () => void;
+};
+
+type StoppableOracle = {
+  stop: () => void;
+};
+
+function errorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export function createArbScheduler(deps: {
   isRunning: () => boolean;
   recordArbActivity: (changedPools: number) => void;
@@ -9,6 +28,15 @@ export function createArbScheduler(deps: {
   let arbRunning = false;
   let arbDirty = false;
   let arbTimer: ReturnType<typeof setTimeout> | null = null;
+  const idleResolvers = new Set<() => void>();
+
+  function flushIdleWaiters() {
+    if (arbQueued || arbRunning || arbDirty || arbTimer) return;
+    if (idleResolvers.size === 0) return;
+    const resolvers = [...idleResolvers];
+    idleResolvers.clear();
+    for (const resolve of resolvers) resolve();
+  }
 
   function scheduleArb(changedPools = 0) {
     if (!deps.isRunning()) return;
@@ -45,7 +73,9 @@ export function createArbScheduler(deps: {
         if (arbDirty && deps.isRunning()) {
           arbDirty = false;
           scheduleArb();
+          return;
         }
+        flushIdleWaiters();
       }
     }, delay);
   }
@@ -57,21 +87,34 @@ export function createArbScheduler(deps: {
     }
     arbQueued = false;
     arbDirty = false;
+    flushIdleWaiters();
   }
 
-  return { scheduleArb, cancelScheduledArb };
+  function waitForIdle() {
+    if (!arbQueued && !arbRunning && !arbDirty && !arbTimer) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      idleResolvers.add(resolve);
+    });
+  }
+
+  return { scheduleArb, cancelScheduledArb, waitForIdle };
 }
 
 export function createShutdownHandler(deps: {
-  log: (msg: string, level?: "fatal" | "error" | "warn" | "info" | "debug" | "trace", meta?: any) => void;
+  log: LoggerFn;
   setRunning: (running: boolean) => void;
   stopTui: () => void;
-  getWatcher: () => any;
-  gasOracle: any;
-  getRegistry: () => any;
+  getWatcher: () => StoppableWatcher | null;
+  gasOracle: StoppableOracle | null;
+  getRegistry: () => ShutdownRegistry | null;
   workerPool: { terminate: () => Promise<void> };
   stopMetricsServer: () => void;
+  stopHeartbeat?: () => void;
   cancelScheduledArb?: () => void;
+  waitForArbIdle?: () => Promise<void>;
+  waitForBackgroundTasks?: () => Promise<void>;
   exit: (code: number) => never;
 }) {
   let shutdownPromise: Promise<void> | null = null;
@@ -81,14 +124,17 @@ export function createShutdownHandler(deps: {
     shutdownPromise = (async () => {
       deps.log("Shutdown signal received...");
       deps.setRunning(false);
+      deps.stopHeartbeat?.();
       deps.cancelScheduledArb?.();
-      deps.stopTui();
       const watcher = deps.getWatcher();
       if (watcher) await watcher.stop();
+      await deps.waitForArbIdle?.();
+      await deps.waitForBackgroundTasks?.();
+      deps.stopTui();
       if (deps.gasOracle) deps.gasOracle.stop();
+      await deps.workerPool.terminate();
       const registry = deps.getRegistry();
       if (registry) registry.close();
-      await deps.workerPool.terminate();
       deps.stopMetricsServer();
       deps.exit(0);
     })();
@@ -97,8 +143,11 @@ export function createShutdownHandler(deps: {
 }
 
 export function configureWatcherCallbacks(deps: {
-  watcher: any;
-  log: (msg: string, level?: "fatal" | "error" | "warn" | "info" | "debug" | "trace", meta?: any) => void;
+  watcher: {
+    onBatch: ((changedAddrs: Set<string>) => void) | null;
+    onReorg: ((payload: { reorgBlock: number; changedAddrs?: Iterable<string> | Array<string> }) => void) | null;
+  };
+  log: LoggerFn;
   onPoolsChanged: (event: { type: "pools_changed"; changedPools: Set<string> }) => Promise<void> | void;
   onReorgDetected: (event: { type: "reorg_detected"; reorgBlock: number; changedPools: Set<string> }) => Promise<void> | void;
   scheduleArb: (changedPools?: number) => void;
@@ -107,13 +156,14 @@ export function configureWatcherCallbacks(deps: {
     Promise.resolve(deps.onPoolsChanged({
       type: "pools_changed",
       changedPools: changedAddrs,
-    })).catch((err: any) => {
-      deps.log(`Watcher batch handling failed: ${err?.message ?? err}`, "warn", {
+    })).catch((err: unknown) => {
+      deps.log(`Watcher batch handling failed: ${errorMessage(err)}`, "warn", {
         event: "watcher_batch_error",
         err,
       });
+    }).finally(() => {
+      deps.scheduleArb(changedAddrs.size);
     });
-    deps.scheduleArb(changedAddrs.size);
   };
 
   deps.watcher.onReorg = ({ reorgBlock, changedAddrs }: { reorgBlock: number; changedAddrs?: Iterable<string> | Array<string> }) => {
@@ -130,12 +180,13 @@ export function configureWatcherCallbacks(deps: {
       type: "reorg_detected",
       reorgBlock,
       changedPools,
-    })).catch((err: any) => {
-      deps.log(`Watcher reorg handling failed: ${err?.message ?? err}`, "warn", {
+    })).catch((err: unknown) => {
+      deps.log(`Watcher reorg handling failed: ${errorMessage(err)}`, "warn", {
         event: "watcher_reorg_error",
         err,
       });
+    }).finally(() => {
+      deps.scheduleArb(changedPools.size);
     });
-    deps.scheduleArb(changedPools.size);
   };
 }

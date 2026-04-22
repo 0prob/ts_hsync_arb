@@ -1,38 +1,81 @@
 import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 import { createTopologyCache } from "../arb/topology_cache.ts";
+import type { ArbPathLike } from "../arb/assessment.ts";
+import { getPoolTokens } from "../util/pool_record.ts";
+import type { RouteCache } from "../routing/route_cache.ts";
+import type { RoutingGraph } from "../routing/graph.ts";
+
+type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
+type PoolState = Record<string, any>;
+type StateCache = Map<string, PoolState>;
+type PoolRecord = {
+  pool_address: string;
+  protocol: string;
+  status?: string;
+  tokens?: unknown;
+};
+type SwapEdge = {
+  poolAddress: string;
+  tokenIn: string;
+  tokenOut: string;
+  zeroForOne: boolean;
+  stateRef?: {
+    reserve0?: bigint;
+    reserve1?: bigint;
+  };
+};
+type RoutingGraphLike = Pick<RoutingGraph, "hasToken" | "getEdges" | "addPool" | "removePool" | "getPoolEdge"> & {
+  _edgesByPool: Map<string, SwapEdge[]>;
+};
+type SerializedTopology = Record<string, Array<Record<string, unknown>>>;
+type WorkerEnumerator = {
+  enumerate: (
+    topology: SerializedTopology,
+    startTokens: string[],
+    options: Record<string, unknown>,
+  ) => Promise<unknown[]>;
+};
+type RegistryAdapter = {
+  getActivePoolsMeta: () => PoolRecord[];
+  getPoolMeta: (address: string) => PoolRecord | undefined;
+};
 
 type TopologyServiceDeps = {
   maxTotalPaths: number;
   polygonHubTokens: Set<string>;
   hub4Tokens: Set<string>;
   workerCount: number;
-  workerPool: any;
+  workerPool: WorkerEnumerator;
+  isWorkerPoolInitialized: () => boolean;
   cycleRefreshIntervalMs: number;
-  routeCache: any;
-  stateCache: Map<string, Record<string, any>>;
-  registry: { getActivePoolsMeta: () => any[]; getPoolMeta: (address: string) => any };
-  buildGraph: (pools: any[], stateCache: Map<string, Record<string, any>>) => any;
-  buildHubGraph: (pools: any[], hubTokens: Set<string>, stateCache: Map<string, Record<string, any>>) => any;
-  serializeTopology: (graph: any) => Record<string, any[]>;
-  enumerateCycles: (graph: any, options: any) => any[];
-  enumerateCyclesDual: (hubGraph: any, fullGraph: any, options: any) => any[];
-  validatePoolState: (state: any) => { valid: boolean; reason?: string };
+  routeCache: Pick<RouteCache, "prune" | "routes">;
+  stateCache: StateCache;
+  registry: RegistryAdapter;
+  buildGraph: (pools: PoolRecord[], stateCache: StateCache) => RoutingGraphLike;
+  buildHubGraph: (pools: PoolRecord[], hubTokens: Set<string>, stateCache: StateCache) => RoutingGraphLike;
+  serializeTopology: (graph: RoutingGraphLike) => SerializedTopology;
+  enumerateCycles: (graph: RoutingGraphLike, options: Record<string, unknown>) => ArbPathLike[];
+  enumerateCyclesDual: (hubGraph: RoutingGraphLike, fullGraph: RoutingGraphLike, options: Record<string, unknown>) => ArbPathLike[];
+  validatePoolState: (state: PoolState | undefined) => { valid: boolean; reason?: string };
   clearGasEstimateCache: () => void;
-  log: (msg: string, level?: any, meta?: any) => void;
+  log: LoggerFn;
 };
 
 export function createTopologyService(deps: TopologyServiceDeps) {
   const topologyCache = createTopologyCache(deps.maxTotalPaths);
 
-  let hubGraph: any = null;
-  let fullGraph: any = null;
-  let cachedCycles: any[] = [];
+  let hubGraph: RoutingGraphLike | null = null;
+  let fullGraph: RoutingGraphLike | null = null;
+  let cachedCycles: ArbPathLike[] = [];
   let topologyVersion = 0;
   let topologyDirty = true;
   let lastCycleRefreshMs = 0;
-  let cycleRefreshRunning = false;
+  let cycleRefreshPromise: Promise<ArbPathLike[]> | null = null;
+  let queuedRefreshPromise: Promise<ArbPathLike[]> | null = null;
+  let queuedRefreshForce = false;
 
-  function edgeLiquidityWmatic(edge: any, getRateWei: ((token: string) => bigint) | null) {
+  function edgeLiquidityWmatic(edge: SwapEdge, getRateWei: ((token: string) => bigint) | null) {
     if (!getRateWei) return 0n;
     const state = edge?.stateRef;
     if (!state?.reserve0 || !state?.reserve1) return 0n;
@@ -44,11 +87,11 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     return state.reserve0 * token0Rate + state.reserve1 * token1Rate;
   }
 
-  function selectHighLiquidityHubTokens(graph: any, getRateWei: ((token: string) => bigint) | null) {
+  function selectHighLiquidityHubTokens(graph: RoutingGraphLike, getRateWei: ((token: string) => bigint) | null) {
     const ranked = [...deps.polygonHubTokens]
       .filter((token) => graph?.hasToken?.(token))
       .map((token) => {
-        const outgoing = graph.getEdges(token) as any[];
+        const outgoing = graph.getEdges(token) as SwapEdge[];
         const seenPools = new Set<string>();
         let liquidityScore = 0n;
 
@@ -73,13 +116,13 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     return ranked.slice(0, 4).map((entry) => entry.token);
   }
 
-  function mergeArbPaths(...groups: any[][]) {
-    const merged: any[] = [];
+  function mergeArbPaths(...groups: ArbPathLike[][]) {
+    const merged: ArbPathLike[] = [];
     const seen = new Set<string>();
 
     for (const group of groups) {
       for (const path of group) {
-        const key = `${path.startToken.toLowerCase()}::${path.edges.map((edge: any) => edge.poolAddress.toLowerCase()).join("::")}`;
+        const key = `${path.startToken.toLowerCase()}::${path.edges.map((edge) => edge.poolAddress.toLowerCase()).join("::")}`;
         if (seen.has(key)) continue;
         seen.add(key);
         merged.push(path);
@@ -90,24 +133,17 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     return merged.length > deps.maxTotalPaths ? merged.slice(0, deps.maxTotalPaths) : merged;
   }
 
-  function getRoutablePools(pools: any[]) {
-    return pools.filter((pool: any) => {
+  function getRoutablePools(pools: PoolRecord[]) {
+    return pools.filter((pool) => {
       const addr = pool.pool_address.toLowerCase();
       return deps.validatePoolState(deps.stateCache.get(addr)).valid;
     });
   }
 
-  function poolTouchesHubTokens(pool: any, hubTokens: Set<string> = deps.hub4Tokens) {
-    let tokens = pool.tokens;
-    if (typeof tokens === "string") {
-      try {
-        tokens = JSON.parse(tokens);
-      } catch {
-        tokens = [];
-      }
-    }
-    if (!Array.isArray(tokens) || tokens.length < 2) return false;
-    return tokens.slice(0, 2).some((token) => hubTokens.has(String(token).toLowerCase()));
+  function poolTouchesHubTokens(pool: PoolRecord, hubTokens: Set<string> = deps.hub4Tokens) {
+    const tokens = getPoolTokens(pool);
+    if (tokens.length < 2) return false;
+    return tokens.some((token) => hubTokens.has(token));
   }
 
   function invalidate(reason?: string) {
@@ -171,20 +207,34 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     selective4HopMaxPathsPerToken: number;
     getRateWei: ((addr: string) => bigint) | null;
     clearExecutionRouteQuarantine?: (reason: string) => void;
-  }) {
+  }): Promise<ArbPathLike[]> {
     const force = options.force === true;
     const now = Date.now();
     const intervalElapsed =
       lastCycleRefreshMs <= 0 || now - lastCycleRefreshMs >= deps.cycleRefreshIntervalMs;
     if (!force && !topologyDirty && cachedCycles.length > 0 && !intervalElapsed) return cachedCycles;
 
-    if (cycleRefreshRunning) {
-      if (force) topologyDirty = true;
-      return cachedCycles;
-    }
-    cycleRefreshRunning = true;
+    if (cycleRefreshPromise) {
+      const shouldQueueRefresh = force || topologyDirty || cachedCycles.length === 0 || intervalElapsed;
+      if (!shouldQueueRefresh) return cycleRefreshPromise;
 
-    try {
+      queuedRefreshForce ||= force || topologyDirty || cachedCycles.length === 0;
+      if (!queuedRefreshPromise) {
+        queuedRefreshPromise = cycleRefreshPromise
+          .catch(() => cachedCycles)
+          .then((): Promise<ArbPathLike[]> => {
+            const nextForce = queuedRefreshForce;
+            queuedRefreshForce = false;
+            return refreshCycles({ ...options, force: nextForce });
+          })
+          .finally(() => {
+            queuedRefreshPromise = null;
+          });
+      }
+      return queuedRefreshPromise;
+    }
+
+    cycleRefreshPromise = (async () => {
       deps.log("Refreshing cycle enumeration...", "info", {
         event: "cycle_refresh_start",
         forced: force,
@@ -210,13 +260,15 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       }
 
       const topologyKeyBase = `topology:${++topologyVersion}`;
-      const selective4HopTokens = selectHighLiquidityHubTokens(fullGraph, options.getRateWei);
+      const activeHubGraph = hubGraph!;
+      const activeFullGraph = fullGraph!;
+      const selective4HopTokens = selectHighLiquidityHubTokens(activeFullGraph, options.getRateWei);
 
-      if (deps.workerCount >= 2 && deps.workerPool._initialized) {
-        const hubTopo = topologyCache.getSerializedTopologyCached("hub", hubGraph, deps.serializeTopology);
-        const fullTopo = topologyCache.getSerializedTopologyCached("full", fullGraph, deps.serializeTopology);
-        const hubTokens = [...deps.hub4Tokens].filter((t) => hubGraph.hasToken(t));
-        const fullTokens = [...deps.polygonHubTokens].filter((t) => fullGraph.hasToken(t));
+      if (deps.workerCount >= 2 && deps.isWorkerPoolInitialized()) {
+        const hubTopo = topologyCache.getSerializedTopologyCached("hub", activeHubGraph, deps.serializeTopology);
+        const fullTopo = topologyCache.getSerializedTopologyCached("full", activeFullGraph, deps.serializeTopology);
+        const hubTokens = [...deps.hub4Tokens].filter((t) => activeHubGraph.hasToken(t));
+        const fullTokens = [...deps.polygonHubTokens].filter((t) => activeFullGraph.hasToken(t));
 
         const [hubSer, fullSer, selective4HopSer] = await Promise.all([
           deps.workerPool.enumerate(hubTopo, hubTokens, {
@@ -250,12 +302,12 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         ]);
 
         cachedCycles = mergeArbPaths(
-          topologyCache.hydratePaths(hubSer, hubGraph, fullGraph),
-          topologyCache.hydratePaths(fullSer, hubGraph, fullGraph),
-          topologyCache.hydratePaths(selective4HopSer, hubGraph, fullGraph),
+          topologyCache.hydratePaths(hubSer as any[], activeHubGraph, activeFullGraph),
+          topologyCache.hydratePaths(fullSer as any[], activeHubGraph, activeFullGraph),
+          topologyCache.hydratePaths(selective4HopSer as any[], activeHubGraph, activeFullGraph),
         );
       } else {
-        const baseCycles = deps.enumerateCyclesDual(hubGraph, fullGraph, {
+        const baseCycles = deps.enumerateCyclesDual(activeHubGraph, activeFullGraph, {
           include2Hop: true,
           include3Hop: true,
           maxPathsPerToken: Math.ceil(deps.maxTotalPaths / 7),
@@ -265,7 +317,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
           getRateWei: options.getRateWei,
         });
         const selective4HopCycles = selective4HopTokens.length > 0
-          ? deps.enumerateCycles(fullGraph, {
+          ? deps.enumerateCycles(activeFullGraph, {
               startTokens: new Set(selective4HopTokens),
               include2Hop: true,
               include3Hop: true,
@@ -296,8 +348,12 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         routeCacheSize: deps.routeCache.routes.length,
       });
       return cachedCycles;
+    })();
+
+    try {
+      return await cycleRefreshPromise;
     } finally {
-      cycleRefreshRunning = false;
+      cycleRefreshPromise = null;
     }
   }
 

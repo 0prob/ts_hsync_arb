@@ -36,6 +36,7 @@ import { hasTrackedPendingTx, sendTx, sendTxBundle } from "./src/execution/send_
 import { NonceManager } from "./src/execution/nonce_manager.ts";
 import { clearGasEstimateCache, fetchEIP1559Fees, oracle as gasOracle, scalePriorityFeeByProfitMargin } from "./src/execution/gas.ts";
 import { PriceOracle } from "./src/profit/price_oracle.ts";
+import { roiMicroUnits } from "./src/profit/compute.ts";
 import { StateWatcher } from "./src/state/watcher.ts";
 import { validatePoolState, normalizePoolState } from "./src/state/normalizer.ts";
 import { fetchMultipleV2States } from "./src/state/uniswap_v2.ts";
@@ -44,6 +45,7 @@ import { fetchAndNormalizeBalancerPool } from "./src/state/poll_balancer.ts";
 import { fetchAndNormalizeCurvePool } from "./src/state/poll_curve.ts";
 import { throttledMap } from "./src/enrichment/rpc.ts";
 import { logger } from "./src/utils/logger.ts";
+import type { Logger as PinoLogger } from "pino";
 import {
   pathsEvaluated,
   arbsFound,
@@ -93,7 +95,8 @@ import {
 
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 type LogMeta = Record<string, unknown>;
-type LogMetaInput = LogMeta | (() => LogMeta) | undefined;
+type LogMetaInput = LogMeta | (() => LogMeta) | unknown;
+type ExecutionQuarantine = { failures: number; until: number };
 type PoolRecord = {
   pool_address: string;
   protocol: string;
@@ -162,8 +165,8 @@ let _arbActivityWindow: Array<{ ts: number; changedPools: number }> = [];
 
 // ─── TUI Setup ─────────────────────────────────────────────────
 
-const runnerLogger: any = logger.child({ component: "runner" });
-const rootLogger: any = logger;
+const runnerLogger: PinoLogger = logger.child({ component: "runner" });
+const rootLogger: PinoLogger = logger;
 let repositories: ReturnType<typeof createRegistryRepositories> | null = null;
 let topologyService: ReturnType<typeof createTopologyService> | null = null;
 let opportunityEngine: ReturnType<typeof createOpportunityEngine> | null = null;
@@ -182,10 +185,16 @@ function summarizeLogForTui(msg: string, payload: LogMeta | undefined) {
   return parts.length > 0 ? `${parts.join(" ")} | ${msg}` : msg;
 }
 
+function normalizeLogMeta(meta: LogMetaInput): LogMeta | undefined {
+  const resolved = typeof meta === "function" ? meta() : meta;
+  if (!resolved || typeof resolved !== "object" || Array.isArray(resolved)) return undefined;
+  return resolved as LogMeta;
+}
+
 function log(msg: string, level: LogLevel = "info", meta: LogMetaInput = undefined) {
   if (!runnerLogger.isLevelEnabled(level)) return;
 
-  const payload = typeof meta === "function" ? meta() : meta;
+  const payload = normalizeLogMeta(meta);
   botState.logs.unshift(`[${level.toUpperCase()}] ${summarizeLogForTui(msg, payload)}`);
   if (botState.logs.length > 10) botState.logs.length = 10;
 
@@ -222,9 +231,15 @@ function getProbeAmountsForToken(tokenAddress: string) {
 
   return probes.filter((amount) => amount >= MIN_PROBE_AMOUNT);
 }
-function roiForCandidate(result: RouteResultLike | null | undefined) {
+function roiForCandidate(candidate: CandidateEntry | null | undefined) {
+  const assessedRoi = candidate?.assessment?.roi;
+  if (typeof assessedRoi === "number" && Number.isFinite(assessedRoi)) {
+    return assessedRoi;
+  }
+
+  const result = candidate?.result;
   if (!result?.amountIn || result.amountIn <= 0n) return -Infinity;
-  return Number((result.profit * 1_000_000n) / result.amountIn);
+  return roiMicroUnits(result.profit, result.amountIn);
 }
 
 async function getCurrentFeeSnapshot() {
@@ -290,6 +305,28 @@ function fmtSym(addr: string) {
   return repositories?.tokens.getMeta(addr)?.symbol ?? addr.slice(2, 8).toUpperCase();
 }
 
+function formatTokenAmount(amount: bigint, decimals: number, fractionDigits = 6) {
+  const safeDecimals = Math.max(0, Math.min(Number(decimals) || 0, 18));
+  const scale = 10n ** BigInt(safeDecimals);
+  const negative = amount < 0n;
+  const absAmount = negative ? -amount : amount;
+  const whole = absAmount / scale;
+  const fraction = absAmount % scale;
+
+  if (fractionDigits <= 0 || safeDecimals === 0) {
+    return `${negative ? "-" : ""}${whole.toString()}`;
+  }
+
+  const paddedFraction = fraction.toString().padStart(safeDecimals, "0");
+  const clippedFraction = paddedFraction
+    .slice(0, Math.min(fractionDigits, safeDecimals))
+    .replace(/0+$/, "");
+
+  return clippedFraction.length > 0
+    ? `${negative ? "-" : ""}${whole.toString()}.${clippedFraction}`
+    : `${negative ? "-" : ""}${whole.toString()}`;
+}
+
 function fmtPath(path: ArbPathLike) {
   const tokens = [path.startToken, ...path.edges.map(e => e.tokenOut)];
   const prots  = path.edges.map(e => e.protocol);
@@ -300,7 +337,7 @@ function fmtProfit(netWei: bigint, tokenAddr: string) {
   const meta = repositories?.tokens.getMeta(tokenAddr);
   const dec  = meta?.decimals ?? 18;
   const sym  = meta?.symbol   ?? tokenAddr.slice(2, 8).toUpperCase();
-  return `${(Number(netWei) / 10 ** dec).toFixed(6)} ${sym}`;
+  return `${formatTokenAmount(netWei, dec, 6)} ${sym}`;
 }
 
 function partitionChangedPools(changedPools: Set<string>) {
@@ -354,12 +391,36 @@ const discoveryCoordinator = createDiscoveryCoordinator({
   discoveryIntervalMs: DISCOVERY_INTERVAL_MS,
 });
 const maybeRunDiscovery = discoveryCoordinator.maybeRunDiscovery;
-const { scheduleArb, cancelScheduledArb } = createArbScheduler({
+const backgroundTasks = new Set<Promise<void>>();
+
+function trackBackgroundTask(task: Promise<void>) {
+  backgroundTasks.add(task);
+  void task.finally(() => {
+    backgroundTasks.delete(task);
+  });
+  return task;
+}
+
+async function waitForBackgroundTasks() {
+  while (backgroundTasks.size > 0) {
+    await Promise.allSettled([...backgroundTasks]);
+  }
+}
+
+const { scheduleArb, cancelScheduledArb, waitForIdle: waitForArbIdle } = createArbScheduler({
   isRunning: () => runtime.isRunning(),
   recordArbActivity,
   getAdaptiveDebounceMs,
   runPass: () => runPass(),
 });
+
+let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+function stopHeartbeat() {
+  if (!heartbeat) return;
+  clearInterval(heartbeat);
+  heartbeat = null;
+}
 
 topologyService = createTopologyService({
   maxTotalPaths: MAX_TOTAL_PATHS,
@@ -367,6 +428,7 @@ topologyService = createTopologyService({
   hub4Tokens: HUB_4_TOKENS,
   workerCount: WORKER_COUNT,
   workerPool,
+  isWorkerPoolInitialized: () => workerPool.initialized,
   cycleRefreshIntervalMs: CYCLE_REFRESH_INTERVAL_MS,
   routeCache,
   stateCache,
@@ -424,7 +486,7 @@ opportunityEngine = createOpportunityEngine({
     sendTxBundle,
     hasPendingExecution: hasTrackedPendingTx,
     scalePriorityFeeByProfitMargin,
-    onPreparedCandidateError: (candidate: CandidateEntry, reason: string, quarantine: any) => {
+    onPreparedCandidateError: (candidate: CandidateEntry, reason: string, quarantine: ExecutionQuarantine) => {
       log(`[runner] Quarantining route after execution preparation failure: ${reason}`, "warn", {
         event: "execute_quarantine_add",
         route: fmtPath(candidate.path),
@@ -453,12 +515,12 @@ opportunityEngine = createOpportunityEngine({
       optimizeInputAmount(path, cache, options) as unknown as RouteResultLike | null,
     evaluateCandidatePipeline,
     partitionFreshCandidates,
-    routeCacheUpdate: (candidates: any) => routeCache.update(candidates),
+    routeCacheUpdate: (candidates: CandidateEntry[]) => routeCache.update(candidates),
     routeKeyFromEdges,
     fmtPath,
     fmtProfit,
     onPathsEvaluated: (count: number) => pathsEvaluated.inc({ pass: runtime.getPassCount() }, count),
-    onCandidateMetrics: ({ topCandidates, optimizedCandidates, profitableRoutes }: any) => {
+    onCandidateMetrics: ({ topCandidates, optimizedCandidates, profitableRoutes }: { topCandidates: number; optimizedCandidates: number; profitableRoutes: number }) => {
       candidateShortlistSize.observe(topCandidates);
       candidateOptimizedCount.observe(optimizedCandidates);
       candidateProfitableCount.observe(profitableRoutes);
@@ -503,44 +565,49 @@ async function runPass() {
 
   try {
     // Background discovery (non-blocking, self-throttled)
-    maybeRunDiscovery().then(async (result: any) => {
-      if (result?.totalDiscovered > 0) {
-        repositories?.pools.invalidateMetaCache();
-        // Seed stateCache for new pools and extend the HyperSync stream filter
-        const allPools = repositories?.pools.getActiveMeta() ?? [];
-        const newPools = allPools.filter(
-          (p: PoolRecord) => !stateCache.has(p.pool_address.toLowerCase())
-        );
-        if (newPools.length > 0) {
-          for (const p of newPools) {
-            const pAddr = p.pool_address.toLowerCase();
-            let pTokens;
-            try {
-              pTokens = typeof p.tokens === "string" ? JSON.parse(p.tokens) : p.tokens;
-            } catch { pTokens = []; }
-            stateCache.set(pAddr, {
-              poolId: pAddr,
-              protocol: p.protocol,
-              tokens: Array.isArray(pTokens) ? pTokens.map((t) => t.toLowerCase()) : [],
-              timestamp: 0,
-            });
+    trackBackgroundTask((async () => {
+      const result = await maybeRunDiscovery();
+      if (!runtime.isRunning() || !result?.totalDiscovered) return;
+
+      repositories?.pools.invalidateMetaCache();
+      // Seed stateCache for new pools and extend the HyperSync stream filter
+      const allPools = repositories?.pools.getActiveMeta() ?? [];
+      const newPools = allPools.filter(
+        (p: PoolRecord) => !stateCache.has(p.pool_address.toLowerCase())
+      );
+      if (newPools.length > 0) {
+        for (const p of newPools) {
+          const pAddr = p.pool_address.toLowerCase();
+          let pTokens;
+          try {
+            pTokens = typeof p.tokens === "string" ? JSON.parse(p.tokens) : p.tokens;
+          } catch {
+            pTokens = [];
           }
-          if (runtime.getWatcher()) {
-            runtime.getWatcher().addPools(newPools.map((p: PoolRecord) => p.pool_address.toLowerCase()));
-          }
-          // Fetch live state for newly discovered pools before rebuilding topology
-          await _fetchAndCacheStates(newPools);
+          stateCache.set(pAddr, {
+            poolId: pAddr,
+            protocol: p.protocol,
+            tokens: Array.isArray(pTokens) ? pTokens.map((t) => t.toLowerCase()) : [],
+            timestamp: 0,
+          });
         }
-        // Rebuild cycle topology with the new pool set
-        topologyService?.invalidate("background_discovery");
-        await refreshCycles(true);
+        await runtime.getWatcher()?.addPools(
+          newPools.map((p: PoolRecord) => p.pool_address.toLowerCase())
+        );
+        if (!runtime.isRunning()) return;
+        // Fetch live state for newly discovered pools before rebuilding topology
+        await _fetchAndCacheStates(newPools);
+        if (!runtime.isRunning()) return;
       }
-    }).catch((err: any) => {
+      // Rebuild cycle topology with the new pool set
+      topologyService?.invalidate("background_discovery");
+      await refreshCycles(true);
+    })().catch((err: any) => {
       log(`Background discovery error: ${err?.message ?? err}`, "warn", {
         event: "discovery_bg_error",
         err,
       });
-    });
+    }));
 
     // Refresh cycles if not yet built
     await refreshCycles();
@@ -556,8 +623,8 @@ async function runPass() {
     botState.consecutiveErrors = runtime.getConsecutiveErrors();
     botState.opportunities     = opportunities.slice(0, 5).map((o: CandidateEntry) => ({
       Route:  o.path.edges.map(e => e.protocol).join(' -> '),
-      Profit: `${(Number(o.result.profit) / 1e18).toFixed(4)} MATIC`,
-      ROI:    `${(roiForCandidate(o.result) / 10000).toFixed(2)}%`,
+      Profit: fmtProfit(o.result.profit, o.path.startToken),
+      ROI:    `${(roiForCandidate(o) / 10000).toFixed(2)}%`,
     }));
     log(`Pass #${passCount}: ${opportunities.length} profitable route(s)`, "info", {
       event: "pass_opportunities",
@@ -615,7 +682,10 @@ const shutdown = createShutdownHandler({
   getRegistry: () => registry,
   workerPool,
   stopMetricsServer,
+  stopHeartbeat,
   cancelScheduledArb,
+  waitForArbIdle,
+  waitForBackgroundTasks,
   exit: (code) => process.exit(code),
 });
 
@@ -772,14 +842,14 @@ async function main() {
       await watcher.start(undefined);
 
   // Heartbeat: guarantee a scan even if the market is quiet
-  const heartbeat = setInterval(scheduleArb, HEARTBEAT_INTERVAL_MS);
+  heartbeat = setInterval(scheduleArb, HEARTBEAT_INTERVAL_MS);
 
   // Run one pass immediately so we don't wait for the first event
   scheduleArb();
 
   // Block until watcher stops (stop() resolves _loopPromise)
   await watcher.wait();
-  clearInterval(heartbeat);
+  stopHeartbeat();
 }
 
 main().catch((err: any) => {

@@ -2,31 +2,68 @@ import {
   assessRouteResult,
   compareAssessmentProfit,
   getAssessmentOptimizationOptions,
+  type AssessmentLike,
   type ArbPathLike,
   type CandidateEntry,
   type ExecutableCandidate,
   type RouteResultLike,
 } from "./assessment.ts";
+import { getResultHopCount } from "../routing/path_hops.ts";
 
 const MIN_PROBE_AMOUNT = 1_000n;
+type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
+type FeeSnapshot = {
+  maxFee?: bigint;
+  updatedAt?: number;
+} | null;
+type RawRouteResult = Record<string, bigint | string | boolean | string[] | bigint[] | number | undefined>;
+type CandidatePipelineResult = {
+  shortlisted: CandidateEntry[];
+  optimizedCandidates: number;
+  profitable: ExecutableCandidate[];
+};
 
-export function toRouteResultLike(result: Record<string, any>): RouteResultLike {
-  return {
-    amountIn: BigInt(result.amountIn),
-    amountOut: BigInt(result.amountOut),
-    profit: BigInt(result.profit),
-    profitable: result.profitable,
+function toBigIntInput(value: RawRouteResult[string]) {
+  return typeof value === "string" || typeof value === "number" || typeof value === "bigint" || typeof value === "boolean"
+    ? value
+    : 0;
+}
+
+export function toRouteResultLike(result: RawRouteResult): RouteResultLike {
+  const amountIn = toBigIntInput(result.amountIn);
+  const amountOut = toBigIntInput(result.amountOut);
+  const profit = toBigIntInput(result.profit);
+  const profitable = typeof result.profitable === "boolean" ? result.profitable : undefined;
+  const poolPath = Array.isArray(result.poolPath) && result.poolPath.every((item) => typeof item === "string")
+    ? result.poolPath
+    : undefined;
+  const tokenPath = Array.isArray(result.tokenPath) && result.tokenPath.every((item) => typeof item === "string")
+    ? result.tokenPath
+    : undefined;
+  const hopAmounts = Array.isArray(result.hopAmounts)
+    ? result.hopAmounts.map((amount) => BigInt(amount))
+    : undefined;
+  const routeResult = {
+    amountIn: BigInt(amountIn),
+    amountOut: BigInt(amountOut),
+    profit: BigInt(profit),
+    profitable,
     totalGas: Number(result.totalGas ?? 0),
-    poolPath: Array.isArray(result.poolPath) ? result.poolPath : undefined,
-    tokenPath: Array.isArray(result.tokenPath) ? result.tokenPath : undefined,
-    hopAmounts: Array.isArray(result.hopAmounts) ? result.hopAmounts.map((amount) => BigInt(amount)) : undefined,
+    poolPath,
+    tokenPath,
+    hopAmounts,
+  };
+  return {
+    ...routeResult,
+    hopCount: getResultHopCount(routeResult),
   };
 }
 
 function mergeCandidateBatch(
   into: Map<string, CandidateEntry>,
   batch: CandidateEntry[],
-  routeKeyFromEdges: (startToken: string, edges: any) => string,
+  routeKeyFromEdges: (startToken: string, edges: ArbPathLike["edges"]) => string,
 ) {
   for (const entry of batch) {
     const key = routeKeyFromEdges(entry.path.startToken, entry.path.edges);
@@ -38,7 +75,7 @@ function mergeCandidateBatch(
 }
 
 function normaliseCandidateBatch(
-  batch: Array<{ path: ArbPathLike; result: Record<string, any> }>,
+  batch: Array<{ path: ArbPathLike; result: RawRouteResult }>,
 ): CandidateEntry[] {
   return batch.map(({ path, result }) => ({
     path,
@@ -49,30 +86,45 @@ function normaliseCandidateBatch(
 type SearchDeps = {
   cachedCycles: () => ArbPathLike[];
   topologyDirty: () => boolean;
-  refreshCycles: () => Promise<void>;
+  refreshCycles: () => Promise<ArbPathLike[] | void>;
   passCount: () => number;
   maxPathsToOptimize: number;
   minProfitWei: bigint;
   stateCache: Map<string, Record<string, any>>;
-  log: (msg: string, level?: "fatal" | "error" | "warn" | "info" | "debug" | "trace", meta?: any) => void;
-  getCurrentFeeSnapshot: () => Promise<any>;
+  log: LoggerFn;
+  getCurrentFeeSnapshot: () => Promise<FeeSnapshot>;
   getFreshTokenToMaticRate: (tokenAddress: string) => bigint;
   getRouteFreshness: (path: ArbPathLike) => { ok: boolean; reason?: string };
   getProbeAmountsForToken: (tokenAddress: string) => bigint[];
-  evaluatePathsParallel: (paths: ArbPathLike[], stateCache: Map<string, Record<string, any>>, probeAmount: bigint, options: any) => Promise<any[]>;
-  optimizeInputAmount: (path: ArbPathLike, stateCache: Map<string, Record<string, any>>, options: any) => RouteResultLike | null;
-  evaluateCandidatePipeline: (candidates: CandidateEntry[], options: any) => Promise<{
-    shortlisted: CandidateEntry[];
-    optimizedCandidates: number;
-    profitable: ExecutableCandidate[];
-  }>;
-  partitionFreshCandidates: (candidates: ExecutableCandidate[], getFreshness: (path: ArbPathLike) => any) => {
+  evaluatePathsParallel: (
+    paths: ArbPathLike[],
+    stateCache: Map<string, Record<string, any>>,
+    probeAmount: bigint,
+    options: Record<string, unknown>,
+  ) => Promise<Array<{ path: ArbPathLike; result: RawRouteResult }>>;
+  optimizeInputAmount: (
+    path: ArbPathLike,
+    stateCache: Map<string, Record<string, any>>,
+    options: Record<string, unknown>,
+  ) => RouteResultLike | null;
+  evaluateCandidatePipeline: (candidates: CandidateEntry[], options: {
+    shortlistLimit: number;
+    gasPriceWei: bigint;
+    getTokenToMaticRate: (tokenAddress: string) => bigint;
+    optimizePath: (
+      path: ArbPathLike,
+      quickResult: RouteResultLike | null | undefined,
+      tokenToMaticRate: bigint,
+    ) => Promise<RouteResultLike | null> | RouteResultLike | null;
+    assessRoute: (path: ArbPathLike, routeResult: RouteResultLike, tokenToMaticRate: bigint) => AssessmentLike;
+  }) => Promise<CandidatePipelineResult>;
+  partitionFreshCandidates: (candidates: ExecutableCandidate[], getFreshness: (path: ArbPathLike) => { ok: boolean; reason?: string }) => {
     fresh: ExecutableCandidate[];
     stale: Array<{ candidate: ExecutableCandidate; freshness: { reason?: string } }>;
   };
   filterQuarantinedCandidates: <T extends { path: ArbPathLike }>(candidates: T[], source: string) => T[];
   routeCacheUpdate: (candidates: ExecutableCandidate[]) => void;
-  routeKeyFromEdges: (startToken: string, edges: any) => string;
+  routeKeyFromEdges: (startToken: string, edges: ArbPathLike["edges"]) => string;
   fmtPath: (path: ArbPathLike) => string;
   fmtProfit: (netWei: bigint, tokenAddr: string) => string;
   onPathsEvaluated: (count: number) => void;
@@ -109,7 +161,7 @@ export function createArbSearcher(deps: SearchDeps) {
         );
         mergeCandidateBatch(
           merged,
-          normaliseCandidateBatch(batch as Array<{ path: ArbPathLike; result: Record<string, any> }>),
+          normaliseCandidateBatch(batch),
           deps.routeKeyFromEdges,
         );
         tokenHits += batch.length;

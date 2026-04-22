@@ -13,14 +13,18 @@ type RevalidationDeps = {
   testAmountWei: bigint;
   minProfitWei: bigint;
   maxExecutionBatch: number;
-  log: (msg: string, level?: "fatal" | "error" | "warn" | "info" | "debug" | "trace", meta?: any) => void;
-  getCurrentFeeSnapshot: () => Promise<any>;
+  log: (msg: string, level?: "fatal" | "error" | "warn" | "info" | "debug" | "trace", meta?: unknown) => void;
+  getCurrentFeeSnapshot: () => Promise<{ maxFee?: bigint } | null>;
   getFreshTokenToMaticRate: (tokenAddress: string) => bigint;
   getRouteFreshness: (path: ArbPathLike) => { ok: boolean; reason?: string };
   simulateRoute: (path: ArbPathLike, amountIn: bigint, stateCache: Map<string, Record<string, any>>) => RouteResultLike;
-  optimizeInputAmount: (path: ArbPathLike, stateCache: Map<string, Record<string, any>>, options: any) => RouteResultLike | null;
+  optimizeInputAmount: (
+    path: ArbPathLike,
+    stateCache: Map<string, Record<string, any>>,
+    options: Record<string, unknown>,
+  ) => RouteResultLike | null;
   filterQuarantinedCandidates: <T extends { path: ArbPathLike }>(candidates: T[], source: string) => T[];
-  executeBatchIfIdle: (candidates: ExecutableCandidate[], source?: string) => Promise<any>;
+  executeBatchIfIdle: (candidates: ExecutableCandidate[], source?: string) => Promise<unknown>;
 };
 
 export function createRouteRevalidator(deps: RevalidationDeps) {
