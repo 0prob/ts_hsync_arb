@@ -9,6 +9,7 @@ const activeFactoryProtocols = new Set([
   "QUICKSWAP_V2",
   "SUSHISWAP_V2",
   "DFYN_V2",
+  "COMETHSWAP_V2",
   "UNISWAP_V3",
   "QUICKSWAP_V3",
   "SUSHISWAP_V3",

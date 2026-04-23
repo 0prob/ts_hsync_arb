@@ -67,13 +67,14 @@ type WarmupDeps = {
   hub4Tokens: Set<string>;
   maxSyncWarmupPools: number;
   maxSyncWarmupV3Pools: number;
+  maxSyncWarmupOneHubPools: number;
   v2PollConcurrency: number;
   v3PollConcurrency: number;
   enrichConcurrency: number;
 };
 
-const WARMUP_V2 = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2"]);
-const WARMUP_V3 = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
+const WARMUP_V2 = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
+const WARMUP_V3 = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3"]);
 const WARMUP_BAL = new Set(["BALANCER_WEIGHTED", "BALANCER_STABLE", "BALANCER_V2"]);
 const WARMUP_CRV = new Set([
   "CURVE_STABLE", "CURVE_CRYPTO", "CURVE_MAIN", "CURVE_MAIN_REGISTRY",
@@ -370,6 +371,12 @@ export function createWarmupManager(deps: WarmupDeps) {
     return false;
   }
 
+  function poolTouchesAnyHub(pool: PoolRecord, hubTokens: Set<string>) {
+    const tokens = deps.getPoolTokens(pool);
+    if (!tokens || tokens.length === 0) return false;
+    return tokens.some((token) => hubTokens.has(token));
+  }
+
   function warmupPriority(pool: PoolRecord) {
     const tokens = deps.getPoolTokens(pool);
     let coreHubMatches = 0;
@@ -438,21 +445,25 @@ export function createWarmupManager(deps: WarmupDeps) {
     }
 
     const hubPairPools = needsState.filter((p: PoolRecord) => poolBothTokensAreHubs(p, deps.polygonHubTokens));
-    if (hubPairPools.length === 0) {
-      deps.log("State warmup: no hub-pair pools without state — watcher will populate the rest.", "info", {
+    const oneHubPools = needsState.filter((p: PoolRecord) =>
+      !poolBothTokensAreHubs(p, deps.polygonHubTokens) && poolTouchesAnyHub(p, deps.polygonHubTokens)
+    );
+    if (hubPairPools.length === 0 && oneHubPools.length === 0) {
+      deps.log("State warmup: no hub-adjacent pools without state — watcher will populate the rest.", "info", {
         event: "warmup_skip",
-        reason: "no_hub_pair_pools_without_state",
+        reason: "no_hub_adjacent_pools_without_state",
         needsState: needsState.length,
       });
       return;
     }
 
     const prioritizedHubPairPools = [...hubPairPools].sort(compareWarmupPriority);
-    const uncappedSyncWarmupPools = prioritizedHubPairPools.slice(0, deps.maxSyncWarmupPools);
+    const prioritizedOneHubPools = [...oneHubPools].sort(compareWarmupPriority);
     const syncWarmupPools = [];
     let syncWarmupV3Pools = 0;
 
-    for (const pool of uncappedSyncWarmupPools) {
+    for (const pool of prioritizedHubPairPools) {
+      if (syncWarmupPools.length >= deps.maxSyncWarmupPools) break;
       if (WARMUP_V3.has(pool.protocol)) {
         if (syncWarmupV3Pools >= deps.maxSyncWarmupV3Pools) continue;
         syncWarmupV3Pools++;
@@ -460,27 +471,43 @@ export function createWarmupManager(deps: WarmupDeps) {
       syncWarmupPools.push(pool);
     }
 
-    const deferredPools = hubPairPools.length - syncWarmupPools.length;
-    const deferredV3Pools = uncappedSyncWarmupPools.filter((pool) => WARMUP_V3.has(pool.protocol)).length - syncWarmupV3Pools;
+    let secondaryWarmupPools = 0;
+    const secondaryWarmupBudget = Math.max(0, Math.min(
+      deps.maxSyncWarmupOneHubPools,
+      deps.maxSyncWarmupPools - syncWarmupPools.length,
+    ));
+    for (const pool of prioritizedOneHubPools) {
+      if (secondaryWarmupPools >= secondaryWarmupBudget) break;
+      if (WARMUP_V3.has(pool.protocol) && syncWarmupV3Pools >= deps.maxSyncWarmupV3Pools) continue;
+      if (WARMUP_V3.has(pool.protocol)) syncWarmupV3Pools++;
+      syncWarmupPools.push(pool);
+      secondaryWarmupPools++;
+    }
+
+    const targetedPools = hubPairPools.length + oneHubPools.length;
+    const deferredPools = targetedPools - syncWarmupPools.length;
 
     if (syncWarmupPools.length === 0) {
-      deps.log("State warmup: synchronous warmup budget is 0 — watcher will populate hub pairs.", "info", {
+      deps.log("State warmup: synchronous warmup budget is 0 — watcher will populate hub-adjacent pools.", "info", {
         event: "warmup_skip",
         reason: "sync_warmup_budget_zero",
         hubPairPools: hubPairPools.length,
+        oneHubPools: oneHubPools.length,
       });
       return;
     }
 
-    deps.log(`State warmup: fetching ${syncWarmupPools.length}/${hubPairPools.length} hub-pair pools via RPC (sync)...`, "info", {
+    deps.log(`State warmup: fetching ${syncWarmupPools.length}/${targetedPools} hub-adjacent pools via RPC (sync)...`, "info", {
       event: "warmup_start",
       needsState: needsState.length,
       hubPairPools: hubPairPools.length,
+      oneHubPools: oneHubPools.length,
       syncWarmupPools: syncWarmupPools.length,
+      secondaryWarmupPools,
       deferredPools,
-      deferredV3Pools,
       maxSyncWarmupPools: deps.maxSyncWarmupPools,
       maxSyncWarmupV3Pools: deps.maxSyncWarmupV3Pools,
+      maxSyncWarmupOneHubPools: deps.maxSyncWarmupOneHubPools,
       protocolBreakdown: {
         v2: syncWarmupPools.filter((pool) => WARMUP_V2.has(pool.protocol)).length,
         v3: syncWarmupPools.filter((pool) => WARMUP_V3.has(pool.protocol)).length,
@@ -491,12 +518,13 @@ export function createWarmupManager(deps: WarmupDeps) {
 
     const warmupStats = await fetchAndCacheStates(syncWarmupPools);
     const valid = syncWarmupPools.filter((p) => deps.validatePoolState(deps.stateCache.get(p.pool_address.toLowerCase())).valid).length;
-    deps.log(`State warmup complete: ${valid}/${syncWarmupPools.length} sync hub-pair pools routable.`, "info", {
+    deps.log(`State warmup complete: ${valid}/${syncWarmupPools.length} sync hub-adjacent pools routable.`, "info", {
       event: "warmup_complete",
       hubPairPools: hubPairPools.length,
+      oneHubPools: oneHubPools.length,
       syncWarmupPools: syncWarmupPools.length,
+      secondaryWarmupPools,
       deferredPools,
-      deferredV3Pools,
       routablePools: valid,
       unroutablePools: syncWarmupPools.length - valid,
       warmupStats,

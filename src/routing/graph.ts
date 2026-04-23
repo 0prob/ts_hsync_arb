@@ -22,11 +22,12 @@ import { simulateV3Swap } from "../math/uniswap_v3.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
 import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/pool_record.ts";
 import { PROTOCOLS } from "../protocols/index.ts";
+import { EXTRA_HUB_4_TOKENS, EXTRA_POLYGON_HUB_TOKENS } from "../config/index.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
 const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2"]);
+const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
 
 function protocolSupportsRouting(protocol: string) {
   const definition = (PROTOCOLS as Record<string, { capabilities?: { routing?: boolean } }>)[protocol];
@@ -434,7 +435,7 @@ export function buildHubGraph(pools: any, hubTokens: any, stateMap = new Map()) 
  * These are the highest-liquidity tokens; cycles starting here are the most
  * competitive but also the most reliably profitable.
  */
-export const POLYGON_HUB_TOKENS = new Set([
+const DEFAULT_POLYGON_HUB_TOKENS = [
   // ── Tier 1: bluechip base assets ──────────────────────────────
   "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270", // WMATIC
   "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619", // WETH
@@ -466,6 +467,11 @@ export const POLYGON_HUB_TOKENS = new Set([
   "0x385eeac5cb85a38a9a07a70c73e0a3271cfb54a7", // GHST (Aavegotchi)
   "0xbbba073c31bf03b8acf7c28ef0738decf3695683", // SAND (The Sandbox)
   "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4", // MANA (Decentraland)
+];
+
+export const POLYGON_HUB_TOKENS = new Set([
+  ...DEFAULT_POLYGON_HUB_TOKENS,
+  ...EXTRA_POLYGON_HUB_TOKENS,
 ]);
 
 /**
@@ -477,12 +483,17 @@ export const POLYGON_HUB_TOKENS = new Set([
  * Intentionally kept small — the hub graph is built from ALL pools that touch
  * any of these tokens, so every extra entry roughly doubles pool count.
  */
-export const HUB_4_TOKENS = new Set([
+const DEFAULT_HUB_4_TOKENS = [
   "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270", // WMATIC
   "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619", // WETH
   "0x2791bca1f2de4661ed88a30c99a7a9449aa84174", // USDC.e (bridged)
   "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", // USDC (native)
   "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", // USDT
+];
+
+export const HUB_4_TOKENS = new Set([
+  ...DEFAULT_HUB_4_TOKENS,
+  ...EXTRA_HUB_4_TOKENS,
 ]);
 
 // ─── Topology serialisation ───────────────────────────────────

@@ -48,6 +48,7 @@ const V2_PROTOCOLS = new Set([
   "SUSHISWAP_V2",
   "UNISWAP_V2",
   "DFYN_V2",
+  "COMETHSWAP_V2",
 ]);
 
 const V3_PROTOCOLS = new Set([

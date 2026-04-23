@@ -24,7 +24,7 @@ import { getPathHopCount } from "./path_hops.ts";
 
 // ─── Protocol classification ─────────────────────────────────
 
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2"]);
+const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
 const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
 const CURVE_PROTOCOLS = new Set([
   "CURVE_STABLE",

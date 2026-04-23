@@ -10,6 +10,7 @@
 import QUICKSWAP_V2 from "./quickswap_v2.ts";
 import SUSHISWAP_V2 from "./sushiswap_v2.ts";
 import DFYN_V2 from "./dfyn_v2.ts";
+import COMETHSWAP_V2 from "./comethswap_v2.ts";
 import UNISWAP_V3 from "./uniswap_v3.ts";
 import QUICKSWAP_V3 from "./quickswap_v3.ts";
 import SUSHISWAP_V3 from "./sushiswap_v3.ts";
@@ -25,6 +26,7 @@ export const PROTOCOLS = {
   QUICKSWAP_V2,
   SUSHISWAP_V2,
   DFYN_V2,
+  COMETHSWAP_V2,
   UNISWAP_V3,
   QUICKSWAP_V3,
   SUSHISWAP_V3,

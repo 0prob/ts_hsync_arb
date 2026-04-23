@@ -76,6 +76,15 @@ function _num(envKey: string, perfKey: string, def: number): number {
   return def;
 }
 
+function _addressList(envKey: string): string[] {
+  const raw = process.env[envKey] || "";
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => /^0x[0-9a-f]{40}$/.test(entry));
+}
+
 // ─── HyperSync ─────────────────────────────────────────────────
 
 function withEnvioToken(rawUrl: string, token: string) {
@@ -346,6 +355,16 @@ export const MAX_SYNC_WARMUP_V3_POOLS = _num(
 );
 
 /**
+ * Secondary startup warmup budget for pools that touch at least one hub token.
+ * This widens token coverage while still capping cold-start latency.
+ */
+export const MAX_SYNC_WARMUP_ONE_HUB_POOLS = _num(
+  "MAX_SYNC_WARMUP_ONE_HUB_POOLS",
+  "MAX_SYNC_WARMUP_ONE_HUB_POOLS",
+  160
+);
+
+/**
  * Number of bitmap words on each side of the active tick to hydrate for
  * staged V3 admission when full tick hydration would be too expensive.
  */
@@ -372,6 +391,13 @@ export const QUIET_POOL_SWEEP_INTERVAL_MS = _num(
   60_000
 );
 
+/** Maximum number of V3-family pools to hydrate in one legacy poller pass. */
+export const V3_POLL_MAX_POOLS = _num(
+  "V3_POLL_MAX_POOLS",
+  "V3_POLL_MAX_POOLS",
+  750
+);
+
 /** Max age of per-pool state allowed for execution-triggered route revalidation (ms). */
 export const ROUTE_STATE_MAX_AGE_MS = _num(
   "ROUTE_STATE_MAX_AGE_MS",
@@ -396,6 +422,31 @@ export const CYCLE_REFRESH_INTERVAL_MS = _num(
   "CYCLE_REFRESH_INTERVAL_MS",
   2 * 60 * 1000
 );
+
+/** Number of high-liquidity extra start tokens to include in selective 4-hop enumeration. */
+export const SELECTIVE_4HOP_TOKEN_LIMIT = _num(
+  "SELECTIVE_4HOP_TOKEN_LIMIT",
+  "SELECTIVE_4HOP_TOKEN_LIMIT",
+  6
+);
+
+/** Path budget reserved for selective 4-hop exploration beyond the core hub graph. */
+export const SELECTIVE_4HOP_PATH_BUDGET = _num(
+  "SELECTIVE_4HOP_PATH_BUDGET",
+  "SELECTIVE_4HOP_PATH_BUDGET",
+  Math.max(800, Math.floor(MAX_TOTAL_PATHS * 0.2))
+);
+
+/** Max selective 4-hop paths kept per token. */
+export const SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN = _num(
+  "SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN",
+  "SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN",
+  1_500
+);
+
+/** Optional env-driven hub-token extensions. */
+export const EXTRA_POLYGON_HUB_TOKENS = _addressList("EXTRA_POLYGON_HUB_TOKENS");
+export const EXTRA_HUB_4_TOKENS = _addressList("EXTRA_HUB_4_TOKENS");
 
 // ─── Runtime ───────────────────────────────────────────────────
 

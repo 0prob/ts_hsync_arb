@@ -30,7 +30,11 @@ export const FULLY_SUPPORTED_CAPABILITIES: ProtocolCapabilities = Object.freeze(
   execution: true,
 });
 
-export function createPairCreatedProtocol(name: string, address: string): ProtocolDefinition {
+export function createPairCreatedProtocol(
+  name: string,
+  address: string,
+  metadata: Record<string, unknown> = EMPTY_METADATA,
+): ProtocolDefinition {
   return {
     name,
     address,
@@ -43,7 +47,7 @@ export function createPairCreatedProtocol(name: string, address: string): Protoc
           decoded.indexed[0]?.val?.toString(),
           decoded.indexed[1]?.val?.toString(),
         ],
-        metadata: EMPTY_METADATA,
+        metadata,
       };
     },
   };

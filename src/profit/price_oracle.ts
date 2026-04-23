@@ -71,7 +71,10 @@ const KNOWN_DECIMALS = new Map([
 const PIVOT_TOKENS = [
   TOKENS.USDC_N,
   TOKENS.USDC,
+  TOKENS.USDT,
+  TOKENS.DAI,
   TOKENS.WETH,
+  TOKENS.WBTC,
 ];
 
 type PoolQuote = {
@@ -202,12 +205,21 @@ export class PriceOracle {
       }
     }
 
+    const preferredPivotOrder = new Map(PIVOT_TOKENS.map((token, index) => [token, index]));
+
     for (const [token, quotes] of pairQuotes.entries()) {
       if (token === TOKENS.WMATIC) continue;
 
       let bestDerived = 0n;
       let bestUpdatedAt = 0;
-      for (const pivot of PIVOT_TOKENS) {
+      const candidatePivots = [...quotes.keys()].sort((a, b) => {
+        const aOrder = preferredPivotOrder.get(a) ?? Number.MAX_SAFE_INTEGER;
+        const bOrder = preferredPivotOrder.get(b) ?? Number.MAX_SAFE_INTEGER;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return a.localeCompare(b);
+      });
+
+      for (const pivot of candidatePivots) {
         const quoteToPivot = quotes.get(pivot);
         const pivotRate = nextRates.get(pivot) ?? this._rates.get(pivot) ?? 0n;
         const pivotUpdatedAt = nextUpdatedAtByToken.get(pivot) ?? this._updatedAtByToken.get(pivot) ?? 0;

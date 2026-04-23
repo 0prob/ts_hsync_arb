@@ -63,6 +63,21 @@ export const CONTRACT_CATALOG: ContractCatalogEntry[] = [
     ],
   },
   {
+    protocol: "COMETHSWAP_V2",
+    label: "ComethSwap V2 Factory",
+    address: "0x800b052609c355cA8103E06F022aA30647eAd60a",
+    role: "factory",
+    integration: "active",
+    expectations: [
+      {
+        type: "event",
+        name: "PairCreated",
+        inputs: ["address", "address", "address", "uint256"],
+        indexed: [true, true, false, false],
+      },
+    ],
+  },
+  {
     protocol: "UNISWAP_V3",
     label: "Uniswap V3 Factory",
     address: "0x1F98431c8aD98523631AE4a59f267346ea31F984",

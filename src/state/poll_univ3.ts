@@ -19,6 +19,7 @@ import { fetchMultipleV3States } from "./index.ts";
 import { normalizeV3State } from "./normalizer.ts";
 import { TimedPoller } from "./poller_base.ts";
 import { mergeStateIntoCache } from "./cache_utils.ts";
+import { V3_POLL_MAX_POOLS } from "../config/index.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
 
@@ -26,7 +27,6 @@ const V3_PROTOCOLS = new Set([
   "UNISWAP_V3",
   "QUICKSWAP_V3",
   "SUSHISWAP_V3",
-  "KYBERSWAP_ELASTIC",
 ]);
 
 function isAlgebraPool(pool: any) {
@@ -46,7 +46,7 @@ export class PollUniv3 extends TimedPoller {
     this._registry = registry;
     this._cache = stateCache;
     this._concurrency = options.concurrency ?? 2;
-    this._maxPools = options.maxPools ?? 500;
+    this._maxPools = options.maxPools ?? V3_POLL_MAX_POOLS;
   }
 
   // ─── Single poll pass ───────────────────────────────────────

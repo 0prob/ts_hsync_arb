@@ -7,6 +7,7 @@ const HUB_A = "0x1111111111111111111111111111111111111111";
 const HUB_B = "0x2222222222222222222222222222222222222222";
 const NON_HUB = "0x3333333333333333333333333333333333333333";
 const POOL = "0x4444444444444444444444444444444444444444";
+const ONE_HUB_POOL = "0x5555555555555555555555555555555555555555";
 
 const pool = {
   pool_address: POOL,
@@ -16,13 +17,21 @@ const pool = {
   metadata: {},
 };
 
+const oneHubPool = {
+  pool_address: ONE_HUB_POOL,
+  protocol: "BALANCER_V2",
+  status: "active",
+  tokens: [NON_HUB, HUB_A, "0x6666666666666666666666666666666666666666"],
+  metadata: {},
+};
+
 let balancerFetches = 0;
 const stateCache = new Map<string, Record<string, any>>();
 
 const warmupManager = createWarmupManager({
   getRegistry: () => ({
-    getPools: () => [pool],
-    getActivePoolsMeta: () => [pool],
+    getPools: () => [pool, oneHubPool],
+    getActivePoolsMeta: () => [pool, oneHubPool],
     getCheckpoint: () => ({ last_block: 123 }),
     getGlobalCheckpoint: () => 123,
     batchUpdateStates: () => {},
@@ -64,6 +73,7 @@ const warmupManager = createWarmupManager({
   hub4Tokens: new Set([HUB_A, HUB_B]),
   maxSyncWarmupPools: 10,
   maxSyncWarmupV3Pools: 10,
+  maxSyncWarmupOneHubPools: 10,
   v2PollConcurrency: 1,
   v3PollConcurrency: 1,
   enrichConcurrency: 1,
@@ -74,8 +84,8 @@ await warmupManager.warmupStateCache();
 
 assert.equal(
   balancerFetches,
-  1,
-  "warmup should synchronously fetch multi-token pools when they contain two hub assets outside token slots 0/1",
+  2,
+  "warmup should fetch both hub-pair pools and one-hub extension pools during synchronous startup coverage",
 );
 assert.equal(
   validatePoolState(stateCache.get(pool.pool_address.toLowerCase())).valid,

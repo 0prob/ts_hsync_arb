@@ -4,7 +4,7 @@ export default {
   name: "KyberSwap Elastic Legacy",
   address: FACTORY_ADDRESS,
   capabilities: {
-    discovery: true,
+    discovery: false,
     routing: false,
     execution: false,
   },

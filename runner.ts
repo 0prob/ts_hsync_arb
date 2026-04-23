@@ -87,12 +87,16 @@ import {
   ENRICH_CONCURRENCY,
   MAX_SYNC_WARMUP_POOLS,
   MAX_SYNC_WARMUP_V3_POOLS,
+  MAX_SYNC_WARMUP_ONE_HUB_POOLS,
   V3_NEARBY_WORD_RADIUS,
   QUIET_POOL_SWEEP_BATCH_SIZE,
   QUIET_POOL_SWEEP_INTERVAL_MS,
   ROUTE_STATE_MAX_AGE_MS,
   ROUTE_STATE_MAX_SKEW_MS,
   CYCLE_REFRESH_INTERVAL_MS,
+  SELECTIVE_4HOP_TOKEN_LIMIT,
+  SELECTIVE_4HOP_PATH_BUDGET,
+  SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
   ENVIO_API_TOKEN,
 } from "./src/config/index.ts";
 
@@ -131,9 +135,6 @@ const BASE_ARB_DEBOUNCE_MS = 200;
 const FAST_ARB_DEBOUNCE_MS = 50;
 const ARB_ACTIVITY_WINDOW_MS = 1_000;
 const ARB_BURST_POOL_THRESHOLD = 10;
-const SELECTIVE_4HOP_TOKEN_LIMIT = 4;
-const SELECTIVE_4HOP_PATH_BUDGET = Math.max(500, Math.floor(MAX_TOTAL_PATHS * 0.15));
-const SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN = 1_000;
 const MAX_EXECUTION_BATCH = 3;
 const EXECUTION_ROUTE_QUARANTINE_MS = 120_000;
 
@@ -225,12 +226,24 @@ function getProbeAmountsForToken(tokenAddress: string) {
   if (decimals == null) decimals = 18;
 
   const rawUnit = 10n ** BigInt(Math.max(0, Math.min(Number(decimals), 18)));
+  const oracle = runtime.getPriceOracle();
+  const oracleScaledProbes = oracle
+    ? [
+        oracle.fromMatic(tokenAddress, 5n * 10n ** 16n), // 0.05 MATIC
+        oracle.fromMatic(tokenAddress, 5n * 10n ** 17n), // 0.5 MATIC
+        oracle.fromMatic(tokenAddress, 2n * 10n ** 18n), // 2 MATIC
+        oracle.fromMatic(tokenAddress, 10n ** 19n),      // 10 MATIC
+      ]
+    : [];
   const probes = uniqueSortedBigInts([
     MIN_PROBE_AMOUNT,
+    rawUnit / 10n,
     rawUnit,
     rawUnit * 10n,
     rawUnit * 100n,
+    rawUnit * 1_000n,
     TEST_AMOUNT_WEI,
+    ...oracleScaledProbes,
   ]);
 
   return probes.filter((amount) => amount >= MIN_PROBE_AMOUNT);
@@ -395,6 +408,7 @@ const warmupManager = createWarmupManager({
   hub4Tokens: HUB_4_TOKENS,
   maxSyncWarmupPools: MAX_SYNC_WARMUP_POOLS,
   maxSyncWarmupV3Pools: MAX_SYNC_WARMUP_V3_POOLS,
+  maxSyncWarmupOneHubPools: MAX_SYNC_WARMUP_ONE_HUB_POOLS,
   v2PollConcurrency: V2_POLL_CONCURRENCY,
   v3PollConcurrency: V3_POLL_CONCURRENCY,
   enrichConcurrency: ENRICH_CONCURRENCY,

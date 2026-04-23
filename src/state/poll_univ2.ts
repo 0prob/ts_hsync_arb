@@ -20,7 +20,7 @@ import { mergeStateIntoCache } from "./cache_utils.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
 
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2"]);
+const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
 
 // ─── Poller class ─────────────────────────────────────────────
 

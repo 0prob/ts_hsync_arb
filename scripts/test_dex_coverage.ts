@@ -14,11 +14,11 @@ import { buildGraph } from "../src/routing/graph.ts";
   assert.deepEqual(
     PROTOCOLS.KYBERSWAP_ELASTIC.capabilities,
     {
-      discovery: true,
+      discovery: false,
       routing: false,
       execution: false,
     },
-    "KyberSwap Elastic should advertise discovery-only capabilities until routing/execution support is enabled",
+    "KyberSwap Elastic should stay out of discovery, routing, and execution until full support is enabled",
   );
 }
 
@@ -68,6 +68,55 @@ import { buildGraph } from "../src/routing/graph.ts";
   );
 
   assert.equal(graph.edgeCount, 2, "DFYN V2 should route through the existing V2 graph path");
+}
+
+{
+  assert("COMETHSWAP_V2" in PROTOCOLS, "ComethSwap V2 should be registered for discovery");
+  const normalized = normalizePoolState(
+    "0x1111111111111111111111111111111111111111",
+    "COMETHSWAP_V2",
+    ["0x2222222222222222222222222222222222222222", "0x3333333333333333333333333333333333333333"],
+    {
+      reserve0: 1_000n,
+      reserve1: 2_000n,
+      fetchedAt: Date.now(),
+    },
+    { feeNumerator: 995 },
+  );
+
+  assert(normalized, "ComethSwap V2 state should normalize via the V2 path");
+  assert.equal(normalized?.protocol, "COMETHSWAP_V2");
+  assert.equal(normalized?.fee, 995n);
+
+  const graph = buildGraph(
+    [
+      {
+        pool_address: "0x1111111111111111111111111111111111111111",
+        protocol: "COMETHSWAP_V2",
+        status: "active",
+        tokens: ["0x2222222222222222222222222222222222222222", "0x3333333333333333333333333333333333333333"],
+        metadata: { feeNumerator: 995 },
+      },
+    ],
+    new Map([
+      [
+        "0x1111111111111111111111111111111111111111",
+        {
+          poolId: "0x1111111111111111111111111111111111111111",
+          protocol: "COMETHSWAP_V2",
+          token0: "0x2222222222222222222222222222222222222222",
+          token1: "0x3333333333333333333333333333333333333333",
+          tokens: ["0x2222222222222222222222222222222222222222", "0x3333333333333333333333333333333333333333"],
+          reserve0: 1_000n,
+          reserve1: 2_000n,
+          fee: 995n,
+          timestamp: Date.now(),
+        },
+      ],
+    ]),
+  );
+
+  assert.equal(graph.edgeCount, 2, "ComethSwap V2 should route through the existing V2 graph path");
 }
 
 {
@@ -140,6 +189,18 @@ import { buildGraph } from "../src/routing/graph.ts";
       execution: true,
     },
     "fully integrated V2 factories should advertise full capabilities",
+  );
+}
+
+{
+  assert.deepEqual(
+    PROTOCOLS.COMETHSWAP_V2.capabilities,
+    {
+      discovery: true,
+      routing: true,
+      execution: true,
+    },
+    "ComethSwap V2 should advertise full support",
   );
 }
 

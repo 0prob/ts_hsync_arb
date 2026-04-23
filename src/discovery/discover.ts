@@ -35,6 +35,10 @@ type DiscoveryProtocol = {
   decode: (decoded: any, rawLog: any) => any;
   enrichTokens?: (pool: any) => Promise<string[]>;
   discover?: (context: any) => Promise<any>;
+  capabilities?: {
+    discovery?: boolean;
+    execution?: boolean;
+  };
 };
 
 const discoveryQuerySpecCache = new Map<string, {
@@ -277,6 +281,11 @@ async function discoverCurveRemovals(registry: any) {
   return { removed, checkpointBlock, rollbackGuard };
 }
 
+function protocolSupportsDiscovery(protocol: DiscoveryProtocol) {
+  if (protocol.capabilities?.discovery === false) return false;
+  return protocol.capabilities?.execution !== false;
+}
+
 // ─── Public entry point ────────────────────────────────────────
 
 export async function discoverPools() {
@@ -298,6 +307,10 @@ export async function discoverPools() {
   let totalDiscovered = 0;
 
   for (const [key, protocol] of Object.entries(PROTOCOLS)) {
+    if (!protocolSupportsDiscovery(protocol as DiscoveryProtocol)) {
+      console.log(`Skipping ${protocol.name}: discovery disabled for non-executable protocol.`);
+      continue;
+    }
     try {
       const result = await discoverProtocol(key, protocol, registry, { chainHeight });
       totalDiscovered += result.discovered;
