@@ -104,6 +104,21 @@ assert(
   "profit-based selection should still preserve the top raw-profit candidate",
 );
 
+let rateLookupCount = 0;
+selectOptimizationCandidates(candidates, 3, {
+  gasPriceWei,
+  getTokenToMaticRate(tokenAddress) {
+    rateLookupCount++;
+    if (tokenAddress === highRateToken) return 10n ** 12n;
+    return 1n;
+  },
+});
+assert.equal(
+  rateLookupCount,
+  2,
+  "candidate selection should only price each distinct start token once per batch",
+);
+
 const reversedSelected = selectOptimizationCandidates([...candidates].reverse(), 1, {
   gasPriceWei,
   getTokenToMaticRate() {

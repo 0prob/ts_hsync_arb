@@ -4,6 +4,35 @@ import {
   HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
 } from "../config/index.ts";
 
+export type HyperSyncLogFilter = {
+  address?: string[];
+  topics?: string[][];
+};
+
+export type HyperSyncFieldSelection = {
+  log: unknown[];
+  block: unknown[];
+};
+
+export type HyperSyncLogQuery = {
+  fromBlock: number;
+  toBlock?: number;
+  logs: HyperSyncLogFilter[];
+  joinMode: string;
+  maxNumLogs: number;
+  maxNumBlocks?: number;
+  fieldSelection: HyperSyncFieldSelection;
+};
+
+export type HyperSyncGetResponse<TLog = unknown> = {
+  archiveHeight?: number | string | null;
+  rollbackGuard?: Record<string, unknown> | null;
+  nextBlock: number | string;
+  data?: {
+    logs?: TLog[];
+  };
+};
+
 export const DEFAULT_HYPERSYNC_BLOCK_FIELDS = [
   BlockField.Number,
   BlockField.Timestamp,
@@ -24,16 +53,16 @@ export const DEFAULT_HYPERSYNC_LOG_FIELDS = [
 
 type HyperSyncLogQueryOptions = {
   fromBlock: number;
-  logs: any[];
+  logs: HyperSyncLogFilter[];
   toBlock?: number;
   joinMode?: string;
   maxNumLogs?: number;
   maxNumBlocks?: number;
-  logFields?: any[];
-  blockFields?: any[];
+  logFields?: unknown[];
+  blockFields?: unknown[];
 };
 
-export function buildHyperSyncLogQuery(options: HyperSyncLogQueryOptions) {
+export function buildHyperSyncLogQuery(options: HyperSyncLogQueryOptions): HyperSyncLogQuery {
   const {
     fromBlock,
     logs,

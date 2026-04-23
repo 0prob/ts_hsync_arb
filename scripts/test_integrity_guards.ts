@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { normalizePoolState, validatePoolState } from "../src/state/normalizer.ts";
 import { computeProfit } from "../src/profit/compute.ts";
 import { buildArbTx } from "../src/execution/build_tx.ts";
+import { getResultHopCount } from "../src/routing/path_hops.ts";
 
 const ONE = 10n ** 18n;
 
@@ -189,6 +190,77 @@ assert.equal(
   45n,
   "computeProfit should derive revert risk from the canonical hop count in the route result when no override is provided",
 );
+
+assert.equal(
+  getResultHopCount({
+    hopCount: 99,
+    poolPath: ["0xp0", "0xp1"],
+    tokenPath: ["0xt0", "0xt1", "0xt2"],
+    hopAmounts: [1n, 2n, 3n],
+  }),
+  2,
+  "stale numeric hop metadata should be ignored when structural route metadata agrees",
+);
+
+assert.equal(
+  getResultHopCount({
+    poolPath: ["0xp0", "0xp1", "0xp2"],
+    tokenPath: ["0xt0", "0xt1", "0xt2"],
+    hopAmounts: [1n, 2n, 3n],
+  }),
+  0,
+  "conflicting hop metadata should not produce a canonical hop count",
+);
+
+const staleNumericHopAssessment = computeProfit(
+  {
+    amountIn: 10_000n,
+    amountOut: 10_500n,
+    profit: 500n,
+    totalGas: 0,
+    hopCount: 99,
+    poolPath: ["0xp0", "0xp1"],
+    tokenPath: ["0xt0", "0xt1", "0xt2"],
+    hopAmounts: [10_000n, 10_250n, 10_500n],
+  },
+  {
+    gasPriceWei: 0n,
+    tokenToMaticRate: 1n,
+    slippageBps: 0n,
+    revertRiskBps: 500n,
+    minNetProfit: 0n,
+  }
+);
+assert.equal(
+  staleNumericHopAssessment.revertPenalty,
+  25n,
+  "stale numeric hop metadata should be ignored when structural route metadata agrees",
+);
+
+const inconsistentHopAssessment = computeProfit(
+  {
+    amountIn: 10_000n,
+    amountOut: 10_500n,
+    profit: 500n,
+    totalGas: 0,
+    poolPath: ["0xp0", "0xp1", "0xp2"],
+    tokenPath: ["0xt0", "0xt1", "0xt2"],
+    hopAmounts: [10_000n, 10_250n, 10_500n],
+  },
+  {
+    gasPriceWei: 0n,
+    tokenToMaticRate: 1n,
+    slippageBps: 0n,
+    revertRiskBps: 500n,
+    minNetProfit: 0n,
+  }
+);
+assert.equal(
+  inconsistentHopAssessment.shouldExecute,
+  false,
+  "profit assessment should reject route results whose hop metadata disagrees",
+);
+assert.equal(inconsistentHopAssessment.rejectReason, "invalid hopCount");
 
 await assert.rejects(
   () =>

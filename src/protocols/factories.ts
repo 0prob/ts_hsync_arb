@@ -2,7 +2,7 @@ import { discoverCurveListedFactory } from "./curve_list_factory.ts";
 
 const EMPTY_METADATA = Object.freeze({});
 
-type DecodeResult = {
+export type DecodeResult = {
   pool_address: string | undefined;
   tokens: Array<string | undefined>;
   metadata: Record<string, unknown>;
@@ -14,7 +14,7 @@ export type ProtocolCapabilities = {
   execution: boolean;
 };
 
-type ProtocolDefinition = {
+export type ProtocolDefinition = {
   name: string;
   address: string;
   signature?: string;

@@ -56,7 +56,7 @@ export function toRouteResultLike(result: RawRouteResult): RouteResultLike {
   };
   return {
     ...routeResult,
-    hopCount: getResultHopCount(routeResult),
+    hopCount: getResultHopCount(routeResult) ?? undefined,
   };
 }
 

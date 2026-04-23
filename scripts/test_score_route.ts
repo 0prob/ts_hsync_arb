@@ -27,6 +27,11 @@ assert.equal(
   3_000n,
   "gas should be normalized into raw start-token units when a conversion rate is provided",
 );
+assert.equal(
+  gasCostInStartTokenUnits(1n, 2n),
+  1n,
+  "gas normalization should round up so ranking does not underprice fractional token gas costs",
+);
 
 const scoredWithRate = scoreRoute(path, result, {
   gasPriceWei,
@@ -39,6 +44,31 @@ assert.equal(
   "net profit should subtract gas in start-token units, not raw wei, for non-native tokens",
 );
 assert.equal(scoredWithRate.gasCostInTokens, 3_000n);
+
+const conservativelyRounded = scoreRoute(
+  path,
+  {
+    profitable: true,
+    amountIn: 10n,
+    profit: 1n,
+    totalGas: 1,
+  },
+  {
+    gasPriceWei: 1n,
+    tokenToMaticRate: 2n,
+  },
+);
+assert(conservativelyRounded, "route scoring should still return a rankable candidate at zero net profit");
+assert.equal(
+  conservativelyRounded.gasCostInTokens,
+  1n,
+  "route scoring should round gas up to the smallest whole start-token unit",
+);
+assert.equal(
+  conservativelyRounded.netProfit,
+  0n,
+  "rounded-up gas should eliminate marginal profit in the ranker just as it does in execution-grade assessment",
+);
 
 const scoredWithStaleHopCount = scoreRoute(
   {

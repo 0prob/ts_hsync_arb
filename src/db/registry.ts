@@ -70,6 +70,8 @@ import {
 export class RegistryService {
   db: CompatDatabase;
   _metaCache: RegistryMetaCache;
+  _tokenMetaCache: Map<string, Record<string, unknown> | null>;
+  _tokenDecimalsCache: Map<string, number>;
   _stmtFn: (key: string, sql: string) => ReturnType<CompatDatabase["prepare"]>;
   _invalidatePoolMetaCacheFn: () => void;
   _recordLiquidityEventFn: (...args: any[]) => void;
@@ -86,6 +88,8 @@ export class RegistryService {
     this._invalidatePoolMetaCacheFn = this._invalidatePoolMetaCache.bind(this);
     this._recordLiquidityEventFn = this.recordLiquidityEvent.bind(this);
     this._metaCache = new RegistryMetaCache(this._stmtFn);
+    this._tokenMetaCache = new Map();
+    this._tokenDecimalsCache = new Map();
   }
 
   // ─── Schema ──────────────────────────────────────────────────
@@ -217,6 +221,43 @@ export class RegistryService {
     return this._metaCache.getAll();
   }
 
+  _normalizeTokenAddress(address: string | null | undefined) {
+    if (typeof address !== "string") return null;
+    const trimmed = address.trim().toLowerCase();
+    return trimmed || null;
+  }
+
+  _normalizeTokenText(value: string | null | undefined) {
+    if (value == null) return null;
+    const trimmed = String(value).trim();
+    return trimmed || null;
+  }
+
+  _cacheTokenMetaEntry(meta: {
+    address?: string | null;
+    decimals?: number | null;
+    symbol?: string | null;
+    name?: string | null;
+  } | null | undefined) {
+    const normalizedAddress = this._normalizeTokenAddress(meta?.address);
+    if (!normalizedAddress) return null;
+
+    const cachedMeta = meta == null
+      ? null
+      : {
+          address: normalizedAddress,
+          decimals: meta.decimals,
+          symbol: this._normalizeTokenText(meta.symbol ?? null),
+          name: this._normalizeTokenText(meta.name ?? null),
+        };
+
+    this._tokenMetaCache.set(normalizedAddress, cachedMeta);
+    if (cachedMeta?.decimals != null) {
+      this._tokenDecimalsCache.set(normalizedAddress, cachedMeta.decimals);
+    }
+    return cachedMeta;
+  }
+
   upsertPool(metadata: Record<string, unknown>) {
     return upsertPoolRecord(
       this.db,
@@ -332,7 +373,7 @@ export class RegistryService {
    * @param {Array<{ pool_address: string, block: number, data: Object }>} stateList
    */
   batchUpdateStates(stateList: Record<string, unknown>[]) {
-    batchUpdateStatesRecord(this.db, this.updatePoolState.bind(this), stateList);
+    batchUpdateStatesRecord(this.db, this._stmtFn, stateList);
   }
 
   /**
@@ -383,6 +424,7 @@ export class RegistryService {
    */
   upsertTokenMeta(address: string, decimals: number, symbol: string | null = null, name: string | null = null) {
     upsertTokenMetaRecord(this.db, address, decimals, symbol, name);
+    this._cacheTokenMetaEntry({ address, decimals, symbol, name });
   }
 
   /**
@@ -392,7 +434,13 @@ export class RegistryService {
    * @returns {{ address, decimals, symbol, name } | null}
    */
   getTokenMeta(address: string) {
-    return getTokenMetaRecord(this.db, address);
+    const normalizedAddress = this._normalizeTokenAddress(address);
+    if (!normalizedAddress) return null;
+    if (this._tokenMetaCache.has(normalizedAddress)) {
+      return this._tokenMetaCache.get(normalizedAddress) ?? null;
+    }
+    const meta = getTokenMetaRecord(this.db, normalizedAddress);
+    return this._cacheTokenMetaEntry(meta);
   }
 
   /**
@@ -402,7 +450,39 @@ export class RegistryService {
    * @returns {Map<string, number>}  address → decimals
    */
   getTokenDecimals(addresses: string[]) {
-    return getTokenDecimalsRecord(this.db, addresses);
+    const result = new Map<string, number>();
+    if (!Array.isArray(addresses) || addresses.length === 0) return result;
+
+    const misses: string[] = [];
+    const seen = new Set<string>();
+    for (const address of addresses) {
+      const normalizedAddress = this._normalizeTokenAddress(address);
+      if (!normalizedAddress || seen.has(normalizedAddress)) continue;
+      seen.add(normalizedAddress);
+
+      const cachedDecimals = this._tokenDecimalsCache.get(normalizedAddress);
+      if (cachedDecimals != null) {
+        result.set(normalizedAddress, cachedDecimals);
+      } else {
+        misses.push(normalizedAddress);
+      }
+    }
+
+    if (misses.length === 0) return result;
+
+    const fetched = getTokenDecimalsRecord(this.db, misses);
+    for (const [address, decimals] of fetched.entries()) {
+      this._tokenDecimalsCache.set(address, decimals);
+      result.set(address, decimals);
+      if (this._tokenMetaCache.has(address)) {
+        const meta = this._tokenMetaCache.get(address);
+        if (meta) {
+          this._tokenMetaCache.set(address, { ...meta, decimals });
+        }
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -412,6 +492,18 @@ export class RegistryService {
    */
   batchUpsertTokenMeta(tokens: Array<{ address: string; decimals: number; symbol?: string; name?: string }>) {
     batchUpsertTokenMetaRecords(this.db, tokens);
+    for (const token of tokens) {
+      const normalizedAddress = this._normalizeTokenAddress(token?.address);
+      if (!normalizedAddress) continue;
+      const prior = this._tokenMetaCache.get(normalizedAddress);
+      const next = {
+        address: normalizedAddress,
+        decimals: token.decimals,
+        symbol: this._normalizeTokenText(token.symbol ?? prior?.symbol as string | null | undefined),
+        name: this._normalizeTokenText(token.name ?? prior?.name as string | null | undefined),
+      };
+      this._cacheTokenMetaEntry(next);
+    }
   }
 
   // ─── Fee Tiers ────────────────────────────────────────────────

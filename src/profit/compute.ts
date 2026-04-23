@@ -194,13 +194,14 @@ export function revertRiskPenalty(
  * @returns {ProfitAssessment}
  */
 export function computeProfit(routeResult: RouteResultLike, options: ProfitOptions = {}): ProfitAssessment {
+  const derivedHopCount = getResultHopCount(routeResult);
   const {
     gasPriceWei = DEFAULT_GAS_PRICE_WEI,
     tokenToMaticRate = null,
     slippageBps = DEFAULT_SLIPPAGE_BPS,
     revertRiskBps = DEFAULT_REVERT_RISK_BPS,
     minNetProfit = DEFAULT_MIN_PROFIT,
-    hopCount = getResultHopCount(routeResult) || 2,
+    hopCount = derivedHopCount == null ? 2 : derivedHopCount,
   } = options;
 
   if (!routeResult) return invalidAssessment({}, "missing route result");

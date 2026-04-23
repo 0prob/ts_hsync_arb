@@ -11,7 +11,12 @@
  * and returns the swap result without any side effects.
  */
 
-import { getSqrtRatioAtTick, getTickAtSqrtRatio, MIN_TICK, MAX_TICK } from "./tick_math.ts";
+import {
+  getSqrtRatioAtTick,
+  getTickAtSqrtRatioInRange,
+  MIN_TICK,
+  MAX_TICK,
+} from "./tick_math.ts";
 import { computeSwapStep } from "./swap_math.ts";
 
 // ─── Optimized Tick Navigation ──────────────────────────────────
@@ -181,7 +186,17 @@ export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean
     } else {
       // Didn't reach the next initialized boundary, so derive the active tick
       // from the post-swap sqrt price to keep downstream metadata canonical.
-      tick = getTickAtSqrtRatio(sqrtPriceX96);
+      // We already know the active tick must lie within the interval bounded by
+      // the previous active tick and the next initialized boundary (if any).
+      const minTick = zeroForOne
+        ? nextTick ?? MIN_TICK
+        : tick;
+      const maxTick = zeroForOne
+        ? tick
+        : nextTick != null
+          ? nextTick - 1
+          : MAX_TICK;
+      tick = getTickAtSqrtRatioInRange(sqrtPriceX96, minTick, maxTick);
       break;
     }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { getBalancerAmountOut, simulateBalancerSwap } from "../src/math/balancer.ts";
+import { getBalancerAmountIn, getBalancerAmountOut, simulateBalancerSwap } from "../src/math/balancer.ts";
 
 const ONE = 10n ** 18n;
 
@@ -32,5 +32,22 @@ assert.deepEqual(
   { amountOut: 0n, gasEstimate: 150_000 },
   "wrapper should stay non-fatal on malformed Balancer state"
 );
+
+{
+  const amountIn = 10n * 10n ** 15n;
+  const amountOut = getBalancerAmountOut(amountIn, healthyState, 0, 1);
+  const requiredAmountIn = getBalancerAmountIn(amountOut, healthyState, 0, 1);
+
+  assert.equal(
+    getBalancerAmountOut(requiredAmountIn, healthyState, 0, 1) >= amountOut,
+    true,
+    "exact-output Balancer quote should never underestimate the required input",
+  );
+  assert.equal(
+    getBalancerAmountOut(requiredAmountIn - 1n, healthyState, 0, 1) < amountOut,
+    true,
+    "exact-output Balancer quote should return the minimal sufficient input",
+  );
+}
 
 console.log("Balancer regression checks passed.");

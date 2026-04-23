@@ -181,8 +181,12 @@ export function isNoDataReadContractError(error: any) {
  * @param {number} concurrency  Max parallel workers (default 3)
  * @returns {Promise<R[]>}      Results in original order
  */
-export async function throttledMap(items: any, fn: any, concurrency = 3) {
-  const results = new Array(items.length);
+export async function throttledMap<T, R>(
+  items: T[],
+  fn: (item: T, index: number) => Promise<R>,
+  concurrency = 3,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
   let nextIndex = 0;
 
   async function worker() {

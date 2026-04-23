@@ -29,7 +29,11 @@ import {
   persistWatcherStates,
   reloadWatcherCache,
 } from "./watcher_state_ops.ts";
-import { HYPERSYNC_BATCH_SIZE, HYPERSYNC_MAX_ADDRESS_FILTER } from "../config/index.ts";
+import {
+  HYPERSYNC_BATCH_SIZE,
+  HYPERSYNC_MAX_ADDRESS_FILTER,
+  HYPERSYNC_MAX_FILTERS_PER_REQUEST,
+} from "../config/index.ts";
 import { logger } from "../utils/logger.ts";
 
 const WATCHER_LOOKBACK_BLOCKS = 100;
@@ -80,8 +84,75 @@ const LOG_FIELDS = [
 ];
 const watcherLogger: any = logger.child({ component: "watcher" });
 
-function watcherSleep(ms: any) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function compareRollbackGuards(a: any, b: any) {
+  return (
+    Number(a?.block_number ?? a?.blockNumber ?? a?.first_block_number) ===
+      Number(b?.block_number ?? b?.blockNumber ?? b?.first_block_number) &&
+    String(a?.block_hash ?? a?.blockHash ?? a?.first_parent_hash ?? "") ===
+      String(b?.block_hash ?? b?.blockHash ?? b?.first_parent_hash ?? "")
+  );
+}
+
+function numericLogField(value: any) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function watcherLogIdentityKey(log: any) {
+  const txHash = String(log?.transactionHash ?? "").toLowerCase();
+  const logIndex = Number(log?.logIndex);
+  if (txHash && Number.isFinite(logIndex) && logIndex >= 0) {
+    return `${txHash}:${logIndex}`;
+  }
+
+  const blockNumber = Number(log?.blockNumber);
+  const transactionIndex = Number(log?.transactionIndex);
+  if (
+    Number.isFinite(blockNumber) &&
+    blockNumber >= 0 &&
+    Number.isFinite(transactionIndex) &&
+    transactionIndex >= 0 &&
+    Number.isFinite(logIndex) &&
+    logIndex >= 0
+  ) {
+    return `${blockNumber}:${transactionIndex}:${logIndex}:${String(log?.address ?? "").toLowerCase()}`;
+  }
+
+  return null;
+}
+
+export function sortWatcherLogs(logs: any[]) {
+  if (!Array.isArray(logs) || logs.length <= 1) return logs ?? [];
+  return [...logs].sort((a: any, b: any) => {
+    const byBlock = numericLogField(a?.blockNumber) - numericLogField(b?.blockNumber);
+    if (byBlock !== 0) return byBlock;
+
+    const byTxIndex = numericLogField(a?.transactionIndex) - numericLogField(b?.transactionIndex);
+    if (byTxIndex !== 0) return byTxIndex;
+
+    const byLogIndex = numericLogField(a?.logIndex) - numericLogField(b?.logIndex);
+    if (byLogIndex !== 0) return byLogIndex;
+
+    return String(a?.address ?? "").localeCompare(String(b?.address ?? ""));
+  });
+}
+
+export function dedupeWatcherLogs(logs: any[]) {
+  if (!Array.isArray(logs) || logs.length <= 1) return logs ?? [];
+
+  const seen = new Set<string>();
+  const deduped = [];
+  for (const log of logs) {
+    const identity = watcherLogIdentityKey(log);
+    if (!identity) {
+      deduped.push(log);
+      continue;
+    }
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    deduped.push(log);
+  }
+  return deduped;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -135,6 +206,8 @@ export class StateWatcher {
   private _watchedAddressSet: Set<string>;
   private _pendingEnrichment: Map<string, any>;
   private _enrichmentEpoch: number;
+  private _sleepTimer: ReturnType<typeof setTimeout> | null;
+  private _sleepResolve: (() => void) | null;
   onBatch: ((batch: any) => void) | null;
   onReorg: ((reorg: any) => void) | null;
 
@@ -151,6 +224,8 @@ export class StateWatcher {
     this._watchedAddressSet = new Set();
     this._pendingEnrichment = new Map();
     this._enrichmentEpoch = 0;
+    this._sleepTimer = null;
+    this._sleepResolve = null;
 
     this.onBatch = null;
     this.onReorg = null;
@@ -168,15 +243,24 @@ export class StateWatcher {
       if (cp && Number.isFinite(Number(cp.last_block))) {
         this._lastBlock = Math.max(0, Number(cp.last_block));
       } else {
-        try {
-          const height = Number(await client.getHeight());
-          this._lastBlock = Math.max(0, height - WATCHER_LOOKBACK_BLOCKS);
+        const globalCheckpoint = Number(this._registry.getGlobalCheckpoint?.());
+        if (Number.isFinite(globalCheckpoint) && globalCheckpoint >= 0) {
+          this._lastBlock = Math.max(0, globalCheckpoint);
           watcherLogger.info(
-            { startBlock: this._lastBlock, lookbackBlocks: WATCHER_LOOKBACK_BLOCKS },
-            "No checkpoint found; starting from lookback block"
+            { startBlock: this._lastBlock },
+            "No watcher checkpoint found; resuming from global checkpoint"
           );
-        } catch {
-          this._lastBlock = 0;
+        } else {
+          try {
+            const height = Number(await client.getHeight());
+            this._lastBlock = Math.max(0, height - WATCHER_LOOKBACK_BLOCKS);
+            watcherLogger.info(
+              { startBlock: this._lastBlock, lookbackBlocks: WATCHER_LOOKBACK_BLOCKS },
+              "No checkpoint found; starting from lookback block"
+            );
+          } catch {
+            this._lastBlock = 0;
+          }
         }
       }
     }
@@ -218,6 +302,7 @@ export class StateWatcher {
   async stop() {
     this._running = false;
     this._closed = true;
+    this._wakeSleep();
     if (this._loopPromise) {
       await this._loopPromise.catch(() => {});
       this._loopPromise = null;
@@ -233,10 +318,11 @@ export class StateWatcher {
     return this._lastBlock;
   }
 
-  _buildQuery() {
+  _buildQueries() {
     // HyperSync enforces a 2 MB HTTP request-body limit. Instead of dropping to
     // topic-only filtering once the address set grows, shard the address list
-    // across multiple filters so the watcher stays selective at larger pool counts.
+    // across multiple filters and requests so the watcher stays selective at
+    // larger pool counts without overflowing request payload limits.
     const logFilters =
       this._watchedAddresses.length > 0
         ? chunk(this._watchedAddresses, HYPERSYNC_MAX_ADDRESS_FILTER).map((addresses) => ({
@@ -245,25 +331,99 @@ export class StateWatcher {
           }))
         : [{ topics: [TOPICS] }];
 
-    return buildHyperSyncLogQuery({
-      fromBlock: this._lastBlock + 1,
-      logs: logFilters,
-      maxNumLogs: HYPERSYNC_BATCH_SIZE,
-      joinMode: JoinMode.JoinNothing,
-      logFields: LOG_FIELDS,
-      blockFields: DEFAULT_HYPERSYNC_BLOCK_FIELDS,
+    return chunk(logFilters, HYPERSYNC_MAX_FILTERS_PER_REQUEST).map((logs) =>
+      buildHyperSyncLogQuery({
+        fromBlock: this._lastBlock + 1,
+        logs,
+        maxNumLogs: HYPERSYNC_BATCH_SIZE,
+        joinMode: JoinMode.JoinNothing,
+        logFields: LOG_FIELDS,
+        blockFields: DEFAULT_HYPERSYNC_BLOCK_FIELDS,
+      })
+    );
+  }
+
+  async _pollOnce() {
+    const queries = this._buildQueries();
+    const logs = [];
+    let rollbackGuard = null;
+    let nextBlock = Number.POSITIVE_INFINITY;
+    let archiveHeight = Number.POSITIVE_INFINITY;
+
+    const responses = await Promise.all(queries.map((query) => client.get(query)));
+    if (!this._running) {
+      return null;
+    }
+
+    for (const res of responses) {
+      if (res.rollbackGuard) {
+        if (!rollbackGuard) {
+          rollbackGuard = res.rollbackGuard;
+        } else if (!compareRollbackGuards(rollbackGuard, res.rollbackGuard)) {
+          watcherLogger.warn("Watcher shard responses returned mismatched rollback guards; using the first guard");
+        }
+      }
+
+      if (Array.isArray(res.data?.logs) && res.data.logs.length > 0) {
+        logs.push(...res.data.logs);
+      }
+
+      const shardNextBlock = Number(res.nextBlock);
+      if (Number.isFinite(shardNextBlock)) {
+        nextBlock = Math.min(nextBlock, shardNextBlock);
+      }
+
+      const shardArchiveHeight = Number(res.archiveHeight);
+      if (Number.isFinite(shardArchiveHeight)) {
+        archiveHeight = Math.min(archiveHeight, shardArchiveHeight);
+      }
+    }
+
+    return {
+      rollbackGuard,
+      data: { logs: dedupeWatcherLogs(sortWatcherLogs(logs)) },
+      nextBlock: Number.isFinite(nextBlock) ? nextBlock : null,
+      archiveHeight: Number.isFinite(archiveHeight) ? archiveHeight : null,
+    };
+  }
+
+  _wakeSleep() {
+    if (this._sleepTimer) {
+      clearTimeout(this._sleepTimer);
+      this._sleepTimer = null;
+    }
+    const resolve = this._sleepResolve;
+    this._sleepResolve = null;
+    resolve?.();
+  }
+
+  async _sleep(ms: number) {
+    if (!this._running || ms <= 0) return;
+    await new Promise<void>((resolve) => {
+      this._sleepResolve = () => {
+        this._sleepTimer = null;
+        this._sleepResolve = null;
+        resolve();
+      };
+      this._sleepTimer = setTimeout(() => {
+        this._sleepTimer = null;
+        const currentResolve = this._sleepResolve;
+        this._sleepResolve = null;
+        currentResolve?.();
+      }, ms);
     });
   }
 
   async _loop() {
     const addrCount = this._watchedAddresses.length;
     const shardCount = Math.max(1, Math.ceil(addrCount / HYPERSYNC_MAX_ADDRESS_FILTER));
+    const requestCount = Math.max(1, Math.ceil(shardCount / HYPERSYNC_MAX_FILTERS_PER_REQUEST));
     const filterMode =
       addrCount === 0
         ? "topic-only (no pools yet)"
         : shardCount === 1
           ? `${addrCount} pool address(es)`
-          : `${addrCount} pool address(es) across ${shardCount} query shard(s)`;
+          : `${addrCount} pool address(es) across ${shardCount} filter shard(s) and ${requestCount} request(s)`;
     watcherLogger.info(
       { fromBlock: this._lastBlock + 1, filterMode },
       "Starting manual HyperSync loop"
@@ -271,8 +431,8 @@ export class StateWatcher {
 
     while (this._running) {
       try {
-        const query = this._buildQuery();
-        const res = await client.get(query);
+        const res = await this._pollOnce();
+        if (!res) break;
         if (!this._running) break;
 
         if (res.rollbackGuard) {
@@ -324,12 +484,12 @@ export class StateWatcher {
           nextBlock >= archiveHeight;
 
         if (logs.length === 0 || caughtUp) {
-        await watcherSleep(WATCHER_IDLE_SLEEP_MS);
+          await this._sleep(WATCHER_IDLE_SLEEP_MS);
         }
       } catch (err: any) {
         if (!this._running) break;
         watcherLogger.error({ error: err.message }, "HyperSync poll error");
-        await watcherSleep(WATCHER_ERROR_SLEEP_MS);
+        await this._sleep(WATCHER_ERROR_SLEEP_MS);
       }
     }
   }

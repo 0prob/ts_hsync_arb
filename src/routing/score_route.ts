@@ -25,6 +25,10 @@ import { getPathHopCount } from "./path_hops.ts";
 const DEFAULT_GAS_PRICE_GWEI = 30n;
 const GWEI = 10n ** 9n;
 
+function ceilDiv(numerator: bigint, denominator: bigint) {
+  return (numerator + denominator - 1n) / denominator;
+}
+
 function bigintToApproxNumber(value: bigint, decimals = 0) {
   if (value === 0n) return 0;
 
@@ -76,7 +80,7 @@ export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
 export function gasCostInStartTokenUnits(gasCostWei: bigint, tokenToMaticRate?: bigint | null) {
   if (tokenToMaticRate == null) return null;
   if (tokenToMaticRate <= 0n) return null;
-  return gasCostWei / tokenToMaticRate;
+  return ceilDiv(gasCostWei, tokenToMaticRate);
 }
 
 // ─── Route scorer ─────────────────────────────────────────────

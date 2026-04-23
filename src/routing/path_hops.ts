@@ -11,23 +11,36 @@ export function getPathHopCount(path: PathLike | null | undefined) {
   return hopCount;
 }
 
+function normalizedHopCount(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value;
+}
+
 export function getResultHopCount(result: unknown) {
   const value = result as {
     hopCount?: number;
     poolPath?: Array<unknown>;
     tokenPath?: Array<unknown>;
     hopAmounts?: Array<unknown>;
+    amountIn?: unknown;
+    amountOut?: unknown;
+    profit?: unknown;
+    totalGas?: unknown;
   } | null | undefined;
 
-  if (Array.isArray(value?.poolPath)) return value.poolPath.length;
-  if (Array.isArray(value?.hopAmounts) && value.hopAmounts.length > 0) {
-    return value.hopAmounts.length - 1;
-  }
-  if (Array.isArray(value?.tokenPath) && value.tokenPath.length > 0) {
-    return value.tokenPath.length - 1;
+  const structuralCandidates = [
+    Array.isArray(value?.poolPath) ? normalizedHopCount(value.poolPath.length) : null,
+    Array.isArray(value?.hopAmounts) ? normalizedHopCount(value.hopAmounts.length - 1) : null,
+    Array.isArray(value?.tokenPath) ? normalizedHopCount(value.tokenPath.length - 1) : null,
+  ].filter((candidate): candidate is number => candidate != null);
+
+  if (structuralCandidates.length > 0) {
+    const canonical = structuralCandidates[0];
+    for (let i = 1; i < structuralCandidates.length; i++) {
+      if (structuralCandidates[i] !== canonical) return 0;
+    }
+    return canonical;
   }
 
-  const hopCount = Number(value?.hopCount);
-  if (!Number.isFinite(hopCount) || hopCount <= 0) return 0;
-  return hopCount;
+  return normalizedHopCount(Number(value?.hopCount));
 }

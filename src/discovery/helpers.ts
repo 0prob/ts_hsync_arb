@@ -1,8 +1,19 @@
 import { logger } from "../utils/logger.ts";
+import type { DecodeResult } from "../protocols/factories.ts";
 
-const discoveryLogger: any = logger.child({ component: "discovery" });
+const discoveryLogger = logger.child({ component: "discovery" });
 
-export function buildDiscoveredPoolBatch(key: string, extractedPools: any[]) {
+export type DiscoveryRawLog = {
+  blockNumber: number | string;
+  transactionHash?: string;
+};
+
+export type DiscoveredPoolCandidate = {
+  extracted: DecodeResult;
+  rawLog: DiscoveryRawLog;
+};
+
+export function buildDiscoveredPoolBatch(key: string, extractedPools: DiscoveredPoolCandidate[]) {
   const initializedPools = extractedPools.filter(({ extracted }) => extracted.tokens.length >= 2);
   const skipped = extractedPools.length - initializedPools.length;
   if (skipped > 0) {

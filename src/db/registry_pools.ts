@@ -43,6 +43,27 @@ function normalizePoolUpsertBatch(poolList: any[]) {
   return [...latestByAddress.values()];
 }
 
+function normalizeStateUpdateRecord(state: any) {
+  if (!state?.pool_address) {
+    throw new Error("RegistryService: pool_address is required for state update");
+  }
+
+  return {
+    pool_address: String(state.pool_address).toLowerCase(),
+    block: Number(state.block ?? 0),
+    data: state.data,
+  };
+}
+
+function normalizeStateUpdateBatch(stateList: any[]) {
+  const latestByAddress = new Map<string, any>();
+  for (const state of stateList) {
+    const normalized = normalizeStateUpdateRecord(state);
+    latestByAddress.set(normalized.pool_address, normalized);
+  }
+  return [...latestByAddress.values()];
+}
+
 export function upsertPool(db: any, stmt: any, invalidatePoolMetaCache: any, metadata: any) {
   assertPoolAddress(metadata);
 
@@ -104,9 +125,7 @@ export function batchRemovePools(stmt: any, invalidatePoolMetaCache: any, db: an
 }
 
 export function updatePoolState(stmt: any, state: any) {
-  if (!state.pool_address) {
-    throw new Error("RegistryService: pool_address is required for state update");
-  }
+  const normalized = normalizeStateUpdateRecord(state);
 
   return stmt("updatePoolState", `
     INSERT INTO pool_state (address, last_updated_block, state_data)
@@ -115,9 +134,9 @@ export function updatePoolState(stmt: any, state: any) {
       last_updated_block = excluded.last_updated_block,
       state_data         = excluded.state_data
   `).run(
-    state.pool_address.toLowerCase(),
-    state.block,
-    stringifyWithBigInt(state.data)
+    normalized.pool_address,
+    normalized.block,
+    stringifyWithBigInt(normalized.data)
   );
 }
 
@@ -241,14 +260,28 @@ export function batchUpsertPools(db: any, stmt: any, invalidatePoolMetaCache: an
   invalidatePoolMetaCache();
 }
 
-export function batchUpdateStates(db: any, updatePoolStateImpl: any, stateList: any) {
+export function batchUpdateStates(db: any, stmt: any, stateList: any) {
   if (!Array.isArray(stateList) || stateList.length === 0) return;
+  const normalizedStates = normalizeStateUpdateBatch(stateList);
+  if (normalizedStates.length === 0) return;
+
+  const updatePoolStateStmt = stmt("updatePoolState", `
+    INSERT INTO pool_state (address, last_updated_block, state_data)
+    VALUES (?, ?, ?)
+    ON CONFLICT(address) DO UPDATE SET
+      last_updated_block = excluded.last_updated_block,
+      state_data         = excluded.state_data
+  `);
 
   db.transaction((states: any) => {
     for (const state of states) {
-      updatePoolStateImpl(state);
+      updatePoolStateStmt.run(
+        state.pool_address,
+        state.block,
+        stringifyWithBigInt(state.data),
+      );
     }
-  })(stateList);
+  })(normalizedStates);
 }
 
 export function getPoolsWithState(db: any, opts: any = {}) {

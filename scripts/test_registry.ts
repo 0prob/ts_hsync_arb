@@ -68,6 +68,21 @@ function cleanup(dir: string) {
 
     const activeBeforeDisable = registry.getActivePoolsMeta();
     assert.equal(activeBeforeDisable.length, 1, "active meta cache should contain the inserted pool");
+    assert.equal(
+      registry._metaCache._poolMetaCache,
+      null,
+      "loading active pool metadata should not eagerly build the full pool meta cache",
+    );
+    assert.equal(
+      registry.getPoolMeta("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")?.pool_address,
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "active pool lookups should resolve from the active metadata cache",
+    );
+    assert.equal(
+      registry._metaCache._poolMetaCache,
+      null,
+      "active pool lookups should not force the full pool meta cache to build",
+    );
 
     registry.disablePool("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "test disable");
 
@@ -89,12 +104,33 @@ function cleanup(dir: string) {
     assert.equal(disabledEvents.length, 1, "disablePool should record one disabled liquidity event");
     assert.equal(disabledEvents[0].address, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     assert.equal(disabledEvents[0].new_value, "test disable");
+    assert.equal(
+      registry.getPoolMeta("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")?.status,
+      "disabled",
+      "disabled pool lookups should still fall back to the full metadata cache",
+    );
+    assert(registry._metaCache._poolMetaCache, "disabled lookups should hydrate the full pool metadata cache on demand");
 
     registry.enablePool("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     const activeAfterEnable = registry.getActivePoolsMeta();
     assert.equal(activeAfterEnable.length, 1, "enablePool should repopulate the active metadata view");
 
     registry.batchUpdateStates([
+      {
+        pool_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        block: 49,
+        data: {
+          poolId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          protocol: "UNISWAP_V2",
+          tokens: [
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+          ],
+          reserve0: 900n,
+          reserve1: 1900n,
+          timestamp: Date.now() - 1,
+        },
+      },
       {
         pool_address: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         block: 50,
@@ -111,6 +147,14 @@ function cleanup(dir: string) {
         },
       },
     ]);
+    const stateRow = registry.db
+      .statement(
+        "test:getPoolStateRow",
+        "SELECT address, last_updated_block, state_data FROM pool_state WHERE address = ?",
+      )
+      .get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert.equal(stateRow.last_updated_block, 50, "batchUpdateStates should keep the latest state for duplicate addresses in the same batch");
+    assert.match(String(stateRow.state_data), /"reserve0":"1000"/, "batchUpdateStates should persist the last state payload for duplicate addresses");
     registry.setCheckpoint("UNISWAP_V2", 50, "0xhash");
 
     const rollbackResult = registry.rollbackToBlock(50);

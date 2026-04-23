@@ -147,6 +147,17 @@ export const HYPERSYNC_MAX_BLOCKS_PER_REQUEST = _num(
 /** Max number of addresses to include in a HyperSync filter before falling back to topic-only */
 export const HYPERSYNC_MAX_ADDRESS_FILTER = _num("HYPERSYNC_MAX_ADDRESS_FILTER", "HYPERSYNC_MAX_ADDRESS_FILTER", 1000);
 
+/**
+ * Max number of log filters to include in a single watcher `get()` request.
+ * Splitting large watchlists across multiple requests avoids HyperSync payload
+ * limits once the bot tracks many pools.
+ */
+export const HYPERSYNC_MAX_FILTERS_PER_REQUEST = _num(
+  "HYPERSYNC_MAX_FILTERS_PER_REQUEST",
+  "HYPERSYNC_MAX_FILTERS_PER_REQUEST",
+  8
+);
+
 // ─── Discovery ─────────────────────────────────────────────────
 
 /** Block number to start discovery from if no checkpoint exists */
@@ -154,6 +165,13 @@ export const GENESIS_START_BLOCK = _num("GENESIS_START_BLOCK", "GENESIS_START_BL
 
 /** Interval between background pool discovery runs (ms) */
 export const DISCOVERY_INTERVAL_MS = _num("DISCOVERY_INTERVAL_MS", "DISCOVERY_INTERVAL_MS", 30 * 60 * 1000);
+
+/** Max number of protocol discovery scans to run concurrently */
+export const DISCOVERY_PROTOCOL_CONCURRENCY = _num(
+  "DISCOVERY_PROTOCOL_CONCURRENCY",
+  "DISCOVERY_PROTOCOL_CONCURRENCY",
+  3,
+);
 
 // ─── RPC ───────────────────────────────────────────────────────
 

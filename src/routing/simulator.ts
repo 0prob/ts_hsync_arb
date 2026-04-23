@@ -187,6 +187,18 @@ export function optimizeInputAmount(path: any, stateCache: any, options: any = {
   let lo = minAmount;
   let hi = maxAmount;
   let best = null;
+  const evaluationCache = new Map<bigint, { result: any; score: any }>();
+
+  function evaluateAmount(amount: bigint) {
+    const cached = evaluationCache.get(amount);
+    if (cached) return cached;
+
+    const result = simulateRoute(path, amount, stateCache);
+    const score = scorer(result);
+    const evaluated = { result, score };
+    evaluationCache.set(amount, evaluated);
+    return evaluated;
+  }
 
   for (let i = 0; i < iterations; i++) {
     const third = (BigInt(hi) - BigInt(lo)) / 3n;
@@ -195,25 +207,26 @@ export function optimizeInputAmount(path: any, stateCache: any, options: any = {
     const m1 = lo + third;
     const m2 = hi - third;
 
-    const r1 = simulateRoute(path, m1, stateCache);
-    const r2 = simulateRoute(path, m2, stateCache);
-    const s1 = scorer(r1);
-    const s2 = scorer(r2);
+    const { result: r1, score: s1 } = evaluateAmount(m1);
+    const { result: r2, score: s2 } = evaluateAmount(m2);
 
     if (s1 > s2) {
       hi = m2;
-      if (!best || s1 > scorer(best)) best = r1;
+      const bestScore = best ? evaluateAmount(best.amountIn).score : null;
+      if (!best || s1 > bestScore) best = r1;
     } else {
       lo = m1;
-      if (!best || s2 > scorer(best)) best = r2;
+      const bestScore = best ? evaluateAmount(best.amountIn).score : null;
+      if (!best || s2 > bestScore) best = r2;
     }
   }
 
-  // Final evaluation at midpoint
-  const mid = (lo + hi) / 2n;
-  if (mid > 0n) {
-    const midResult = simulateRoute(path, mid, stateCache);
-    if (!best || scorer(midResult) > scorer(best)) best = midResult;
+  // Final evaluation at the narrowed interval boundaries + midpoint.
+  for (const amount of [lo, (lo + hi) / 2n, hi]) {
+    if (amount <= 0n) continue;
+    const { result, score } = evaluateAmount(amount);
+    const bestScore = best ? evaluateAmount(best.amountIn).score : null;
+    if (!best || score > bestScore) best = result;
   }
 
   return best && accept(best) ? best : null;

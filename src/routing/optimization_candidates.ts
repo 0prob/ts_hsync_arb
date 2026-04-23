@@ -33,12 +33,27 @@ function scoreForCandidate(
     gasPriceWei: bigint;
     getTokenToMaticRate: (tokenAddress: string) => bigint;
   },
+  caches: {
+    tokenRates: Map<string, bigint>;
+    scored: WeakMap<CandidateEntryLike, ReturnType<typeof scoreRoute> | null>;
+  },
 ) {
-  const tokenToMaticRate = options.getTokenToMaticRate(entry.path.startToken);
-  return scoreRoute(entry.path as any, entry.result as any, {
+  const cachedScore = caches.scored.get(entry);
+  if (cachedScore !== undefined) return cachedScore;
+
+  const tokenKey = entry.path.startToken.toLowerCase();
+  let tokenToMaticRate = caches.tokenRates.get(tokenKey);
+  if (tokenToMaticRate == null) {
+    tokenToMaticRate = options.getTokenToMaticRate(entry.path.startToken);
+    caches.tokenRates.set(tokenKey, tokenToMaticRate);
+  }
+
+  const scored = scoreRoute(entry.path as any, entry.result as any, {
     gasPriceWei: options.gasPriceWei,
     tokenToMaticRate: tokenToMaticRate > 0n ? tokenToMaticRate : null,
   });
+  caches.scored.set(entry, scored);
+  return scored;
 }
 
 export function selectOptimizationCandidates<T extends CandidateEntryLike>(
@@ -51,6 +66,10 @@ export function selectOptimizationCandidates<T extends CandidateEntryLike>(
 ) {
   if (candidates.length <= limit) return candidates;
 
+  const scoreCaches = {
+    tokenRates: new Map<string, bigint>(),
+    scored: new WeakMap<CandidateEntryLike, ReturnType<typeof scoreRoute> | null>(),
+  };
   const selected = new Map<string, T>();
   const addBatch = (batch: T[]) => {
     for (const entry of batch) {
@@ -68,13 +87,13 @@ export function selectOptimizationCandidates<T extends CandidateEntryLike>(
     return 0;
   });
   const topByRoi = [...candidates].sort((a, b) => {
-    const scoredA = scoreForCandidate(a, options);
-    const scoredB = scoreForCandidate(b, options);
+    const scoredA = scoreForCandidate(a, options, scoreCaches);
+    const scoredB = scoreForCandidate(b, options, scoreCaches);
     return (scoredB?.roi ?? -Infinity) - (scoredA?.roi ?? -Infinity);
   });
   const topByScore = [...candidates].sort((a, b) => {
-    const scoredA = scoreForCandidate(a, options);
-    const scoredB = scoreForCandidate(b, options);
+    const scoredA = scoreForCandidate(a, options, scoreCaches);
+    const scoredB = scoreForCandidate(b, options, scoreCaches);
     return (scoredB?.score ?? -Infinity) - (scoredA?.score ?? -Infinity);
   });
   const topByLogWeight = [...candidates].sort(

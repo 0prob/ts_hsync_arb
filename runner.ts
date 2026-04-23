@@ -72,6 +72,8 @@ import { createDiscoveryCoordinator } from "./src/bootstrap/discovery.ts";
 import { configureWatcherCallbacks, createArbScheduler, createShutdownHandler } from "./src/bootstrap/lifecycle.ts";
 import { createRuntimeContext } from "./src/runtime/runtime_context.ts";
 import { createTopologyService } from "./src/runtime/topology_service.ts";
+import { createPricingService } from "./src/runtime/pricing_service.ts";
+import { createBackgroundTaskTracker } from "./src/runtime/background_tasks.ts";
 import { createRegistryRepositories } from "./src/db/repositories.ts";
 import {
   DB_PATH,
@@ -215,40 +217,6 @@ function log(msg: string, level: LogLevel = "info", meta: LogMetaInput = undefin
 
 const runnerSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const MIN_PROBE_AMOUNT = 1_000n;
-
-function uniqueSortedBigInts(values: Array<string | number | bigint>) {
-  return [...new Set(values.map(String))]
-    .map((value) => BigInt(value))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
-function getProbeAmountsForToken(tokenAddress: string) {
-  let decimals = repositories?.tokens.getMeta(tokenAddress)?.decimals;
-  if (decimals == null) decimals = 18;
-
-  const rawUnit = 10n ** BigInt(Math.max(0, Math.min(Number(decimals), 18)));
-  const oracle = runtime.getPriceOracle();
-  const oracleScaledProbes = oracle
-    ? [
-        oracle.fromMatic(tokenAddress, 5n * 10n ** 16n), // 0.05 MATIC
-        oracle.fromMatic(tokenAddress, 5n * 10n ** 17n), // 0.5 MATIC
-        oracle.fromMatic(tokenAddress, 2n * 10n ** 18n), // 2 MATIC
-        oracle.fromMatic(tokenAddress, 10n ** 19n),      // 10 MATIC
-      ]
-    : [];
-  const probes = uniqueSortedBigInts([
-    MIN_PROBE_AMOUNT,
-    rawUnit / 10n,
-    rawUnit,
-    rawUnit * 10n,
-    rawUnit * 100n,
-    rawUnit * 1_000n,
-    TEST_AMOUNT_WEI,
-    ...oracleScaledProbes,
-  ]);
-
-  return probes.filter((amount) => amount >= MIN_PROBE_AMOUNT);
-}
 function roiForCandidate(candidate: CandidateEntry | null | undefined) {
   const assessedRoi = candidate?.assessment?.roi;
   if (typeof assessedRoi === "number" && Number.isFinite(assessedRoi)) {
@@ -273,10 +241,6 @@ async function getCurrentFeeSnapshot() {
   } catch {
     return null;
   }
-}
-
-function getFreshTokenToMaticRate(tokenAddress: string) {
-  return runtime.getPriceOracle()?.getFreshRate?.(tokenAddress, MAX_PRICE_AGE_MS) ?? 0n;
 }
 
 function pruneArbActivityWindow(now = Date.now()) {
@@ -367,43 +331,18 @@ function formatDuration(ms: number) {
   return `${(ms / 60_000).toFixed(1)}m`;
 }
 
-function fmtSym(addr: string) {
-  return repositories?.tokens.getMeta(addr)?.symbol ?? addr.slice(2, 8).toUpperCase();
-}
-
-function formatTokenAmount(amount: bigint, decimals: number, fractionDigits = 6) {
-  const safeDecimals = Math.max(0, Math.min(Number(decimals) || 0, 18));
-  const scale = 10n ** BigInt(safeDecimals);
-  const negative = amount < 0n;
-  const absAmount = negative ? -amount : amount;
-  const whole = absAmount / scale;
-  const fraction = absAmount % scale;
-
-  if (fractionDigits <= 0 || safeDecimals === 0) {
-    return `${negative ? "-" : ""}${whole.toString()}`;
-  }
-
-  const paddedFraction = fraction.toString().padStart(safeDecimals, "0");
-  const clippedFraction = paddedFraction
-    .slice(0, Math.min(fractionDigits, safeDecimals))
-    .replace(/0+$/, "");
-
-  return clippedFraction.length > 0
-    ? `${negative ? "-" : ""}${whole.toString()}.${clippedFraction}`
-    : `${negative ? "-" : ""}${whole.toString()}`;
-}
+const pricingService = createPricingService({
+  getTokenMeta: (tokenAddress: string) => repositories?.tokens.getMeta(tokenAddress),
+  getPriceOracle: () => runtime.getPriceOracle(),
+  maxPriceAgeMs: MAX_PRICE_AGE_MS,
+  minProbeAmount: MIN_PROBE_AMOUNT,
+  testAmountWei: TEST_AMOUNT_WEI,
+});
 
 function fmtPath(path: ArbPathLike) {
   const tokens = [path.startToken, ...path.edges.map(e => e.tokenOut)];
   const prots  = path.edges.map(e => e.protocol);
-  return `${tokens.map(fmtSym).join('→')}  [${prots.join('/')}]`;
-}
-
-function fmtProfit(netWei: bigint, tokenAddr: string) {
-  const meta = repositories?.tokens.getMeta(tokenAddr);
-  const dec  = meta?.decimals ?? 18;
-  const sym  = meta?.symbol   ?? tokenAddr.slice(2, 8).toUpperCase();
-  return `${formatTokenAmount(netWei, dec, 6)} ${sym}`;
+  return `${tokens.map((token) => pricingService.fmtSym(token)).join('→')}  [${prots.join('/')}]`;
 }
 
 function partitionChangedPools(changedPools: Set<string>) {
@@ -458,21 +397,9 @@ const discoveryCoordinator = createDiscoveryCoordinator({
   discoveryIntervalMs: DISCOVERY_INTERVAL_MS,
 });
 const maybeRunDiscovery = discoveryCoordinator.maybeRunDiscovery;
-const backgroundTasks = new Set<Promise<void>>();
-
-function trackBackgroundTask(task: Promise<void>) {
-  backgroundTasks.add(task);
-  void task.finally(() => {
-    backgroundTasks.delete(task);
-  });
-  return task;
-}
-
-async function waitForBackgroundTasks() {
-  while (backgroundTasks.size > 0) {
-    await Promise.allSettled([...backgroundTasks]);
-  }
-}
+const backgroundTaskTracker = createBackgroundTaskTracker();
+const trackBackgroundTask = backgroundTaskTracker.track;
+const waitForBackgroundTasks = backgroundTaskTracker.waitForIdle;
 
 const { scheduleArb, cancelScheduledArb, waitForIdle: waitForArbIdle } = createArbScheduler({
   isRunning: () => runtime.isRunning(),
@@ -589,7 +516,7 @@ opportunityEngine = createOpportunityEngine({
     fmtPath,
     getRouteFreshness,
     getCurrentFeeSnapshot,
-    getFreshTokenToMaticRate,
+    getFreshTokenToMaticRate: pricingService.getFreshTokenToMaticRate,
     deriveOnChainMinProfit,
     buildArbTx,
     sendTx,
@@ -617,9 +544,9 @@ opportunityEngine = createOpportunityEngine({
     stateCache,
     log,
     getCurrentFeeSnapshot,
-    getFreshTokenToMaticRate,
+    getFreshTokenToMaticRate: pricingService.getFreshTokenToMaticRate,
     getRouteFreshness,
-    getProbeAmountsForToken,
+    getProbeAmountsForToken: pricingService.getProbeAmountsForToken,
     evaluatePathsParallel,
     optimizeInputAmount: (path: ArbPathLike, cache: Map<string, Record<string, any>>, options: any) =>
       optimizeInputAmount(path, cache, options) as unknown as RouteResultLike | null,
@@ -628,7 +555,7 @@ opportunityEngine = createOpportunityEngine({
     routeCacheUpdate: (candidates: CandidateEntry[]) => routeCache.update(candidates),
     routeKeyFromEdges,
     fmtPath,
-    fmtProfit,
+    fmtProfit: pricingService.fmtProfit,
     onPathsEvaluated: (count: number) => pathsEvaluated.inc({ pass: runtime.getPassCount() }, count),
     onCandidateMetrics: ({ topCandidates, optimizedCandidates, profitableRoutes }: { topCandidates: number; optimizedCandidates: number; profitableRoutes: number }) => {
       candidateShortlistSize.observe(topCandidates);
@@ -651,7 +578,7 @@ opportunityEngine = createOpportunityEngine({
     maxExecutionBatch: MAX_EXECUTION_BATCH,
     log,
     getCurrentFeeSnapshot,
-    getFreshTokenToMaticRate,
+    getFreshTokenToMaticRate: pricingService.getFreshTokenToMaticRate,
     getRouteFreshness,
     simulateRoute: (path: ArbPathLike, amountIn: bigint, cache: Map<string, Record<string, any>>) =>
       simulateRoute(path, amountIn, cache) as unknown as RouteResultLike,
@@ -725,7 +652,7 @@ async function runPass() {
     botState.consecutiveErrors = runtime.getConsecutiveErrors();
     botState.opportunities     = opportunities.slice(0, 5).map((o: CandidateEntry) => ({
       Route:  o.path.edges.map(e => e.protocol).join(' -> '),
-      Profit: fmtProfit(o.result.profit, o.path.startToken),
+      Profit: pricingService.fmtProfit(o.result.profit, o.path.startToken),
       ROI:    `${(roiForCandidate(o) / 10000).toFixed(2)}%`,
     }));
     log(`Pass #${passCount}: ${opportunities.length} profitable route(s)`, "info", {

@@ -90,6 +90,15 @@ export function getSqrtRatioAtTick(tick: number): bigint {
   return sqrtPriceX96;
 }
 
+function normaliseTickSearchBounds(minTick: number, maxTick: number) {
+  const lo = Math.max(MIN_TICK, Math.min(minTick, maxTick));
+  const hi = Math.min(MAX_TICK, Math.max(minTick, maxTick));
+  if (lo > hi) {
+    throw new Error(`TickMath: invalid tick search bounds [${minTick}, ${maxTick}]`);
+  }
+  return { lo, hi };
+}
+
 // ─── getTickAtSqrtRatio ───────────────────────────────────────
 
 /**
@@ -107,14 +116,39 @@ export function getTickAtSqrtRatio(sqrtPriceX96: bigint): number {
     );
   }
 
-  // Use log approximation then refine
-  // tick ≈ log_{sqrt(1.0001)}(sqrtPriceX96 / 2^96)
-  // = log(sqrtPriceX96 / 2^96) / log(sqrt(1.0001))
-  // = 2 * log(sqrtPriceX96 / 2^96) / log(1.0001)
+  return getTickAtSqrtRatioInRange(sqrtPriceX96, MIN_TICK, MAX_TICK);
+}
 
-  // Binary search between MIN_TICK and MAX_TICK
-  let lo = MIN_TICK;
-  let hi = MAX_TICK;
+/**
+ * Calculates the greatest tick within a bounded range such that
+ * getSqrtRatioAtTick(tick) <= sqrtPriceX96.
+ *
+ * Useful when callers already know the active price interval, which avoids a
+ * full-range binary search over the entire TickMath domain.
+ *
+ * @param {bigint} sqrtPriceX96  Q64.96 sqrt price
+ * @param {number} minTick       Inclusive lower search bound
+ * @param {number} maxTick       Inclusive upper search bound
+ * @returns {number}             The tick
+ */
+export function getTickAtSqrtRatioInRange(
+  sqrtPriceX96: bigint,
+  minTick: number,
+  maxTick: number,
+): number {
+  if (sqrtPriceX96 < MIN_SQRT_RATIO || sqrtPriceX96 >= MAX_SQRT_RATIO) {
+    throw new Error(
+      `TickMath: sqrtPriceX96 ${sqrtPriceX96} out of range [${MIN_SQRT_RATIO}, ${MAX_SQRT_RATIO})`
+    );
+  }
+
+  let { lo, hi } = normaliseTickSearchBounds(minTick, maxTick);
+
+  const sqrtAtLo = getSqrtRatioAtTick(lo);
+  const sqrtAtHi = getSqrtRatioAtTick(hi);
+  if (sqrtPriceX96 < sqrtAtLo || sqrtPriceX96 > sqrtAtHi) {
+    return getTickAtSqrtRatio(sqrtPriceX96);
+  }
 
   while (lo <= hi) {
     const mid = Math.floor((lo + hi) / 2);

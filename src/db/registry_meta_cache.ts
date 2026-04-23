@@ -9,16 +9,19 @@ export class RegistryMetaCache {
   _stmt: any;
   _poolMetaCache: any;
   _activePoolMetaCache: any;
+  _activePoolMetaByAddressCache: any;
 
   constructor(stmt: any) {
     this._stmt = stmt;
     this._poolMetaCache = null;
     this._activePoolMetaCache = null;
+    this._activePoolMetaByAddressCache = null;
   }
 
   invalidate() {
     this._poolMetaCache = null;
     this._activePoolMetaCache = null;
+    this._activePoolMetaByAddressCache = null;
   }
 
   getAll() {
@@ -30,12 +33,24 @@ export class RegistryMetaCache {
 
   getActive() {
     if (!this._activePoolMetaCache) {
-      this._activePoolMetaCache = loadPoolMetaCache(this._stmt, "active");
+      const activePools = loadPoolMetaCache(this._stmt, "active");
+      this._activePoolMetaCache = activePools;
+      this._activePoolMetaByAddressCache = new Map(
+        activePools.map((pool: any) => [pool.pool_address, pool]),
+      );
     }
     return this._activePoolMetaCache;
   }
 
   get(address: any) {
-    return this.getAll().get(address.toLowerCase()) ?? null;
+    const normalizedAddress = address.toLowerCase();
+
+    if (this._activePoolMetaByAddressCache?.has(normalizedAddress)) {
+      return this._activePoolMetaByAddressCache.get(normalizedAddress) ?? null;
+    }
+    if (this._poolMetaCache) {
+      return this._poolMetaCache.get(normalizedAddress) ?? null;
+    }
+    return this.getAll().get(normalizedAddress) ?? null;
   }
 }

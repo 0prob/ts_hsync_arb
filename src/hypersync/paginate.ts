@@ -15,16 +15,30 @@
  */
 
 import { client } from "./client.ts";
-import { applyHistoricalHyperSyncQueryPolicy } from "./query_policy.ts";
+import {
+  applyHistoricalHyperSyncQueryPolicy,
+  type HyperSyncGetResponse,
+  type HyperSyncLogQuery,
+} from "./query_policy.ts";
 
-function resolvePaginationTarget(query: Record<string, any>, nextBlock: number, archiveHeight: number | null) {
+type HyperSyncPageResult<TLog> = {
+  logs: TLog[];
+  archiveHeight: number | null;
+  rollbackGuard: Record<string, unknown> | null;
+  nextBlock: number | null;
+};
+
+function resolvePaginationTarget(query: HyperSyncLogQuery, nextBlock: number, archiveHeight: number | null) {
   const toBlock = query.toBlock != null ? Number(query.toBlock) : null;
   if (toBlock != null) return toBlock;
   if (archiveHeight != null) return archiveHeight;
   return nextBlock;
 }
 
-export async function fetchAllLogsWithClient(hypersyncClient: { get: (query: any) => Promise<any> }, query: any) {
+export async function fetchAllLogsWithClient<TLog>(
+  hypersyncClient: { get: (query: HyperSyncLogQuery) => Promise<HyperSyncGetResponse<TLog>> },
+  query: HyperSyncLogQuery,
+): Promise<HyperSyncPageResult<TLog>> {
   if (!Number.isFinite(Number(query?.fromBlock))) {
     throw new Error("HyperSync query must include a finite fromBlock.");
   }
@@ -49,10 +63,10 @@ export async function fetchAllLogsWithClient(hypersyncClient: { get: (query: any
     };
   }
 
-  const allLogs = [];
+  const allLogs: TLog[] = [];
   let currentQuery = applyHistoricalHyperSyncQueryPolicy(query);
   let archiveHeight = null;
-  let rollbackGuard = null;
+  let rollbackGuard: Record<string, unknown> | null = null;
   let lastNextBlock = null;
   let pages = 0;
 
@@ -68,8 +82,9 @@ export async function fetchAllLogsWithClient(hypersyncClient: { get: (query: any
       rollbackGuard = res.rollbackGuard;
     }
 
-    if (res.data?.logs?.length > 0) {
-      allLogs.push(...res.data.logs);
+    const pageLogs = res.data?.logs ?? [];
+    if (pageLogs.length > 0) {
+      allLogs.push(...pageLogs);
     }
 
     const nextBlock = Number(res.nextBlock);
@@ -121,6 +136,6 @@ export async function fetchAllLogsWithClient(hypersyncClient: { get: (query: any
  * @param {object} query  HyperSync query object (fromBlock, logs, fieldSelection, etc.)
  * @returns {{ logs: object[], archiveHeight: number|null, rollbackGuard: object|null, nextBlock: number|null }}
  */
-export async function fetchAllLogs(query: any) {
-  return fetchAllLogsWithClient(client, query);
+export async function fetchAllLogs<TLog>(query: HyperSyncLogQuery) {
+  return fetchAllLogsWithClient<TLog>(client, query);
 }

@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { RegistryService } from "../src/db/registry.ts";
+import { buildDiscoveryScanQuery, discoverPoolsWithDeps } from "../src/discovery/discover.ts";
 import { buildDiscoveredPoolBatch } from "../src/discovery/helpers.ts";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "discovery-test-"));
@@ -89,6 +91,108 @@ try {
     metadata: { source: "latest" },
     status: "active",
   });
+
+  const queryWithSnapshot = buildDiscoveryScanQuery(
+    {
+      name: "Test Protocol",
+      address: "0x1111111111111111111111111111111111111111",
+      signature: "event PoolCreated(address indexed token0, address indexed token1, address pool, uint256)",
+      decode() {
+        return {
+          pool_address: "0xpool",
+          tokens: ["0xt0", "0xt1"],
+          metadata: {},
+        };
+      },
+    } as any,
+    500,
+    700,
+  );
+  assert.equal(queryWithSnapshot.fromBlock, 500);
+  assert.equal(queryWithSnapshot.toBlock, 701, "discovery should cap each run to the initial chain-height snapshot");
+
+  const queryWithoutSnapshot = buildDiscoveryScanQuery(
+    {
+      name: "Test Protocol",
+      address: "0x1111111111111111111111111111111111111111",
+      signature: "event PoolCreated(address indexed token0, address indexed token1, address pool, uint256)",
+      decode() {
+        return {
+          pool_address: "0xpool",
+          tokens: ["0xt0", "0xt1"],
+          metadata: {},
+        };
+      },
+    } as any,
+    500,
+    null,
+  );
+  assert.equal(queryWithoutSnapshot.toBlock, undefined, "discovery should remain unbounded when chain height is unavailable");
+
+  const rollbackGuards: number[] = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const mockRegistry = {
+    rollbackToBlock() {
+      return { poolsRemoved: 0, statesRemoved: 0 };
+    },
+    setRollbackGuard(guard: any) {
+      rollbackGuards.push(Number(guard.block_number));
+    },
+    getPoolCount() {
+      return 3;
+    },
+    getActivePoolCount() {
+      return 2;
+    },
+  };
+  const protocols = {
+    ALPHA: { name: "Alpha", address: "0x1" },
+    BETA: { name: "Beta", address: "0x2" },
+    GAMMA: { name: "Gamma", address: "0x3" },
+    DELTA: {
+      name: "Delta",
+      address: "0x4",
+      capabilities: { discovery: false, execution: true },
+    },
+  };
+
+  const summary = await discoverPoolsWithDeps({
+    registry: mockRegistry as any,
+    protocols: protocols as any,
+    protocolConcurrency: 2,
+    getChainHeightFn: async () => 777,
+    discoverProtocolFn: async (key: string, _protocol: any, _registry: any, context: any) => {
+      assert.equal(context.chainHeight, 777, "protocol discovery should share one chain-height snapshot across the run");
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await sleep(20);
+      inFlight--;
+      return {
+        discovered: 1,
+        checkpointBlock: 777,
+        rollbackGuard: { block_number: key === "ALPHA" ? 1 : key === "BETA" ? 2 : 3, block_hash: `0x${key}` },
+        hydrationPromise: Promise.resolve(0),
+      };
+    },
+    discoverCurveRemovalsFn: async (_registry: any, context: any) => {
+      assert.equal(context.chainHeight, 777, "curve removals should use the same chain-height snapshot as protocol scans");
+      return { removed: 0, checkpointBlock: 777, rollbackGuard: null };
+    },
+    detectReorgFn: () => false,
+  });
+
+  assert.equal(maxInFlight, 2, "discovery should honor bounded protocol concurrency");
+  assert.deepEqual(
+    rollbackGuards,
+    [1, 2, 3],
+    "rollback guards should still be committed in protocol order after concurrent discovery",
+  );
+  assert.deepEqual(
+    summary,
+    { totalDiscovered: 3, totalPools: 3, activePools: 2 },
+    "concurrent discovery should still return the registry summary",
+  );
 
   registry.close();
   console.log("Discovery checks passed.");

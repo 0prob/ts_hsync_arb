@@ -34,6 +34,7 @@ export async function handleWatcherLogs({
     updateV3LiquidityState,
   });
   const pendingStateUpdates = new Map<string, { addr: string; state: any; rawLog: any }>();
+  const poolMetaByAddress = new Map<string, any>();
 
   for (let i = 0; i < logs.length; i++) {
     const log = logs[i];
@@ -42,7 +43,11 @@ export async function handleWatcherLogs({
     if (closed()) break;
 
     const addr = log.address.toLowerCase();
-    const pool = registry.getPoolMeta(addr);
+    let pool = poolMetaByAddress.get(addr);
+    if (pool === undefined) {
+      pool = registry.getPoolMeta(addr) ?? null;
+      poolMetaByAddress.set(addr, pool);
+    }
     if (!pool) continue;
 
     let pending = pendingStateUpdates.get(addr);

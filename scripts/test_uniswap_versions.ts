@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { getSqrtRatioAtTick, getTickAtSqrtRatio } from "../src/math/tick_math.ts";
+import { getSqrtRatioAtTick, getTickAtSqrtRatio, getTickAtSqrtRatioInRange } from "../src/math/tick_math.ts";
 import { simulateV3Swap } from "../src/math/uniswap_v3.ts";
 import { mergeStateIntoCache } from "../src/state/cache_utils.ts";
 import { validatePoolState } from "../src/state/normalizer.ts";
@@ -86,6 +86,15 @@ import { edgeSpotLogWeight } from "../src/routing/finder.ts";
     result.tickAfter,
     getTickAtSqrtRatio(result.sqrtPriceX96After),
     "v3 simulation should derive tickAfter from the post-swap price when no initialized tick is crossed",
+  );
+}
+
+{
+  const sqrtPrice = getSqrtRatioAtTick(123);
+  assert.equal(
+    getTickAtSqrtRatioInRange(sqrtPrice, 100, 140),
+    getTickAtSqrtRatio(sqrtPrice),
+    "bounded tick search should agree with the full-range search when the price lies inside the interval",
   );
 }
 

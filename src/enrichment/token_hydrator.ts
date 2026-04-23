@@ -14,12 +14,13 @@
 
 import { createPublicClient, http } from "viem";
 import { polygon } from "viem/chains";
-import { HYPERRPC_URL } from "../config/index.ts";
+import { ENRICH_CONCURRENCY, HYPERRPC_URL } from "../config/index.ts";
 import { dynamicPublicClient } from "../utils/rpc_manager.ts";
 import { logger } from "../utils/logger.ts";
 import { isEndpointCapabilityError } from "../utils/rpc_manager.ts";
 import { getPoolTokens } from "../util/pool_record.ts";
 import { normalizeHydrationAddresses, normalizeTokenHydrationAddress } from "./token_hydrator_helpers.ts";
+import { throttledMap } from "./rpc.ts";
 
 // ─── HyperRPC client ──────────────────────────────────────────
 //
@@ -127,6 +128,17 @@ async function fetchMetaBatch(addresses: any) {
  * @returns {Promise<number>}  Number of new tokens persisted
  */
 export async function hydrateTokens(tokenAddresses: any, registry: any) {
+  return hydrateTokensWithDeps(tokenAddresses, registry);
+}
+
+export async function hydrateTokensWithDeps(
+  tokenAddresses: any,
+  registry: any,
+  deps: {
+    fetchMetaBatch?: (addresses: string[]) => Promise<Array<{ address: string; decimals: number | null; symbol: string | null; name: string | null }>>;
+    concurrency?: number;
+  } = {},
+) {
   const normalizedAddresses = normalizeHydrationAddresses(tokenAddresses);
   if (normalizedAddresses.length === 0) return 0;
 
@@ -142,38 +154,43 @@ export async function hydrateTokens(tokenAddresses: any, registry: any) {
 
   logger.info(
     `[token_hydrator] Hydrating ${toFetch.length} new token(s) via multicall ` +
-    `(${chunk(toFetch, CHUNK_SIZE).length} batch(es) of up to ${CHUNK_SIZE})`
+    `(${chunk(toFetch, CHUNK_SIZE).length} batch(es) of up to ${CHUNK_SIZE}, concurrency=${deps.concurrency ?? ENRICH_CONCURRENCY})`
   );
 
   const chunks = chunk(toFetch, CHUNK_SIZE);
-  let hydrated = 0;
+  const fetchBatch = deps.fetchMetaBatch ?? fetchMetaBatch;
+  const hydratedPerChunk = await throttledMap(
+    chunks,
+    async (batch) => {
+      try {
+        const meta = await fetchBatch(batch);
+        logger.info({
+          batchSize: batch.length,
+          sample: meta.slice(0, 5),
+          decimalsResolved: meta.filter((m: any) => m.decimals !== null).length,
+          symbolResolved: meta.filter((m: any) => m.symbol !== null).length,
+          nameResolved: meta.filter((m: any) => m.name !== null).length,
+        }, "[token_hydrator] batch decode summary");
 
-  for (const batch of chunks) {
-    try {
-      const meta = await fetchMetaBatch(batch);
-      logger.info({
-        batchSize: batch.length,
-        sample: meta.slice(0, 5),
-        decimalsResolved: meta.filter((m: any) => m.decimals !== null).length,
-        symbolResolved: meta.filter((m: any) => m.symbol !== null).length,
-        nameResolved: meta.filter((m: any) => m.name !== null).length,
-      }, "[token_hydrator] batch decode summary");
+        // Only persist entries where decimals resolved — symbol/name are optional
+        const valid = meta.filter((m: any) => m.decimals !== null);
+        if (valid.length > 0) {
+          registry.batchUpsertTokenMeta(valid);
+        }
 
-      // Only persist entries where decimals resolved — symbol/name are optional
-      const valid = meta.filter((m: any) => m.decimals !== null);
-      if (valid.length > 0) {
-        registry.batchUpsertTokenMeta(valid);
-        hydrated += valid.length;
+        const skipped = meta.length - valid.length;
+        if (skipped > 0) {
+          logger.debug(`[token_hydrator] ${skipped} address(es) returned no decimals (non-ERC20 or call reverted)`);
+        }
+        return valid.length;
+      } catch (err: any) {
+        logger.warn(`[token_hydrator] Multicall chunk failed: ${err.message}`);
+        return 0;
       }
-
-      const skipped = meta.length - valid.length;
-      if (skipped > 0) {
-        logger.debug(`[token_hydrator] ${skipped} address(es) returned no decimals (non-ERC20 or call reverted)`);
-      }
-    } catch (err: any) {
-      logger.warn(`[token_hydrator] Multicall chunk failed: ${err.message}`);
-    }
-  }
+    },
+    Math.max(1, deps.concurrency ?? ENRICH_CONCURRENCY),
+  );
+  const hydrated = hydratedPerChunk.reduce((sum, count) => sum + count, 0);
 
   logger.info(`[token_hydrator] Done — ${hydrated}/${toFetch.length} tokens persisted`);
   return hydrated;

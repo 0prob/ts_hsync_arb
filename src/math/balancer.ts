@@ -258,7 +258,41 @@ export function getBalancerAmountIn(amountOut: bigint, poolState: any, inIdx: nu
   const feeComplement = ONE - fee;
   if (feeComplement <= 0n) return 0n;
 
-  return (amountInBeforeFee * ONE) / feeComplement + 1n;
+  let candidate = (amountInBeforeFee * ONE) / feeComplement + 1n;
+  if (candidate <= 0n) return 0n;
+
+  const quoteAt = (amountInCandidate: bigint) =>
+    getBalancerAmountOut(amountInCandidate, poolState, inIdx, outIdx);
+
+  let low = 0n;
+  let high = candidate;
+  let quotedOut = quoteAt(high);
+
+  // The fixed-point power approximation can slightly underestimate the exact-input
+  // requirement for larger trades. When that happens, expand upward until the
+  // forward quote satisfies the requested output, then binary-search the minimum.
+  if (quotedOut < amountOut) {
+    low = high;
+    high = high > 0n ? high * 2n : 1n;
+    for (let i = 0; i < MAX_POW_ITERATIONS; i++) {
+      quotedOut = quoteAt(high);
+      if (quotedOut >= amountOut) break;
+      low = high;
+      high *= 2n;
+    }
+    if (quotedOut < amountOut) return 0n;
+  }
+
+  while (high - low > 1n) {
+    const mid = (low + high) / 2n;
+    if (quoteAt(mid) >= amountOut) {
+      high = mid;
+    } else {
+      low = mid;
+    }
+  }
+
+  return high;
 }
 
 /**
