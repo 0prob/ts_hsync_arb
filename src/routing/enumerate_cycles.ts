@@ -25,6 +25,7 @@
 import { findArbPaths, deduplicatePaths } from "./finder.ts";
 import { POLYGON_HUB_TOKENS, HUB_4_TOKENS } from "./graph.ts";
 import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
+import { takeTopNBy } from "../util/bounded_priority.ts";
 
 // ─── Defaults ────────────────────────────────────────────────
 
@@ -67,20 +68,29 @@ function pruneByLiquidity(paths: any, minWmatic: any, getRateWei: any) {
 
 // ─── Sort ─────────────────────────────────────────────────────
 
+function compareByLogWeight(a: any, b: any) {
+  const noA = a.logWeight === 0 && a.edges.some((e: any) => !e.stateRef);
+  const noB = b.logWeight === 0 && b.edges.some((e: any) => !e.stateRef);
+  if (noA && !noB) return 1;
+  if (!noA && noB) return -1;
+  return normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight);
+}
+
 function sortByLogWeight(paths: any) {
-  return paths.sort((a: any, b: any) => {
-    const noA = a.logWeight === 0 && a.edges.some((e: any) => !e.stateRef);
-    const noB = b.logWeight === 0 && b.edges.some((e: any) => !e.stateRef);
-    if (noA && !noB) return 1;
-    if (!noA && noB) return -1;
-    return normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight);
-  });
+  return paths.sort(compareByLogWeight);
+}
+
+function selectTopPaths(paths: any, limit: number) {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (paths.length <= limit) return sortByLogWeight(paths);
+  return takeTopNBy(paths, limit, compareByLogWeight);
 }
 
 // ─── Single-graph (backward-compatible) ──────────────────────
 
 export function enumerateCycles(graph: any, options: any = {}) {
   const opts = { ...DEFAULTS, ...options };
+  if (!Number.isFinite(opts.maxTotalPaths) || opts.maxTotalPaths <= 0) return [];
 
   let startTokens;
   if (opts.startTokens) {
@@ -110,9 +120,7 @@ export function enumerateCycles(graph: any, options: any = {}) {
   if (opts.minLiquidityWmatic > 0n && opts.getRateWei) {
     paths = pruneByLiquidity(paths, opts.minLiquidityWmatic, opts.getRateWei);
   }
-  sortByLogWeight(paths);
-  if (paths.length > opts.maxTotalPaths) paths = paths.slice(0, opts.maxTotalPaths);
-  return paths;
+  return selectTopPaths(paths, opts.maxTotalPaths);
 }
 
 // ─── Dual-graph hub-first (preferred) ────────────────────────
@@ -120,6 +128,7 @@ export function enumerateCycles(graph: any, options: any = {}) {
 export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any = {}) {
   const opts      = { ...DEFAULTS, ...options };
   const maxTotal  = opts.maxTotalPaths;
+  if (!Number.isFinite(maxTotal) || maxTotal <= 0) return [];
   const hubBudget = opts.hubPathBudget ?? Math.ceil(maxTotal * 0.6);
   const pruneOpts = { minV2Reserve: opts.minV2Reserve, probeWei: opts.probeWei };
 
@@ -131,20 +140,23 @@ export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any 
     ...pruneOpts,
   });
   if (opts.dedup) hubPaths = deduplicatePaths(hubPaths);
-  sortByLogWeight(hubPaths);
-  if (hubPaths.length > hubBudget) hubPaths = hubPaths.slice(0, hubBudget);
+  hubPaths = selectTopPaths(hubPaths, hubBudget);
 
   // Phase 2: full graph — 3-hop only (4-hop too expensive on large graph)
-  const fullBudget = maxTotal - hubPaths.length;
-  const fullStart  = new Set([...POLYGON_HUB_TOKENS].filter((t) => fullGraph.hasToken(t)));
-  let fullPaths = findArbPaths(fullGraph, fullStart, {
-    include2Hop: opts.include2Hop, include3Hop: opts.include3Hop, include4Hop: false,
-    maxPathsPerToken: opts.maxPathsPerToken,
-    ...pruneOpts,
-  });
-  if (opts.dedup) fullPaths = deduplicatePaths(fullPaths);
-  sortByLogWeight(fullPaths);
-  if (fullPaths.length > fullBudget) fullPaths = fullPaths.slice(0, fullBudget);
+  const fullBudget = Math.max(0, maxTotal - hubPaths.length);
+  let fullPaths = [];
+  if (fullBudget > 0) {
+    const fullStart = new Set([...POLYGON_HUB_TOKENS].filter((t) => fullGraph.hasToken(t)));
+    if (fullStart.size > 0) {
+      fullPaths = findArbPaths(fullGraph, fullStart, {
+        include2Hop: opts.include2Hop, include3Hop: opts.include3Hop, include4Hop: false,
+        maxPathsPerToken: opts.maxPathsPerToken,
+        ...pruneOpts,
+      });
+      if (opts.dedup) fullPaths = deduplicatePaths(fullPaths);
+      fullPaths = selectTopPaths(fullPaths, fullBudget);
+    }
+  }
 
   // Merge, cross-phase dedup, liquidity prune, final sort + cap
   let all = [...hubPaths, ...fullPaths];
@@ -152,9 +164,7 @@ export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any 
   if (opts.minLiquidityWmatic > 0n && opts.getRateWei) {
     all = pruneByLiquidity(all, opts.minLiquidityWmatic, opts.getRateWei);
   }
-  sortByLogWeight(all);
-  if (all.length > maxTotal) all = all.slice(0, maxTotal);
-  return all;
+  return selectTopPaths(all, maxTotal);
 }
 
 // ─── Convenience wrappers ────────────────────────────────────

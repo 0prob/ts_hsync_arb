@@ -1,3 +1,5 @@
+import { takeTopNBy } from "../util/bounded_priority.ts";
+
 export type PoolRecord = {
   pool_address: string;
   protocol: string;
@@ -30,7 +32,7 @@ type WarmupGroupResult = {
   noDataFailures?: Set<string>;
 };
 type FetchAndCacheOptions = {
-  v3HydrationMode?: "full" | "nearby" | "none";
+  v3HydrationMode?: "full" | "nearby" | "none" | "tiered";
   v3NearWordRadius?: number;
 };
 type V3FetchOptions = {
@@ -86,6 +88,11 @@ const WARMUP_PROGRESS_LOG_EVERY = 25;
 const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled: 0, failed: 0 };
 
 export function createWarmupManager(deps: WarmupDeps) {
+  function effectiveSyncWarmupV3FullBudget() {
+    const cappedByTotalWarmup = Math.min(deps.maxSyncWarmupV3Pools, deps.maxSyncWarmupPools);
+    return Math.max(0, cappedByTotalWarmup);
+  }
+
   function isAlgebraPool(pool: any) {
     return pool?.protocol === "QUICKSWAP_V3" || deps.getPoolMetadata(pool)?.isAlgebra === true;
   }
@@ -270,29 +277,69 @@ export function createWarmupManager(deps: WarmupDeps) {
             }
           }
           let lastV3ProgressLogAt = 0;
-          const statesMap = await deps.fetchMultipleV3States(
-            group.map((pool) => pool.pool_address),
-            deps.v3PollConcurrency,
-            poolMeta,
-            (completed: number, total: number) => {
-              const now = Date.now();
-              if (completed === total || completed % 10 === 0 || now - lastV3ProgressLogAt >= 5_000) {
-                lastV3ProgressLogAt = now;
-                deps.log(`State warmup progress: v3_progress (${completed}/${total}).`, "info", {
-                  event: "warmup_progress",
-                  phase: "v3_progress",
-                  protocol: "v3",
-                  completed,
-                  total,
-                  remaining: Math.max(0, total - completed),
-                });
+          const hydrationMode = options.v3HydrationMode ?? "tiered";
+          const fullHydrationBudget = effectiveSyncWarmupV3FullBudget();
+          const progress = (completed: number, total: number) => {
+            const now = Date.now();
+            if (completed === total || completed % 10 === 0 || now - lastV3ProgressLogAt >= 5_000) {
+              lastV3ProgressLogAt = now;
+              deps.log(`State warmup progress: v3_progress (${completed}/${total}).`, "info", {
+                event: "warmup_progress",
+                phase: "v3_progress",
+                protocol: "v3",
+                completed,
+                total,
+                remaining: Math.max(0, total - completed),
+              });
+            }
+          };
+          const statesMap = new Map() as any;
+
+          if (hydrationMode === "tiered") {
+            const fullPools = group.slice(0, fullHydrationBudget);
+            const nearbyPools = group.slice(fullHydrationBudget);
+            const noDataFailures = new Set<string>();
+            let completed = 0;
+            const total = group.length;
+
+            for (const [batchPools, batchMode] of [
+              [fullPools, "full"],
+              [nearbyPools, "nearby"],
+            ] as const) {
+              if (batchPools.length === 0) continue;
+              const batchStates = await deps.fetchMultipleV3States(
+                batchPools.map((pool) => pool.pool_address),
+                deps.v3PollConcurrency,
+                poolMeta,
+                (batchCompleted: number, batchTotal: number) => {
+                  progress(completed + batchCompleted, total);
+                  if (batchCompleted === batchTotal) completed += batchTotal;
+                },
+                {
+                  hydrationMode: batchMode,
+                  nearWordRadius: options.v3NearWordRadius,
+                },
+              );
+              for (const [addr, state] of batchStates.entries()) statesMap.set(addr, state);
+              if (batchStates.noDataFailures instanceof Set) {
+                for (const addr of batchStates.noDataFailures) noDataFailures.add(addr);
               }
-            },
-            {
-              hydrationMode: options.v3HydrationMode ?? "full",
-              nearWordRadius: options.v3NearWordRadius,
-            },
-          );
+            }
+            statesMap.noDataFailures = noDataFailures;
+          } else {
+            const batchStates = await deps.fetchMultipleV3States(
+              group.map((pool) => pool.pool_address),
+              deps.v3PollConcurrency,
+              poolMeta,
+              progress,
+              {
+                hydrationMode,
+                nearWordRadius: options.v3NearWordRadius,
+              },
+            );
+            for (const [addr, state] of batchStates.entries()) statesMap.set(addr, state);
+            statesMap.noDataFailures = batchStates.noDataFailures;
+          }
           return group.map((pool) => {
             const addr = pool.pool_address.toLowerCase();
             const raw = statesMap.get(addr);
@@ -457,29 +504,22 @@ export function createWarmupManager(deps: WarmupDeps) {
       return;
     }
 
-    const prioritizedHubPairPools = [...hubPairPools].sort(compareWarmupPriority);
-    const prioritizedOneHubPools = [...oneHubPools].sort(compareWarmupPriority);
+    const prioritizedHubPairPools = takeTopNBy(hubPairPools, deps.maxSyncWarmupPools, compareWarmupPriority);
+    const secondaryWarmupBudget = Math.max(0, Math.min(
+      deps.maxSyncWarmupOneHubPools,
+      deps.maxSyncWarmupPools - prioritizedHubPairPools.length,
+    ));
+    const prioritizedOneHubPools = takeTopNBy(oneHubPools, secondaryWarmupBudget, compareWarmupPriority);
     const syncWarmupPools = [];
-    let syncWarmupV3Pools = 0;
 
     for (const pool of prioritizedHubPairPools) {
       if (syncWarmupPools.length >= deps.maxSyncWarmupPools) break;
-      if (WARMUP_V3.has(pool.protocol)) {
-        if (syncWarmupV3Pools >= deps.maxSyncWarmupV3Pools) continue;
-        syncWarmupV3Pools++;
-      }
       syncWarmupPools.push(pool);
     }
 
     let secondaryWarmupPools = 0;
-    const secondaryWarmupBudget = Math.max(0, Math.min(
-      deps.maxSyncWarmupOneHubPools,
-      deps.maxSyncWarmupPools - syncWarmupPools.length,
-    ));
     for (const pool of prioritizedOneHubPools) {
       if (secondaryWarmupPools >= secondaryWarmupBudget) break;
-      if (WARMUP_V3.has(pool.protocol) && syncWarmupV3Pools >= deps.maxSyncWarmupV3Pools) continue;
-      if (WARMUP_V3.has(pool.protocol)) syncWarmupV3Pools++;
       syncWarmupPools.push(pool);
       secondaryWarmupPools++;
     }
@@ -497,6 +537,17 @@ export function createWarmupManager(deps: WarmupDeps) {
       return;
     }
 
+    let v2Count = 0;
+    let v3Count = 0;
+    let balancerCount = 0;
+    let curveCount = 0;
+    for (const pool of syncWarmupPools) {
+      if (WARMUP_V2.has(pool.protocol)) v2Count++;
+      else if (WARMUP_V3.has(pool.protocol)) v3Count++;
+      else if (WARMUP_BAL.has(pool.protocol)) balancerCount++;
+      else if (WARMUP_CRV.has(pool.protocol)) curveCount++;
+    }
+
     deps.log(`State warmup: fetching ${syncWarmupPools.length}/${targetedPools} hub-adjacent pools via RPC (sync)...`, "info", {
       event: "warmup_start",
       needsState: needsState.length,
@@ -507,17 +558,23 @@ export function createWarmupManager(deps: WarmupDeps) {
       deferredPools,
       maxSyncWarmupPools: deps.maxSyncWarmupPools,
       maxSyncWarmupV3Pools: deps.maxSyncWarmupV3Pools,
+      effectiveSyncWarmupV3FullBudget: effectiveSyncWarmupV3FullBudget(),
       maxSyncWarmupOneHubPools: deps.maxSyncWarmupOneHubPools,
       protocolBreakdown: {
-        v2: syncWarmupPools.filter((pool) => WARMUP_V2.has(pool.protocol)).length,
-        v3: syncWarmupPools.filter((pool) => WARMUP_V3.has(pool.protocol)).length,
-        balancer: syncWarmupPools.filter((pool) => WARMUP_BAL.has(pool.protocol)).length,
-        curve: syncWarmupPools.filter((pool) => WARMUP_CRV.has(pool.protocol)).length,
+        v2: v2Count,
+        v3: v3Count,
+        balancer: balancerCount,
+        curve: curveCount,
       },
     });
 
     const warmupStats = await fetchAndCacheStates(syncWarmupPools);
-    const valid = syncWarmupPools.filter((p) => deps.validatePoolState(deps.stateCache.get(p.pool_address.toLowerCase())).valid).length;
+    let valid = 0;
+    for (const pool of syncWarmupPools) {
+      if (deps.validatePoolState(deps.stateCache.get(pool.pool_address.toLowerCase())).valid) {
+        valid++;
+      }
+    }
     deps.log(`State warmup complete: ${valid}/${syncWarmupPools.length} sync hub-adjacent pools routable.`, "info", {
       event: "warmup_complete",
       hubPairPools: hubPairPools.length,

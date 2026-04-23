@@ -345,13 +345,13 @@ export const MAX_SYNC_WARMUP_POOLS = _num(
 
 /**
  * Maximum number of V3 pools to fully hydrate during synchronous startup warmup.
- * Additional V3 hub-pair pools are deferred to watcher-driven admission to avoid
- * cold-start stalls caused by full bitmap/tick hydration.
+ * Additional selected V3 pools still warm up, but fall back to nearby-word
+ * hydration instead of being deferred out of the sync warmup set.
  */
 export const MAX_SYNC_WARMUP_V3_POOLS = _num(
   "MAX_SYNC_WARMUP_V3_POOLS",
   "MAX_SYNC_WARMUP_V3_POOLS",
-  48
+  Math.min(96, Math.max(32, Math.floor(MAX_SYNC_WARMUP_POOLS * 0.2)))
 );
 
 /**

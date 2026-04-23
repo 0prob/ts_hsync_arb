@@ -4,6 +4,7 @@ import type { ArbPathLike } from "../arb/assessment.ts";
 import { getPoolTokens } from "../util/pool_record.ts";
 import type { RouteCache } from "../routing/route_cache.ts";
 import type { RoutingGraph } from "../routing/graph.ts";
+import { takeTopNBy } from "../util/bounded_priority.ts";
 
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
@@ -153,15 +154,22 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       }
     }
 
-    merged.sort((a, b) => normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight));
-    return merged.length > deps.maxTotalPaths ? merged.slice(0, deps.maxTotalPaths) : merged;
+    return takeTopNBy(
+      merged,
+      deps.maxTotalPaths,
+      (a, b) => normaliseLogWeight(a.logWeight) - normaliseLogWeight(b.logWeight),
+    );
   }
 
   function getRoutablePools(pools: PoolRecord[]) {
-    return pools.filter((pool) => {
+    const routable: PoolRecord[] = [];
+    for (const pool of pools) {
       const addr = pool.pool_address.toLowerCase();
-      return deps.validatePoolState(deps.stateCache.get(addr)).valid;
-    });
+      if (deps.validatePoolState(deps.stateCache.get(addr)).valid) {
+        routable.push(pool);
+      }
+    }
+    return routable;
   }
 
   function poolTouchesHubTokens(pool: PoolRecord, hubTokens: Set<string> = deps.hub4Tokens) {

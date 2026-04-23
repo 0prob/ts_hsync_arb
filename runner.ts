@@ -58,6 +58,7 @@ import {
 } from "./src/utils/metrics.ts";
 import type { BotState } from "./src/tui/types.ts";
 import { getPoolMetadata, getPoolTokens } from "./src/util/pool_record.ts";
+import { takeTopNBy } from "./src/util/bounded_priority.ts";
 import {
   minProfitInTokenUnits,
   type ArbPathLike,
@@ -310,6 +311,40 @@ function compareDeferredHydrationPriority(a: PoolRecord, b: PoolRecord) {
   return a.pool_address.localeCompare(b.pool_address);
 }
 
+function selectPendingQuietPools(activePools: PoolRecord[]) {
+  const pending: PoolRecord[] = [];
+  for (const pool of activePools) {
+    const addr = pool.pool_address.toLowerCase();
+    if (validatePoolState(stateCache.get(addr)).valid) continue;
+    pending.push(pool);
+  }
+  return takeTopNBy(pending, QUIET_POOL_SWEEP_BATCH_SIZE, compareDeferredHydrationPriority);
+}
+
+function seedNewPoolsIntoStateCache(pools: PoolRecord[]) {
+  const newPools: PoolRecord[] = [];
+  for (const pool of pools) {
+    const poolAddress = pool.pool_address.toLowerCase();
+    if (stateCache.has(poolAddress)) continue;
+
+    let poolTokens;
+    try {
+      poolTokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
+    } catch {
+      poolTokens = [];
+    }
+
+    stateCache.set(poolAddress, {
+      poolId: poolAddress,
+      protocol: pool.protocol,
+      tokens: Array.isArray(poolTokens) ? poolTokens.map((token) => token.toLowerCase()) : [],
+      timestamp: 0,
+    });
+    newPools.push(pool);
+  }
+  return newPools;
+}
+
 function deriveOnChainMinProfit(assessment: AssessmentLike | null | undefined, tokenToMaticRate: bigint) {
   const minProfitTokens = minProfitInTokenUnits(tokenToMaticRate, MIN_PROFIT_WEI);
   const modeledNet = assessment && assessment.netProfitAfterGas > 0n
@@ -504,10 +539,7 @@ async function maybeHydrateQuietPools() {
   lastQuietPoolSweepAt = now;
 
   const activePools = registry?.getActivePoolsMeta() ?? [];
-  const pending = activePools
-    .filter((pool: PoolRecord) => !validatePoolState(stateCache.get(pool.pool_address.toLowerCase())).valid)
-    .sort(compareDeferredHydrationPriority)
-    .slice(0, QUIET_POOL_SWEEP_BATCH_SIZE);
+  const pending = selectPendingQuietPools(activePools);
 
   if (pending.length === 0) return;
 
@@ -521,11 +553,13 @@ async function maybeHydrateQuietPools() {
     v3HydrationMode: "nearby",
     v3NearWordRadius: V3_NEARBY_WORD_RADIUS,
   });
-  const hydratedAddrs = new Set<string>(
-    pending
-      .map((pool: PoolRecord) => pool.pool_address.toLowerCase())
-      .filter((addr: string) => validatePoolState(stateCache.get(addr)).valid),
-  );
+  const hydratedAddrs = new Set<string>();
+  for (const pool of pending) {
+    const addr = pool.pool_address.toLowerCase();
+    if (validatePoolState(stateCache.get(addr)).valid) {
+      hydratedAddrs.add(addr);
+    }
+  }
   const admitted = topologyService?.admitPools(hydratedAddrs) ?? 0;
 
   log(`[runner] Quiet-pool sweep complete: ${hydratedAddrs.size}/${pending.length} routable.`, "info", {
@@ -648,25 +682,8 @@ async function runPass() {
       repositories?.pools.invalidateMetaCache();
       // Seed stateCache for new pools and extend the HyperSync stream filter
       const allPools = repositories?.pools.getActiveMeta() ?? [];
-      const newPools = allPools.filter(
-        (p: PoolRecord) => !stateCache.has(p.pool_address.toLowerCase())
-      );
+      const newPools = seedNewPoolsIntoStateCache(allPools);
       if (newPools.length > 0) {
-        for (const p of newPools) {
-          const pAddr = p.pool_address.toLowerCase();
-          let pTokens;
-          try {
-            pTokens = typeof p.tokens === "string" ? JSON.parse(p.tokens) : p.tokens;
-          } catch {
-            pTokens = [];
-          }
-          stateCache.set(pAddr, {
-            poolId: pAddr,
-            protocol: p.protocol,
-            tokens: Array.isArray(pTokens) ? pTokens.map((t) => t.toLowerCase()) : [],
-            timestamp: 0,
-          });
-        }
         await runtime.getWatcher()?.addPools(
           newPools.map((p: PoolRecord) => p.pool_address.toLowerCase())
         );

@@ -8,6 +8,9 @@ const HUB_B = "0x2222222222222222222222222222222222222222";
 const NON_HUB = "0x3333333333333333333333333333333333333333";
 const POOL = "0x4444444444444444444444444444444444444444";
 const ONE_HUB_POOL = "0x5555555555555555555555555555555555555555";
+const V3_A = "0x7777777777777777777777777777777777777771";
+const V3_B = "0x7777777777777777777777777777777777777772";
+const V3_C = "0x7777777777777777777777777777777777777773";
 
 const pool = {
   pool_address: POOL,
@@ -25,13 +28,27 @@ const oneHubPool = {
   metadata: {},
 };
 
+const v3Pools = [V3_A, V3_B, V3_C].map((poolAddress, index) => ({
+  pool_address: poolAddress,
+  protocol: "UNISWAP_V3",
+  status: "active",
+  tokens: [
+    index === 0 ? HUB_A : HUB_B,
+    index === 2 ? NON_HUB : HUB_B,
+  ],
+  metadata: {},
+}));
+
 let balancerFetches = 0;
+let v3Fetches = 0;
+let v3FullFetches = 0;
+let v3NearbyFetches = 0;
 const stateCache = new Map<string, Record<string, any>>();
 
 const warmupManager = createWarmupManager({
   getRegistry: () => ({
-    getPools: () => [pool, oneHubPool],
-    getActivePoolsMeta: () => [pool, oneHubPool],
+    getPools: () => [pool, oneHubPool, ...v3Pools],
+    getActivePoolsMeta: () => [pool, oneHubPool, ...v3Pools],
     getCheckpoint: () => ({ last_block: 123 }),
     getGlobalCheckpoint: () => 123,
     batchUpdateStates: () => {},
@@ -46,7 +63,24 @@ const warmupManager = createWarmupManager({
   validatePoolState,
   normalizePoolState: () => null,
   fetchMultipleV2States: async () => new Map(),
-  fetchMultipleV3States: async () => new Map(),
+  fetchMultipleV3States: async (addresses: string[], _concurrency: number, _poolMeta: Map<any, any>, _onProgress: any, fetchOptions?: { hydrationMode?: string }) => {
+    v3Fetches += addresses.length;
+    if (fetchOptions?.hydrationMode === "full") v3FullFetches += addresses.length;
+    if (fetchOptions?.hydrationMode === "nearby") v3NearbyFetches += addresses.length;
+    const states = new Map();
+    for (const address of addresses) {
+      states.set(address.toLowerCase(), {
+        sqrtPriceX96: 1n << 96n,
+        tick: 0,
+        liquidity: 1000n,
+        tickSpacing: 60,
+        ticks: new Map(),
+        initialized: true,
+        fetchedAt: Date.now(),
+      });
+    }
+    return states;
+  },
   fetchAndNormalizeBalancerPool: async (entry: any) => {
     balancerFetches += 1;
     return {
@@ -72,7 +106,7 @@ const warmupManager = createWarmupManager({
   polygonHubTokens: new Set([HUB_A, HUB_B]),
   hub4Tokens: new Set([HUB_A, HUB_B]),
   maxSyncWarmupPools: 10,
-  maxSyncWarmupV3Pools: 10,
+  maxSyncWarmupV3Pools: 2,
   maxSyncWarmupOneHubPools: 10,
   v2PollConcurrency: 1,
   v3PollConcurrency: 1,
@@ -86,6 +120,21 @@ assert.equal(
   balancerFetches,
   2,
   "warmup should fetch both hub-pair pools and one-hub extension pools during synchronous startup coverage",
+);
+assert.equal(
+  v3Fetches,
+  3,
+  "warmup should keep all eligible V3 pools in the sync warmup set instead of dropping them after the full-hydration budget",
+);
+assert.equal(
+  v3FullFetches,
+  2,
+  "warmup should fully hydrate only the top-ranked V3 subset",
+);
+assert.equal(
+  v3NearbyFetches,
+  1,
+  "warmup should downgrade overflow V3 pools to nearby hydration instead of skipping them",
 );
 assert.equal(
   validatePoolState(stateCache.get(pool.pool_address.toLowerCase())).valid,
