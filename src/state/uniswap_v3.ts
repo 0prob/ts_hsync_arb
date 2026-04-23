@@ -173,6 +173,13 @@ type V3PoolMeta = {
   isAlgebra?: boolean;
 };
 
+type V3HydrationMode = "full" | "nearby" | "none";
+
+type V3FetchOptions = {
+  hydrationMode?: V3HydrationMode;
+  nearWordRadius?: number;
+};
+
 type V3StateMap = Map<string, V3PoolState> & {
   noDataFailures?: Set<string>;
 };
@@ -318,6 +325,15 @@ export async function fetchTickBitmap(
   tickSpacing: number
 ): Promise<TickBitmapResult> {
   const { minWord, maxWord } = wordRange(tickSpacing);
+  return fetchTickBitmapWordRange(poolAddress, tickSpacing, minWord, maxWord);
+}
+
+async function fetchTickBitmapWordRange(
+  poolAddress: string,
+  tickSpacing: number,
+  minWord: number,
+  maxWord: number,
+): Promise<TickBitmapResult> {
   const wordPositions: number[] = [];
   for (let w = minWord; w <= maxWord; w++) {
     wordPositions.push(w);
@@ -377,6 +393,19 @@ export async function fetchTickBitmap(
   );
 
   return { bitmaps, tickIndices: tickIndices.sort((a, b) => a - b) };
+}
+
+export async function fetchTickBitmapWindow(
+  poolAddress: string,
+  tickSpacing: number,
+  centerTick: number,
+  wordRadius: number,
+): Promise<TickBitmapResult> {
+  const { minWord, maxWord } = wordRange(tickSpacing);
+  const activeWord = Math.floor(Math.floor(centerTick / tickSpacing) / 256);
+  const clampedMinWord = Math.max(minWord, activeWord - Math.max(0, wordRadius));
+  const clampedMaxWord = Math.min(maxWord, activeWord + Math.max(0, wordRadius));
+  return fetchTickBitmapWordRange(poolAddress, tickSpacing, clampedMinWord, clampedMaxWord);
 }
 
 /**
@@ -462,7 +491,11 @@ export async function fetchTickData(
  */
 export async function fetchV3PoolState(
   poolAddress: string,
-  { isAlgebra = false }: V3PoolMeta = {}
+  {
+    isAlgebra = false,
+    hydrationMode = "full",
+    nearWordRadius = 2,
+  }: V3PoolMeta & V3FetchOptions = {}
 ): Promise<V3PoolState> {
   // Step 1: Core state (dispatches to Algebra or Uniswap V3 interface)
   const core = await fetchPoolCore(poolAddress, { isAlgebra });
@@ -479,8 +512,18 @@ export async function fetchV3PoolState(
     };
   }
 
-  // Step 2: Tick bitmap → initialized tick indices
-  const { bitmaps, tickIndices } = await fetchTickBitmap(poolAddress, core.tickSpacing);
+  let bitmaps = new Map<number, bigint>();
+  let tickIndices: number[] = [];
+  if (hydrationMode === "full") {
+    ({ bitmaps, tickIndices } = await fetchTickBitmap(poolAddress, core.tickSpacing));
+  } else if (hydrationMode === "nearby") {
+    ({ bitmaps, tickIndices } = await fetchTickBitmapWindow(
+      poolAddress,
+      core.tickSpacing,
+      core.tick,
+      nearWordRadius,
+    ));
+  }
 
   // Step 3: Fetch liquidityNet for each initialized tick.
   // Algebra ticks() returns the same types as Uniswap V3 (uint128, int128, ..., bool)
@@ -511,7 +554,8 @@ export async function fetchMultipleV3States(
   poolAddresses: string[],
   concurrency = 2,
   poolMeta: Map<string, V3PoolMeta> = new Map(),
-  onProgress: ((completed: number, total: number, addr: string) => void) | null = null
+  onProgress: ((completed: number, total: number, addr: string) => void) | null = null,
+  fetchOptions: V3FetchOptions = {},
 ): Promise<V3StateMap> {
   const states: V3StateMap = new Map();
   const noDataFailures = new Set<string>();
@@ -523,7 +567,11 @@ export async function fetchMultipleV3States(
     async (addr: string) => {
       try {
         const meta = poolMeta.get(addr.toLowerCase()) || {};
-        const state = await fetchV3PoolState(addr, { isAlgebra: meta.isAlgebra || false });
+        const state = await fetchV3PoolState(addr, {
+          isAlgebra: meta.isAlgebra || false,
+          hydrationMode: fetchOptions.hydrationMode,
+          nearWordRadius: fetchOptions.nearWordRadius,
+        });
         return { addr, state, error: null };
       } catch (error: any) {
         if (isNoDataReadContractError(error)) {

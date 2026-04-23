@@ -22,7 +22,7 @@ export const ERC20_TRANSFER_ABI = [
   },
 ];
 
-/** ERC-20 approve — used for pre-approving routers */
+/** ERC-20 approve — retained for setup/admin flows */
 export const ERC20_APPROVE_ABI = [
   {
     name: "approve",
@@ -172,6 +172,21 @@ export const EXECUTOR_PRE_APPROVE_ABI = [
   },
 ];
 
+/** ArbExecutor.approveIfNeeded — dynamic approval during execution */
+export const EXECUTOR_APPROVE_IF_NEEDED_ABI = [
+  {
+    name: "approveIfNeeded",
+    type: "function",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+];
+
 // ─── Curve Pools ──────────────────────────────────────────────
 
 /**
@@ -228,8 +243,8 @@ export const CURVE_EXCHANGE_UINT256_ABI = [
  * Balancer Vault.swap — single-pool exactInput swap.
  *
  * The Vault pulls tokenIn from `funds.sender` and sends tokenOut
- * to `funds.recipient`.  ArbExecutor must have approved the Vault
- * to spend tokenIn (use preApprove once per token).
+ * to `funds.recipient`. The executor therefore needs allowance-based
+ * approval for the Vault before the swap call executes.
  *
  * SingleSwap:
  *   poolId         bytes32   Balancer pool ID

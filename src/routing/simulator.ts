@@ -6,7 +6,7 @@
  * dispatching to the correct swap math based on protocol type.
  *
  * Supports:
- *   - Uniswap V2, QuickSwap V2, SushiSwap V2
+ *   - Uniswap V2, QuickSwap V2, SushiSwap V2, Dfyn V2
  *   - Uniswap V3, QuickSwap V3, SushiSwap V3, KyberSwap Elastic
  *   - Curve StableSwap
  *   - Balancer Weighted
@@ -20,10 +20,11 @@ import { simulateCurveSwap } from "../math/curve.ts";
 import { simulateBalancerSwap } from "../math/balancer.ts";
 import { workerPool } from "./worker_pool.ts";
 import { EVAL_WORKER_THRESHOLD, WORKER_COUNT } from "../config/index.ts";
+import { getPathHopCount } from "./path_hops.ts";
 
 // ─── Protocol classification ─────────────────────────────────
 
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
+const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2"]);
 const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
 const CURVE_PROTOCOLS = new Set([
   "CURVE_STABLE",
@@ -114,6 +115,7 @@ export function simulateHop(edge: any, amountIn: any, stateCache: any) {
  * @property {string[]} poolPath    Ordered pool addresses
  * @property {string[]} tokenPath   Ordered token addresses (length = hops + 1)
  * @property {string[]} protocols   Protocol names per hop
+ * @property {number}   hopCount    Canonical hop count derived from traversed edges
  */
 
 /**
@@ -125,6 +127,7 @@ export function simulateHop(edge: any, amountIn: any, stateCache: any) {
  * @returns {RouteSimResult}
  */
 export function simulateRoute(path: any, amountIn: any, stateCache: any) {
+  const hopCount = getPathHopCount(path);
   const hopAmounts = [amountIn];
   const poolPath = [];
   const tokenPath = [path.startToken];
@@ -157,6 +160,7 @@ export function simulateRoute(path: any, amountIn: any, stateCache: any) {
     poolPath,
     tokenPath,
     protocols,
+    hopCount,
   };
 }
 

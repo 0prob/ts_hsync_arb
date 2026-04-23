@@ -9,6 +9,7 @@
 
 import QUICKSWAP_V2 from "./quickswap_v2.ts";
 import SUSHISWAP_V2 from "./sushiswap_v2.ts";
+import DFYN_V2 from "./dfyn_v2.ts";
 import UNISWAP_V3 from "./uniswap_v3.ts";
 import QUICKSWAP_V3 from "./quickswap_v3.ts";
 import SUSHISWAP_V3 from "./sushiswap_v3.ts";
@@ -23,6 +24,7 @@ import CURVE_TRICRYPTO_NG from "./curve_tricrypto_ng.ts";
 export const PROTOCOLS = {
   QUICKSWAP_V2,
   SUSHISWAP_V2,
+  DFYN_V2,
   UNISWAP_V3,
   QUICKSWAP_V3,
   SUSHISWAP_V3,
@@ -34,6 +36,8 @@ export const PROTOCOLS = {
   CURVE_STABLESWAP_NG,
   CURVE_TRICRYPTO_NG,
 };
+
+export { CONTRACT_CATALOG, POLYGON_CHAIN_ID } from "./contract_catalog.ts";
 
 /**
  * Curve PoolRemoved lifecycle event definition.

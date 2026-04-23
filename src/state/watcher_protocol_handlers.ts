@@ -4,41 +4,37 @@
  */
 
 export function createWatcherProtocolHandlers({
-  topics,
+  topic0,
   updateV2State,
   updateV3SwapState,
   updateV3LiquidityState,
 }: any): Map<any, any> {
   return new Map([
-    [topics[0], ({ state, decoded, commitState, addr, log }: any) => {
+    [topic0.V2_SYNC, ({ state, decoded }: any) => {
       updateV2State(state, decoded);
-      commitState(addr, state, log);
       return true;
     }],
-    [topics[1], ({ state, decoded, commitState, addr, log }: any) => {
+    [topic0.V3_SWAP, ({ state, decoded }: any) => {
       updateV3SwapState(state, decoded);
-      commitState(addr, state, log);
       return true;
     }],
-    [topics[2], ({ state, decoded, commitState, addr, log }: any) => {
+    [topic0.V3_MINT, ({ state, decoded }: any) => {
       updateV3LiquidityState(state, decoded, true);
-      commitState(addr, state, log);
       return true;
     }],
-    [topics[3], ({ state, decoded, commitState, addr, log }: any) => {
+    [topic0.V3_BURN, ({ state, decoded }: any) => {
       updateV3LiquidityState(state, decoded, false);
-      commitState(addr, state, log);
       return true;
     }],
-    [topics[4], ({ addr, pool, enqueueEnrichment, refreshBalancer }: any) => {
+    [topic0.BAL_BALANCE, ({ addr, pool, enqueueEnrichment, refreshBalancer }: any) => {
       enqueueEnrichment(addr, () => refreshBalancer(addr, pool));
       return true;
     }],
-    [topics[5], ({ addr, pool, enqueueEnrichment, refreshCurve }: any) => {
+    [topic0.CURVE_EXCHANGE_STABLE, ({ addr, pool, enqueueEnrichment, refreshCurve }: any) => {
       enqueueEnrichment(addr, () => refreshCurve(addr, pool));
       return true;
     }],
-    [topics[6], ({ addr, pool, enqueueEnrichment, refreshCurve }: any) => {
+    [topic0.CURVE_EXCHANGE_CRYPTO, ({ addr, pool, enqueueEnrichment, refreshCurve }: any) => {
       enqueueEnrichment(addr, () => refreshCurve(addr, pool));
       return true;
     }],

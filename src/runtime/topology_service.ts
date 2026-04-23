@@ -45,6 +45,7 @@ type TopologyServiceDeps = {
   maxTotalPaths: number;
   polygonHubTokens: Set<string>;
   hub4Tokens: Set<string>;
+  selective4HopTokenLimit: number;
   workerCount: number;
   workerPool: WorkerEnumerator;
   isWorkerPoolInitialized: () => boolean;
@@ -74,6 +75,8 @@ export function createTopologyService(deps: TopologyServiceDeps) {
   let cycleRefreshPromise: Promise<ArbPathLike[]> | null = null;
   let queuedRefreshPromise: Promise<ArbPathLike[]> | null = null;
   let queuedRefreshForce = false;
+  let dirtyPoolAddresses = new Set<string>();
+  let dirtyHubStartTokens = new Set<string>();
 
   function edgeLiquidityWmatic(edge: SwapEdge, getRateWei: ((token: string) => bigint) | null) {
     if (!getRateWei) return 0n;
@@ -113,7 +116,28 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         return a.liquidityScore > b.liquidityScore ? -1 : 1;
       });
 
-    return ranked.slice(0, 4).map((entry) => entry.token);
+    return ranked.slice(0, deps.selective4HopTokenLimit).map((entry) => entry.token);
+  }
+
+  function markPoolsDirty(poolAddresses: Iterable<string>) {
+    let requiresFullRefresh = false;
+    for (const rawAddr of poolAddresses) {
+      const addr = rawAddr.toLowerCase();
+      dirtyPoolAddresses.add(addr);
+      const pool = deps.registry.getPoolMeta(addr);
+      if (!pool) {
+        requiresFullRefresh = true;
+        continue;
+      }
+      const tokens = getPoolTokens(pool);
+      const touchedHubTokens = tokens.filter((token) => deps.polygonHubTokens.has(token));
+      if (touchedHubTokens.length === 0) {
+        requiresFullRefresh = true;
+        continue;
+      }
+      for (const token of touchedHubTokens) dirtyHubStartTokens.add(token);
+    }
+    return !requiresFullRefresh;
   }
 
   function mergeArbPaths(...groups: ArbPathLike[][]) {
@@ -176,7 +200,10 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       }
     }
 
-    if (admitted > 0) invalidate("new_pools_admitted");
+    if (admitted > 0) {
+      markPoolsDirty(poolAddresses);
+      invalidate("new_pools_admitted");
+    }
     return admitted;
   }
 
@@ -189,7 +216,10 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       hubGraph.removePool(addr);
     }
 
-    if (removed > 0) invalidate("unroutable_pool_removed");
+    if (removed > 0) {
+      markPoolsDirty(poolAddresses);
+      invalidate("unroutable_pool_removed");
+    }
     return removed;
   }
 
@@ -197,6 +227,8 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     hubGraph = null;
     fullGraph = null;
     cachedCycles = [];
+    dirtyPoolAddresses.clear();
+    dirtyHubStartTokens.clear();
     invalidate("graphs_reset");
   }
 
@@ -263,8 +295,15 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       const activeHubGraph = hubGraph!;
       const activeFullGraph = fullGraph!;
       const selective4HopTokens = selectHighLiquidityHubTokens(activeFullGraph, options.getRateWei);
+      const dirtyStartTokens = [...dirtyHubStartTokens].filter((token) => activeFullGraph.hasToken(token));
+      const canUseIncrementalRefresh =
+        !rebuildGraphs &&
+        topologyDirty &&
+        dirtyPoolAddresses.size > 0 &&
+        dirtyStartTokens.length > 0 &&
+        dirtyStartTokens.length <= Math.max(8, deps.selective4HopTokenLimit * 2);
 
-      if (deps.workerCount >= 2 && deps.isWorkerPoolInitialized()) {
+      if (deps.workerCount >= 2 && deps.isWorkerPoolInitialized() && !canUseIncrementalRefresh) {
         const hubTopo = topologyCache.getSerializedTopologyCached("hub", activeHubGraph, deps.serializeTopology);
         const fullTopo = topologyCache.getSerializedTopologyCached("full", activeFullGraph, deps.serializeTopology);
         const hubTokens = [...deps.hub4Tokens].filter((t) => activeHubGraph.hasToken(t));
@@ -306,6 +345,52 @@ export function createTopologyService(deps: TopologyServiceDeps) {
           topologyCache.hydratePaths(fullSer as any[], activeHubGraph, activeFullGraph),
           topologyCache.hydratePaths(selective4HopSer as any[], activeHubGraph, activeFullGraph),
         );
+      } else if (canUseIncrementalRefresh) {
+        const affectedPoolAddresses = new Set(dirtyPoolAddresses);
+        const affectedHubGraphTokens = dirtyStartTokens.filter((token) => deps.hub4Tokens.has(token) && activeHubGraph.hasToken(token));
+        const unaffectedCycles = cachedCycles.filter((path) => {
+          if (dirtyStartTokens.includes(path.startToken)) return false;
+          return !path.edges.some((edge) => affectedPoolAddresses.has(edge.poolAddress.toLowerCase()));
+        });
+        const partialHubCycles = affectedHubGraphTokens.length > 0
+          ? deps.enumerateCycles(activeHubGraph, {
+              startTokens: new Set(affectedHubGraphTokens),
+              include2Hop: true,
+              include3Hop: true,
+              include4Hop: true,
+              maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.5 / Math.max(affectedHubGraphTokens.length, 1)),
+              max4HopPathsPerToken: 2_000,
+              maxTotalPaths: deps.maxTotalPaths,
+            })
+          : [];
+        const partialFullCycles = deps.enumerateCycles(activeFullGraph, {
+          startTokens: new Set(dirtyStartTokens),
+          include2Hop: true,
+          include3Hop: true,
+          include4Hop: false,
+          maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.35 / Math.max(dirtyStartTokens.length, 1)),
+          maxTotalPaths: deps.maxTotalPaths,
+          minLiquidityWmatic: options.getRateWei ? options.minLiquidityWmatic : 0n,
+          getRateWei: options.getRateWei,
+        });
+        const selectiveDirtyTokens = dirtyStartTokens.filter((token) => selective4HopTokens.includes(token));
+        const selective4HopCycles = selectiveDirtyTokens.length > 0
+          ? deps.enumerateCycles(activeFullGraph, {
+              startTokens: new Set(selectiveDirtyTokens),
+              include2Hop: true,
+              include3Hop: true,
+              include4Hop: true,
+              maxPathsPerToken: Math.min(
+                options.selective4HopMaxPathsPerToken,
+                Math.ceil(options.selective4HopPathBudget / Math.max(selectiveDirtyTokens.length, 1)),
+              ),
+              max4HopPathsPerToken: options.selective4HopMaxPathsPerToken,
+              maxTotalPaths: options.selective4HopPathBudget,
+              minLiquidityWmatic: options.getRateWei ? options.minLiquidityWmatic : 0n,
+              getRateWei: options.getRateWei,
+            })
+          : [];
+        cachedCycles = mergeArbPaths(unaffectedCycles, partialHubCycles, partialFullCycles, selective4HopCycles);
       } else {
         const baseCycles = deps.enumerateCyclesDual(activeHubGraph, activeFullGraph, {
           include2Hop: true,
@@ -337,6 +422,8 @@ export function createTopologyService(deps: TopologyServiceDeps) {
 
       deps.routeCache.prune(deps.stateCache);
       topologyDirty = false;
+      dirtyPoolAddresses.clear();
+      dirtyHubStartTokens.clear();
       lastCycleRefreshMs = Date.now();
       deps.log(`Cycle refresh: ${cachedCycles.length} paths (hub+full, max ${deps.maxTotalPaths}).`, "info", {
         event: "cycle_refresh_complete",

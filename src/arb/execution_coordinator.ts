@@ -40,6 +40,16 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
   let executionInFlight = false;
   const executionRouteQuarantine = new Map<string, QuarantineEntry>();
 
+  function gasLimitToSafeNumber(gasLimit: bigint) {
+    if (gasLimit < 0n) {
+      throw new Error("post-build gas limit cannot be negative");
+    }
+    if (gasLimit > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("post-build gas limit exceeds Number.MAX_SAFE_INTEGER");
+    }
+    return Number(gasLimit);
+  }
+
   async function mapExecutionCandidates<T, R>(
     candidates: T[],
     worker: (candidate: T) => Promise<R>,
@@ -193,7 +203,7 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
 
     const postBuildAssessment = assessRouteResult(
       best.path,
-      { ...best.result, totalGas: Number(builtTx.gasLimit) },
+      { ...best.result, totalGas: gasLimitToSafeNumber(builtTx.gasLimit) },
       builtTx.maxFeePerGas,
       tokenToMaticRate,
       { minProfitWei: deps.minProfitWei },

@@ -1,4 +1,6 @@
 
+import { getResultHopCount } from "../routing/path_hops.ts";
+
 /**
  * src/profit/compute.js — Gas-adjusted profitability engine
  *
@@ -49,6 +51,35 @@ const DEFAULT_MIN_PROFIT = 0n;
 
 function ceilDiv(numerator: bigint, denominator: bigint) {
   return (numerator + denominator - 1n) / denominator;
+}
+
+function bigintToApproxNumber(value: bigint) {
+  if (value === 0n) return 0;
+
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const digits = abs.toString();
+
+  if (digits.length <= 15) {
+    const numeric = Number(abs);
+    return negative ? -numeric : numeric;
+  }
+
+  const exponent = digits.length - 1;
+  if (exponent > 308) return negative ? -Number.MAX_VALUE : Number.MAX_VALUE;
+
+  const mantissaDigits = digits.slice(0, 15);
+  const mantissa =
+    mantissaDigits.length === 1
+      ? mantissaDigits
+      : `${mantissaDigits[0]}.${mantissaDigits.slice(1)}`;
+  const numeric = Number(`${mantissa}e${exponent}`);
+  return negative ? -numeric : numeric;
+}
+
+export function roiMicroUnits(profit: bigint, amountIn: bigint) {
+  if (amountIn <= 0n) return 0;
+  return bigintToApproxNumber((profit * 1_000_000n) / amountIn);
 }
 
 function invalidAssessment(routeResult: Partial<RouteResultLike>, reason: string): ProfitAssessment {
@@ -169,7 +200,7 @@ export function computeProfit(routeResult: RouteResultLike, options: ProfitOptio
     slippageBps = DEFAULT_SLIPPAGE_BPS,
     revertRiskBps = DEFAULT_REVERT_RISK_BPS,
     minNetProfit = DEFAULT_MIN_PROFIT,
-    hopCount = 2,
+    hopCount = getResultHopCount(routeResult) || 2,
   } = options;
 
   if (!routeResult) return invalidAssessment({}, "missing route result");
@@ -220,9 +251,10 @@ export function computeProfit(routeResult: RouteResultLike, options: ProfitOptio
   }
 
   // 5. ROI (net profit / input, in micro-units = parts per million)
-  const roi = amountIn > 0n
-    ? Number((netProfit * 1_000_000n) / amountIn)
-    : 0;
+  const roiBase = tokenToMaticRate != null && tokenToMaticRate > 0n
+    ? netProfitAfterGas
+    : netProfit;
+  const roi = roiMicroUnits(roiBase, amountIn);
 
   // 6. Threshold checks
   let shouldExecute = true;

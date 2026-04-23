@@ -14,4 +14,5 @@ out = "out"
 libs = ["lib"]
 
 # --- RPC (optional) ---
-eth_rpc_url = "${RPC_URL}"
+# Leave the default profile RPC-free so pure unit tests run locally.
+# Pass `--rpc-url` (or use a separate profile) only for forked tests/scripts.

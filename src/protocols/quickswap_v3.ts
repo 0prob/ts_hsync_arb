@@ -22,6 +22,11 @@
 export default {
   name: "QuickSwap V3",
   address: "0x411b0fAcC3489691f28ad58c47006AF5E3Ab3A28",
+  capabilities: {
+    discovery: true,
+    routing: true,
+    execution: true,
+  },
   // Algebra factory emits Pool(token0, token1, pool) — no fee or tickSpacing in event
   signature:
     "event Pool(address indexed token0, address indexed token1, address pool)",

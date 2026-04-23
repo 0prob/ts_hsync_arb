@@ -3,6 +3,11 @@ const FACTORY_ADDRESS = "0x5F1dddbf348aC2fbe22a163e30F99F9ECE3DD50a";
 export default {
   name: "KyberSwap Elastic Legacy",
   address: FACTORY_ADDRESS,
+  capabilities: {
+    discovery: true,
+    routing: false,
+    execution: false,
+  },
   signature:
     "event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)",
   decode(decoded: any) {

@@ -37,7 +37,7 @@ export function detectReorg(registry: any, newGuard: any) {
     return false;
   }
 
-  if (newFirstBlock <= storedBlock && newFirstParent && storedHash) {
+  if (newFirstBlock === storedBlock && newFirstParent && storedHash) {
     if (newFirstBlock === storedBlock && newFirstParent !== storedHash) {
       return storedBlock;
     }
@@ -45,8 +45,7 @@ export function detectReorg(registry: any, newGuard: any) {
 
   if (
     Number.isFinite(storedFirstBlock) &&
-    newFirstBlock <= storedBlock &&
-    newFirstBlock <= storedFirstBlock &&
+    newFirstBlock === storedFirstBlock &&
     storedFirstParent &&
     newFirstParent !== storedFirstParent
   ) {

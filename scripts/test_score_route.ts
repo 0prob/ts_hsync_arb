@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { estimateGasCostWei, gasCostInStartTokenUnits, scoreRoute } from "../src/routing/score_route.ts";
+import { estimateGasCostWei, gasCostInStartTokenUnits, rankRoutes, scoreRoute } from "../src/routing/score_route.ts";
 
 const path = {
   hopCount: 2,
@@ -40,6 +40,24 @@ assert.equal(
 );
 assert.equal(scoredWithRate.gasCostInTokens, 3_000n);
 
+const scoredWithStaleHopCount = scoreRoute(
+  {
+    ...path,
+    hopCount: 99,
+  },
+  result,
+  {
+    gasPriceWei,
+    tokenToMaticRate: usdcLikeTokenToMaticRate,
+  },
+);
+assert(scoredWithStaleHopCount, "scoring should tolerate stale hop metadata");
+assert.equal(
+  scoredWithStaleHopCount.score,
+  scoredWithRate.score,
+  "route scoring should use the actual edge count instead of stale hopCount metadata",
+);
+
 const lowProfitWithoutRate = scoreRoute(path, result, {
   gasPriceWei,
 });
@@ -73,6 +91,46 @@ assert.equal(
   scoreRoute(path, result, { gasPriceWei, tokenToMaticRate: 0n }),
   null,
   "invalid token/MATIC rates should reject scoring instead of silently comparing incompatible units",
+);
+
+const hugeScored = scoreRoute(
+  path,
+  {
+    profitable: true,
+    amountIn: 1n,
+    profit: 10n ** 400n,
+    totalGas: 1,
+  },
+  { gasPriceWei, tokenToMaticRate: 1n },
+);
+assert(hugeScored, "very large bigint profits should still produce a ranking score");
+assert(Number.isFinite(hugeScored.score), "route scoring should remain finite for huge bigint inputs");
+assert(Number.isFinite(hugeScored.roi), "ROI conversion should remain finite for huge bigint inputs");
+
+const equalGrossProfit = {
+  profitable: true,
+  amountIn: 10n ** 18n,
+  profit: 2n * 10n ** 16n,
+};
+const rankedByGas = rankRoutes(
+  [
+    { path, result: { ...equalGrossProfit, totalGas: 400_000 } },
+    { path, result: { ...equalGrossProfit, totalGas: 80_000 } },
+  ],
+  {
+    gasPriceWei,
+    tokenToMaticRate: 1n,
+  },
+);
+assert.equal(rankedByGas.length, 2);
+assert.equal(
+  rankedByGas[0].result.totalGas,
+  80_000,
+  "when gross profit matches, the scorer should prefer the lower-gas route",
+);
+assert(
+  rankedByGas[0].roi > rankedByGas[1].roi,
+  "ROI should reflect gas-adjusted profitability when token/MATIC conversion is known",
 );
 
 console.log("Score route checks passed.");

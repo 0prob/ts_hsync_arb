@@ -16,17 +16,19 @@ import {
   buildHyperSyncLogQuery,
   DEFAULT_HYPERSYNC_BLOCK_FIELDS,
 } from "../hypersync/query_policy.ts";
+import { topic0ForSignature } from "../hypersync/topics.ts";
 import { detectReorg } from "../reorg/detect.ts";
 import { fetchAndNormalizeBalancerPool } from "./poll_balancer.ts";
 import { fetchAndNormalizeCurvePool } from "./poll_curve.ts";
 import {
   commitWatcherState,
+  commitWatcherStatesBatch,
   handleWatcherLogs,
   mergeWatcherState,
   persistWatcherState,
+  persistWatcherStates,
   reloadWatcherCache,
 } from "./watcher_state_ops.ts";
-import { parseAbiItem, encodeEventTopics } from "viem";
 import { HYPERSYNC_BATCH_SIZE, HYPERSYNC_MAX_ADDRESS_FILTER } from "../config/index.ts";
 import { logger } from "../utils/logger.ts";
 
@@ -52,10 +54,17 @@ const SIGNATURES = [
   CURVE_EXCHANGE_CRYPTO,
 ];
 
-const TOPICS = SIGNATURES.map((sig) => {
-  const item = parseAbiItem(sig);
-  return encodeEventTopics({ abi: [item], eventName: (item as any).name })[0];
-});
+export const WATCHER_TOPIC0 = {
+  V2_SYNC: topic0ForSignature(V2_SYNC),
+  V3_SWAP: topic0ForSignature(V3_SWAP),
+  V3_MINT: topic0ForSignature(V3_MINT),
+  V3_BURN: topic0ForSignature(V3_BURN),
+  BAL_BALANCE: topic0ForSignature(BAL_BALANCE),
+  CURVE_EXCHANGE_STABLE: topic0ForSignature(CURVE_EXCHANGE_STABLE),
+  CURVE_EXCHANGE_CRYPTO: topic0ForSignature(CURVE_EXCHANGE_CRYPTO),
+} as const;
+
+const TOPICS = Object.values(WATCHER_TOPIC0);
 
 const LOG_FIELDS = [
   LogField.Address,
@@ -75,8 +84,39 @@ function watcherSleep(ms: any) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function watcherCheckpointFromNextBlock(nextBlock: any, currentLastBlock: any) {
-  if (Number.isFinite(nextBlock) && nextBlock > 0) {
+function chunk<T>(items: T[], size: number): T[][] {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+export function watcherCheckpointFromNextBlock(nextBlock: any, currentLastBlock: any, archiveHeight?: any) {
+  if (!Number.isFinite(nextBlock)) {
+    throw new Error("HyperSync response did not include a finite nextBlock cursor; cannot advance watcher safely.");
+  }
+
+  const requestedFromBlock = Math.max(0, Number(currentLastBlock) + 1);
+  if (nextBlock < requestedFromBlock) {
+    throw new Error(
+      `HyperSync nextBlock cursor regressed from requested block ${requestedFromBlock} to ${nextBlock}; cannot advance watcher safely.`,
+    );
+  }
+
+  const numericArchiveHeight = Number(archiveHeight);
+  if (
+    nextBlock === requestedFromBlock &&
+    Number.isFinite(numericArchiveHeight) &&
+    numericArchiveHeight > requestedFromBlock
+  ) {
+    throw new Error(
+      `HyperSync nextBlock cursor stalled at ${nextBlock} before archive height ${numericArchiveHeight}; cannot advance watcher safely.`,
+    );
+  }
+
+  if (nextBlock > 0) {
     return nextBlock - 1;
   }
   return Math.max(0, currentLastBlock);
@@ -94,6 +134,7 @@ export class StateWatcher {
   private _watchedAddresses: string[];
   private _watchedAddressSet: Set<string>;
   private _pendingEnrichment: Map<string, any>;
+  private _enrichmentEpoch: number;
   onBatch: ((batch: any) => void) | null;
   onReorg: ((reorg: any) => void) | null;
 
@@ -109,6 +150,7 @@ export class StateWatcher {
     this._watchedAddresses = [];
     this._watchedAddressSet = new Set();
     this._pendingEnrichment = new Map();
+    this._enrichmentEpoch = 0;
 
     this.onBatch = null;
     this.onReorg = null;
@@ -149,7 +191,7 @@ export class StateWatcher {
   }
 
   async addPools(newAddresses: any) {
-    if (!newAddresses || newAddresses.length === 0) return;
+    if (this._closed || !newAddresses || newAddresses.length === 0) return;
 
     const added = [];
     for (const address of newAddresses) {
@@ -180,6 +222,11 @@ export class StateWatcher {
       await this._loopPromise.catch(() => {});
       this._loopPromise = null;
     }
+    if (this._pendingEnrichment.size > 0) {
+      await Promise.allSettled(
+        [...this._pendingEnrichment.values()].map((entry: any) => entry.promise)
+      );
+    }
   }
 
   get lastBlock() {
@@ -187,23 +234,20 @@ export class StateWatcher {
   }
 
   _buildQuery() {
-    // HyperSync enforces a 2 MB HTTP request-body limit.  Each address costs
-    // ~44 bytes as a hex JSON string, so embedding more than
-    // HYPERSYNC_MAX_ADDRESS_FILTER addresses would exceed that budget and
-    // produce a 413 error.  Above the threshold we drop the address filter and
-    // rely on topic-only filtering; _handleLogs already rejects events from
-    // untracked contracts via registry.getPoolMeta(), so correctness is unaffected.
-    const useAddressFilter =
-      this._watchedAddresses.length > 0 &&
-      this._watchedAddresses.length <= HYPERSYNC_MAX_ADDRESS_FILTER;
-
-    const logFilter = useAddressFilter
-      ? { address: this._watchedAddresses, topics: [TOPICS] }
-      : { topics: [TOPICS] };
+    // HyperSync enforces a 2 MB HTTP request-body limit. Instead of dropping to
+    // topic-only filtering once the address set grows, shard the address list
+    // across multiple filters so the watcher stays selective at larger pool counts.
+    const logFilters =
+      this._watchedAddresses.length > 0
+        ? chunk(this._watchedAddresses, HYPERSYNC_MAX_ADDRESS_FILTER).map((addresses) => ({
+            address: addresses,
+            topics: [TOPICS],
+          }))
+        : [{ topics: [TOPICS] }];
 
     return buildHyperSyncLogQuery({
       fromBlock: this._lastBlock + 1,
-      logs: [logFilter],
+      logs: logFilters,
       maxNumLogs: HYPERSYNC_BATCH_SIZE,
       joinMode: JoinMode.JoinNothing,
       logFields: LOG_FIELDS,
@@ -213,12 +257,13 @@ export class StateWatcher {
 
   async _loop() {
     const addrCount = this._watchedAddresses.length;
+    const shardCount = Math.max(1, Math.ceil(addrCount / HYPERSYNC_MAX_ADDRESS_FILTER));
     const filterMode =
       addrCount === 0
         ? "topic-only (no pools yet)"
-        : addrCount <= HYPERSYNC_MAX_ADDRESS_FILTER
+        : shardCount === 1
           ? `${addrCount} pool address(es)`
-          : `topic-only (${addrCount} pools — address filter exceeds 2 MB budget)`;
+          : `${addrCount} pool address(es) across ${shardCount} query shard(s)`;
     watcherLogger.info(
       { fromBlock: this._lastBlock + 1, filterMode },
       "Starting manual HyperSync loop"
@@ -234,6 +279,7 @@ export class StateWatcher {
           const reorgBlock = detectReorg(this._registry, res.rollbackGuard);
           if (reorgBlock !== false) {
             watcherLogger.warn({ reorgBlock }, "Reorg detected; rolling back registry state");
+            this._advanceEnrichmentEpoch();
             const rb = this._registry.rollbackToBlock(reorgBlock);
             watcherLogger.warn(
               { reorgBlock, poolsRemoved: rb.poolsRemoved, statesRemoved: rb.statesRemoved },
@@ -261,12 +307,8 @@ export class StateWatcher {
         }
 
         const nextBlock = Number(res.nextBlock);
-        if (!Number.isFinite(nextBlock)) {
-          throw new Error(
-            "HyperSync response did not include a finite nextBlock cursor; cannot advance watcher safely."
-          );
-        }
-          const checkpointBlock = watcherCheckpointFromNextBlock(nextBlock, this._lastBlock);
+        const archiveHeight = Number(res.archiveHeight);
+        const checkpointBlock = watcherCheckpointFromNextBlock(nextBlock, this._lastBlock, archiveHeight);
         if (checkpointBlock > this._lastBlock) {
           this._lastBlock = checkpointBlock;
           this._registry.setCheckpoint(this._checkpointKey, this._lastBlock);
@@ -276,7 +318,6 @@ export class StateWatcher {
           this.onBatch(changedAddrs);
         }
 
-        const archiveHeight = Number(res.archiveHeight);
         const caughtUp =
           Number.isFinite(nextBlock) &&
           Number.isFinite(archiveHeight) &&
@@ -301,30 +342,38 @@ export class StateWatcher {
       registry: this._registry,
       cache: this._cache,
       closed: () => this._closed,
-      topics: TOPICS,
+      topic0: WATCHER_TOPIC0,
       refreshBalancer: this._refreshBalancer.bind(this),
       refreshCurve: this._refreshCurve.bind(this),
       enqueueEnrichment: this._enqueueEnrichment.bind(this),
-      commitState: this._commitState.bind(this),
+      commitStates: this._commitStates.bind(this),
     });
   }
 
   _enqueueEnrichment(addr: any, taskFn: any) {
+    if (this._closed) return Promise.resolve();
     const pending = this._pendingEnrichment.get(addr);
     if (pending) {
       pending.dirty = true;
       return pending.promise;
     }
 
-    const entry: { dirty: boolean; promise: any } = { dirty: false, promise: null };
+    const entry: { dirty: boolean; promise: any; epoch: number } = {
+      dirty: false,
+      promise: null,
+      epoch: this._enrichmentEpoch,
+    };
     entry.promise = (async () => {
       try {
         do {
           entry.dirty = false;
-          await taskFn();
-        } while (entry.dirty && !this._closed);
+          if (this._closed || entry.epoch !== this._enrichmentEpoch) break;
+          await taskFn(entry.epoch);
+        } while (entry.dirty && !this._closed && entry.epoch === this._enrichmentEpoch);
       } finally {
-        this._pendingEnrichment.delete(addr);
+        if (this._pendingEnrichment.get(addr) === entry) {
+          this._pendingEnrichment.delete(addr);
+        }
       }
     })();
 
@@ -332,20 +381,28 @@ export class StateWatcher {
     return entry.promise;
   }
 
-  async _refreshBalancer(addr: any, pool: any) {
+  async _refreshBalancer(addr: any, pool: any, expectedEpoch = this._enrichmentEpoch) {
     const { normalized } = await fetchAndNormalizeBalancerPool(pool);
+    if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
     const state = this._mergeState(addr, normalized);
-    this._commitState(addr, state, { blockNumber: this._lastBlock });
+    this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);
   }
 
-  async _refreshCurve(addr: any, pool: any) {
+  async _refreshCurve(addr: any, pool: any, expectedEpoch = this._enrichmentEpoch) {
     const { normalized } = await fetchAndNormalizeCurvePool(pool);
+    if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
     const state = this._mergeState(addr, normalized);
-    this._commitState(addr, state, { blockNumber: this._lastBlock });
+    this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);
   }
 
-  _commitState(addr: any, state: any, rawLog: any) {
+  _commitState(addr: any, state: any, rawLog: any, expectedEpoch = this._enrichmentEpoch) {
+    if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
     commitWatcherState(this._cache, this._persistState.bind(this), addr, state, rawLog);
+  }
+
+  _commitStates(updates: any[], expectedEpoch = this._enrichmentEpoch) {
+    if (this._closed || expectedEpoch !== this._enrichmentEpoch) return [];
+    return commitWatcherStatesBatch(this._cache, this._persistStates.bind(this), updates);
   }
 
   _mergeState(addr: any, nextState: any) {
@@ -356,10 +413,20 @@ export class StateWatcher {
     persistWatcherState(this._registry, addr, state, rawLog, this._lastBlock);
   }
 
+  _persistStates(states: any[]) {
+    persistWatcherStates(this._registry, states, this._lastBlock);
+  }
+
   _reloadCacheFromRegistry() {
     const nextAddrs: any[] = reloadWatcherCache(this._registry, this._cache, this._pendingEnrichment) as unknown as any[];
     this._watchedAddresses = [...nextAddrs];
     this._watchedAddressSet = new Set(this._watchedAddresses);
     return nextAddrs;
+  }
+
+  _advanceEnrichmentEpoch() {
+    this._enrichmentEpoch += 1;
+    this._pendingEnrichment.clear();
+    return this._enrichmentEpoch;
   }
 }

@@ -11,12 +11,16 @@
  * and returns the swap result without any side effects.
  */
 
-import { getSqrtRatioAtTick, MIN_TICK, MAX_TICK } from "./tick_math.ts";
+import { getSqrtRatioAtTick, getTickAtSqrtRatio, MIN_TICK, MAX_TICK } from "./tick_math.ts";
 import { computeSwapStep } from "./swap_math.ts";
 
 // ─── Optimized Tick Navigation ──────────────────────────────────
 
-const sortedTicksCache = new WeakMap<Map<number, any>, number[]>();
+const sortedTicksCache = new WeakMap<object, {
+  tickVersion: number;
+  ticksRef: Map<number, any>;
+  sortedTicks: number[];
+}>();
 
 /**
  * Find the next initialized tick in the swap direction using binary search.
@@ -60,15 +64,25 @@ function nextInitializedTickOptimized(sortedTicks: any, currentTick: any, zeroFo
   return result;
 }
 
-function getSortedTicks(ticks: any) {
+function getSortedTicks(state: any) {
+  const ticks = state?.ticks;
   if (!(ticks instanceof Map) || ticks.size === 0) return [];
 
-  const cached = sortedTicksCache.get(ticks);
-  if (cached) return cached;
+  const tickVersion = Number.isFinite(Number(state?.tickVersion))
+    ? Number(state.tickVersion)
+    : 0;
+  const cached = sortedTicksCache.get(state);
+  if (cached && cached.ticksRef === ticks && cached.tickVersion === tickVersion) {
+    return cached.sortedTicks;
+  }
 
-  const sorted = Array.from(ticks.keys()).sort((a: any, b: any) => a - b);
-  sortedTicksCache.set(ticks, sorted);
-  return sorted;
+  const sortedTicks = Array.from(ticks.keys()).sort((a: any, b: any) => a - b);
+  sortedTicksCache.set(state, {
+    tickVersion,
+    ticksRef: ticks,
+    sortedTicks,
+  });
+  return sortedTicks;
 }
 
 // ─── V3 Swap Simulator ───────────────────────────────────────
@@ -99,7 +113,7 @@ export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean
     ? getSqrtRatioAtTick(MIN_TICK) + 1n
     : getSqrtRatioAtTick(MAX_TICK) - 1n;
 
-  const sortedTicks = getSortedTicks(state.ticks);
+  const sortedTicks = getSortedTicks(state);
 
   // Mutable swap state
   let sqrtPriceX96 = state.sqrtPriceX96;
@@ -165,8 +179,9 @@ export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean
       // Update tick position
       tick = zeroForOne ? nextTick - 1 : nextTick;
     } else {
-      // Didn't reach the tick boundary — derive tick from new price
-      // (In practice, the swap is done at this point)
+      // Didn't reach the next initialized boundary, so derive the active tick
+      // from the post-swap sqrt price to keep downstream metadata canonical.
+      tick = getTickAtSqrtRatio(sqrtPriceX96);
       break;
     }
 

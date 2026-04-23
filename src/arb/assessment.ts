@@ -1,4 +1,5 @@
 import { computeProfit } from "../profit/compute.ts";
+import { getPathHopCount } from "../routing/path_hops.ts";
 
 export type RouteResultLike = {
   amountIn: bigint;
@@ -6,6 +7,7 @@ export type RouteResultLike = {
   profit: bigint;
   profitable?: boolean;
   totalGas: number;
+  hopCount?: number;
   poolPath?: string[];
   tokenPath?: string[];
   hopAmounts?: bigint[];
@@ -78,7 +80,7 @@ export function assessRouteResult(
     slippageBps: config.slippageBps ?? 50n,
     revertRiskBps: config.revertRiskBps ?? 500n,
     minNetProfit: minProfitInTokenUnits(tokenToMaticRate, config.minProfitWei),
-    hopCount: path.hopCount,
+    hopCount: getPathHopCount(path),
   });
 }
 

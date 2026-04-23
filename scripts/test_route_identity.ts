@@ -4,6 +4,7 @@ import { routeKeyFromEdges } from "../src/routing/finder.ts";
 import { routeExecutionCacheKey, routeIdentityFromEdges, routeIdentityFromSerializedPath } from "../src/routing/route_identity.ts";
 import { gasEstimateCacheKeyForRoute } from "../src/execution/build_tx.ts";
 import { buildFlashParams, computeRouteHash } from "../src/execution/calldata.ts";
+import { RouteCache } from "../src/routing/route_cache.ts";
 
 const startToken = "0x00000000000000000000000000000000000000AA";
 const edges = [
@@ -46,6 +47,17 @@ assert.equal(
   gasEstimateCacheKeyForRoute(route),
   routeExecutionCacheKey(startToken, edges.length, [...edges]),
   "gas estimate cache key should use the canonical execution route key",
+);
+assert.equal(
+  gasEstimateCacheKeyForRoute({
+    path: {
+      startToken,
+      hopCount: 99,
+      edges: [...edges],
+    },
+  }),
+  gasEstimateCacheKeyForRoute(route),
+  "gas estimate cache key should derive hop count from edges, not stale path metadata",
 );
 
 const reversedEdges = [...edges].reverse();
@@ -90,6 +102,28 @@ assert.notEqual(
   computeRouteHash([...calls].reverse()),
   routeHash,
   "route hash must remain order-sensitive for calldata execution",
+);
+
+const routeCache = new RouteCache(4);
+routeCache.update([
+  {
+    path: {
+      startToken,
+      edges: [
+        {
+          ...edges[0],
+          poolAddress: edges[0].poolAddress.toUpperCase(),
+        },
+        edges[1],
+      ],
+    },
+    result: { profit: 123n },
+  },
+]);
+assert.equal(
+  routeCache.getByPools(new Set([edges[0].poolAddress.toLowerCase()])).length,
+  1,
+  "route cache lookups should be case-insensitive for changed pool addresses",
 );
 
 console.log("Route identity checks passed.");

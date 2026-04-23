@@ -17,12 +17,49 @@
  * Use profit/compute.js for absolute execution decisions.
  */
 
+import { getPathHopCount } from "./path_hops.ts";
+
 // ─── Gas cost helpers ─────────────────────────────────────────
 
 /** Default MATIC gas price estimate (30 gwei) */
 const DEFAULT_GAS_PRICE_GWEI = 30n;
 const GWEI = 10n ** 9n;
-const WEI = 1n;
+
+function bigintToApproxNumber(value: bigint, decimals = 0) {
+  if (value === 0n) return 0;
+
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const digits = abs.toString();
+  const integerDigits = digits.length - decimals;
+
+  if (integerDigits > 308) {
+    return negative ? -Number.MAX_VALUE : Number.MAX_VALUE;
+  }
+
+  if (digits.length <= 15 + decimals) {
+    const scaled = Number(abs) / 10 ** decimals;
+    return negative ? -scaled : scaled;
+  }
+
+  const exponent = integerDigits - 1;
+  const mantissaDigits = digits.slice(0, 15);
+  const mantissa =
+    mantissaDigits.length === 1
+      ? mantissaDigits
+      : `${mantissaDigits[0]}.${mantissaDigits.slice(1)}`;
+  const approximate = Number(`${mantissa}e${exponent}`);
+  return negative ? -approximate : approximate;
+}
+
+function scaledRatioToApproxNumber(
+  numerator: bigint,
+  denominator: bigint,
+  scale = 1_000_000n,
+) {
+  if (denominator <= 0n) return -Infinity;
+  return bigintToApproxNumber((numerator * scale) / denominator);
+}
 
 /**
  * Estimate gas cost in wei.
@@ -81,23 +118,26 @@ export function scoreRoute(path: RouteLike, result: RouteResultLike, options: Sc
 
   if (netProfit < minNetProfit) return null;
 
-  // ROI in μ-units (micro): (profit / amountIn) * 1e6
-  const roi = Number((result.profit * 1_000_000n) / result.amountIn);
+  // Prefer gas-normalized profitability when we can compare denominations safely.
+  const roiProfit = gasCostInTokens == null ? result.profit : netProfit;
+  const roi = scaledRatioToApproxNumber(roiProfit, result.amountIn);
 
   // Hop penalty: each additional hop reduces score
-  const hopPenalty = (path.hopCount - 2) * 0.5;
+  const hopPenalty = (getPathHopCount(path) - 2) * 0.5;
+  const gasPenalty = Math.max(0, result.totalGas - 90_000) / 100_000;
 
   // Protocol diversity bonus: cross-protocol arbs are harder to replicate
   const protocols = new Set(path.edges.map((e: { protocol: string }) => e.protocol));
   const diversityBonus = protocols.size > 1 ? 0.2 : 0;
 
-  // Composite score: high roi + high netProfit + diversity - hop penalty
+  // Composite score: high gas-adjusted roi + high netProfit + diversity - hop/gas penalties
   // Normalize to a 0-100 range conceptually
   const score =
     roi * 0.6 +
-    Number(netProfit) / 1e12 * 0.3 +
+    bigintToApproxNumber(netProfit, 12) * 0.3 +
     diversityBonus * 10 -
-    hopPenalty * 5;
+    hopPenalty * 5 -
+    gasPenalty * 3;
 
   return { path, result, netProfit, score, roi, gasCostInTokens };
 }

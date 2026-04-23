@@ -172,7 +172,7 @@ export class RouteCache {
     this._poolIndex.clear();
     for (let i = 0; i < this._routes.length; i++) {
       for (const edge of this._routes[i].path.edges) {
-        const pool = edge.poolAddress;
+        const pool = edge.poolAddress.toLowerCase();
         if (!this._poolIndex.has(pool)) this._poolIndex.set(pool, new Set());
         this._poolIndex.get(pool)?.add(i);
       }

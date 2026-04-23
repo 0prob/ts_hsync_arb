@@ -21,14 +21,17 @@
 import { simulateV3Swap } from "../math/uniswap_v3.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
 import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/pool_record.ts";
+import { PROTOCOLS } from "../protocols/index.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
 const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
-// Keep KyberSwap Elastic out of routing for now: discovery/state coverage is
-// useful, but execution policy remains intentionally conservative.
-const ROUTING_DISABLED_PROTOCOLS = new Set(["KYBERSWAP_ELASTIC"]);
+const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2"]);
+
+function protocolSupportsRouting(protocol: string) {
+  const definition = (PROTOCOLS as Record<string, { capabilities?: { routing?: boolean } }>)[protocol];
+  return definition?.capabilities?.routing !== false;
+}
 
 function getLiveStateRef(stateMap: any, poolAddress: any) {
   const stateRef = stateMap.get(poolAddress);
@@ -86,7 +89,7 @@ function createSwapEdge({
 
 function getRoutablePoolContext(pool: any, stateMap: any) {
   if (pool.status !== "active") return null;
-  if (ROUTING_DISABLED_PROTOCOLS.has(pool.protocol)) return null;
+  if (!protocolSupportsRouting(pool.protocol)) return null;
 
   const tokens = getPoolTokens(pool);
   if (!tokens || tokens.length < 2 || hasZeroAddressToken(tokens)) return null;

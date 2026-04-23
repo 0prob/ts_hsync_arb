@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
-import { getSqrtRatioAtTick } from "../src/math/tick_math.ts";
+import { getSqrtRatioAtTick, getTickAtSqrtRatio } from "../src/math/tick_math.ts";
 import { simulateV3Swap } from "../src/math/uniswap_v3.ts";
 import { mergeStateIntoCache } from "../src/state/cache_utils.ts";
+import { validatePoolState } from "../src/state/normalizer.ts";
 import { buildGraph } from "../src/routing/graph.ts";
 import { edgeSpotLogWeight } from "../src/routing/finder.ts";
 
@@ -43,6 +44,69 @@ import { edgeSpotLogWeight } from "../src/routing/finder.ts";
     false,
     "v3 simulation should not mutate shared state objects with cached tick data",
   );
+}
+
+{
+  const state: any = {
+    initialized: true,
+    sqrtPriceX96: getSqrtRatioAtTick(0),
+    tick: 0,
+    tickVersion: 0,
+    liquidity: 1_000_000n,
+    fee: 3000,
+    ticks: new Map([
+      [60, { liquidityGross: 500_000n, liquidityNet: 500_000n }],
+    ]),
+  };
+
+  const before = simulateV3Swap(state, 100_000n, false);
+  state.ticks.set(1, { liquidityGross: 800_000n, liquidityNet: 800_000n });
+  state.tickVersion += 1;
+  const after = simulateV3Swap(state, 100_000n, false);
+
+  assert.notEqual(
+    before.amountOut,
+    after.amountOut,
+    "v3 simulation should invalidate cached sorted ticks when the tick map changes in place",
+  );
+}
+
+{
+  const noCrossState: any = {
+    initialized: true,
+    sqrtPriceX96: getSqrtRatioAtTick(0),
+    tick: 0,
+    liquidity: 10_000_000n,
+    fee: 3000,
+    ticks: new Map(),
+  };
+
+  const result = simulateV3Swap(noCrossState, 1_000n, false);
+  assert.equal(
+    result.tickAfter,
+    getTickAtSqrtRatio(result.sqrtPriceX96After),
+    "v3 simulation should derive tickAfter from the post-swap price when no initialized tick is crossed",
+  );
+}
+
+{
+  const verdict = validatePoolState({
+    poolId: "0xpool",
+    protocol: "UNISWAP_V3",
+    tokens: ["0xt0", "0xt1"],
+    fee: 3000n,
+    sqrtPriceX96: getSqrtRatioAtTick(0),
+    tick: 0,
+    liquidity: 1_000_000n,
+    tickSpacing: 60,
+    ticks: new Map([
+      [1, { liquidityGross: 100n, liquidityNet: 100n }],
+    ]),
+    initialized: true,
+    timestamp: Date.now(),
+  });
+
+  assert.equal(verdict.valid, false, "v3 validator should reject misaligned initialized ticks");
 }
 
 {

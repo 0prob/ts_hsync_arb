@@ -74,12 +74,25 @@ const PIVOT_TOKENS = [
   TOKENS.WETH,
 ];
 
+type PoolQuote = {
+  base: string;
+  quote: string;
+  scaledRate: bigint;
+  updatedAt: number;
+};
+
+type PairQuote = {
+  scaledRate: bigint;
+  updatedAt: number;
+};
+
 export class PriceOracle {
   private _cache: Map<string, any>;
   private _registry: any;
   private _updatedAt: number;
   private _updatedAtByToken: Map<string, number>;
   private _poolMeta: Map<string, any>;
+  private _poolQuotes: Map<string, PoolQuote[]>;
   private _rates: Map<string, bigint>;
 
   constructor(stateCache: Map<string, any>, registry: any) {
@@ -88,6 +101,7 @@ export class PriceOracle {
     this._updatedAt = 0;
     this._updatedAtByToken = new Map();
     this._poolMeta = new Map();
+    this._poolQuotes = new Map();
     this._rates = new Map();
     this._setDefaults();
   }
@@ -117,27 +131,38 @@ export class PriceOracle {
     const now = Date.now();
     let updatedCount = 0;
     let inspectedCount = 0;
-    const pairQuotes = new Map<string, Map<string, bigint>>();
+    const pairQuotes = new Map<string, Map<string, PairQuote>>();
+    const nextRates = new Map<string, bigint>();
+    const nextUpdatedAtByToken = new Map<string, number>();
 
     // WMATIC is always 1:1 with MATIC (rate = 1)
-    this._rates.set(TOKENS.WMATIC, 1n);
-    this._updatedAtByToken.set(TOKENS.WMATIC, now);
+    nextRates.set(TOKENS.WMATIC, 1n);
+    nextUpdatedAtByToken.set(TOKENS.WMATIC, now);
 
     const entries = changedPools
       ? [...changedPools].map((addr) => [addr.toLowerCase(), this._cache.get(addr.toLowerCase())] as const)
       : this._cache.entries();
 
     for (const [addr, state] of entries) {
-      if (!state) continue;
+      if (!state) {
+        this._poolQuotes.delete(addr);
+        continue;
+      }
       let pool = this._poolMeta.get(addr);
       if (!pool) {
         pool = this._registry.getPoolMeta(addr);
         if (pool) this._poolMeta.set(addr, pool);
       }
-      if (!pool) continue;
+      if (!pool) {
+        this._poolQuotes.delete(addr);
+        continue;
+      }
 
       const tokens = getPoolTokens(pool);
-      if (!tokens || tokens.length !== 2) continue;
+      if (!tokens || tokens.length !== 2) {
+        this._poolQuotes.delete(addr);
+        continue;
+      }
       inspectedCount++;
 
       const t0 = tokens[0].toLowerCase();
@@ -146,14 +171,17 @@ export class PriceOracle {
       const isWmatic1 = t1 === TOKENS.WMATIC;
       const quote01 = this._deriveQuoteRateScaled(state, true);
       const quote10 = this._deriveQuoteRateScaled(state, false);
-      this._storePairQuote(pairQuotes, t0, t1, quote01);
-      this._storePairQuote(pairQuotes, t1, t0, quote10);
+      const stateUpdatedAt = this._getStateUpdatedAt(state, now);
+      this._poolQuotes.set(addr, [
+        { base: t0, quote: t1, scaledRate: quote01, updatedAt: stateUpdatedAt },
+        { base: t1, quote: t0, scaledRate: quote10, updatedAt: stateUpdatedAt },
+      ]);
 
       if (isWmatic0) {
         const rate = this._scaledRateToWei(quote10);
         if (rate > 0n) {
-          this._rates.set(t1, rate);
-          this._updatedAtByToken.set(t1, now);
+          nextRates.set(t1, rate);
+          nextUpdatedAtByToken.set(t1, stateUpdatedAt);
           updatedCount++;
         }
         continue;
@@ -161,34 +189,63 @@ export class PriceOracle {
       if (isWmatic1) {
         const rate = this._scaledRateToWei(quote01);
         if (rate > 0n) {
-          this._rates.set(t0, rate);
-          this._updatedAtByToken.set(t0, now);
+          nextRates.set(t0, rate);
+          nextUpdatedAtByToken.set(t0, stateUpdatedAt);
           updatedCount++;
         }
+      }
+    }
+
+    for (const quotes of this._poolQuotes.values()) {
+      for (const quote of quotes) {
+        this._storePairQuote(pairQuotes, quote);
       }
     }
 
     for (const [token, quotes] of pairQuotes.entries()) {
       if (token === TOKENS.WMATIC) continue;
 
+      let bestDerived = 0n;
+      let bestUpdatedAt = 0;
       for (const pivot of PIVOT_TOKENS) {
-        const quoteToPivot = quotes.get(pivot) ?? 0n;
-        const pivotRate = this._rates.get(pivot) ?? 0n;
-        if (quoteToPivot <= 0n || pivotRate <= 0n) continue;
+        const quoteToPivot = quotes.get(pivot);
+        const pivotRate = nextRates.get(pivot) ?? this._rates.get(pivot) ?? 0n;
+        const pivotUpdatedAt = nextUpdatedAtByToken.get(pivot) ?? this._updatedAtByToken.get(pivot) ?? 0;
+        if (!quoteToPivot || quoteToPivot.scaledRate <= 0n || pivotRate <= 0n || pivotUpdatedAt <= 0) continue;
 
-        const derived = this._scaledRateToWei((quoteToPivot * pivotRate) / RATE_SCALE);
-        if (derived > 0n) {
-          this._rates.set(token, derived);
-          this._updatedAtByToken.set(token, now);
-          updatedCount++;
-          break;
+        const derived = this._pivotQuoteToWei(quoteToPivot.scaledRate, pivotRate);
+        if (derived <= 0n) continue;
+
+        const derivedUpdatedAt = Math.min(quoteToPivot.updatedAt, pivotUpdatedAt);
+        if (
+          derivedUpdatedAt > bestUpdatedAt ||
+          (derivedUpdatedAt === bestUpdatedAt && (bestDerived === 0n || derived < bestDerived))
+        ) {
+          bestDerived = derived;
+          bestUpdatedAt = derivedUpdatedAt;
         }
+      }
+
+      if (bestDerived > 0n && bestUpdatedAt > 0) {
+        nextRates.set(token, bestDerived);
+        nextUpdatedAtByToken.set(token, bestUpdatedAt);
+        updatedCount++;
       }
     }
 
-    if (updatedCount > 0 || !changedPools || inspectedCount > 0) {
-      this._updatedAt = now;
+    for (const [token, rate] of this._rates.entries()) {
+      if (nextRates.has(token) || rate <= 0n) continue;
+      nextRates.set(token, rate);
     }
+    for (const [token, updatedAt] of this._updatedAtByToken.entries()) {
+      if (nextUpdatedAtByToken.has(token) || updatedAt <= 0) continue;
+      nextUpdatedAtByToken.set(token, updatedAt);
+    }
+
+    this._rates = nextRates;
+    this._updatedAtByToken = nextUpdatedAtByToken;
+
+    this._updatedAt = this._maxUpdatedAt(nextUpdatedAtByToken, now, updatedCount > 0 || !changedPools || inspectedCount > 0);
     if (updatedCount > 0) {
       logger.debug(`[price_oracle] Updated ${updatedCount} rates from state cache`);
     }
@@ -291,15 +348,22 @@ export class PriceOracle {
    * @param {number}  _otherDec    Decimals of the other token (unused — for docs)
    * @returns {bigint}  Rate or 0n if not derivable
    */
-  _storePairQuote(pairQuotes: Map<string, Map<string, bigint>>, base: string, quote: string, scaledRate: bigint) {
-    if (scaledRate <= 0n) return;
-    const baseKey = base.toLowerCase();
-    const quoteKey = quote.toLowerCase();
+  _storePairQuote(pairQuotes: Map<string, Map<string, PairQuote>>, quote: PoolQuote) {
+    if (quote.scaledRate <= 0n || quote.updatedAt <= 0) return;
+    const baseKey = quote.base.toLowerCase();
+    const quoteKey = quote.quote.toLowerCase();
     if (!pairQuotes.has(baseKey)) pairQuotes.set(baseKey, new Map());
     const quotes = pairQuotes.get(baseKey)!;
-    const existing = quotes.get(quoteKey) ?? 0n;
-    if (existing === 0n || scaledRate < existing) {
-      quotes.set(quoteKey, scaledRate);
+    const existing = quotes.get(quoteKey);
+    if (
+      !existing ||
+      quote.updatedAt > existing.updatedAt ||
+      (quote.updatedAt === existing.updatedAt && quote.scaledRate < existing.scaledRate)
+    ) {
+      quotes.set(quoteKey, {
+        scaledRate: quote.scaledRate,
+        updatedAt: quote.updatedAt,
+      });
     }
   }
 
@@ -307,6 +371,26 @@ export class PriceOracle {
     if (rateScaled <= 0n) return 0n;
     const floored = rateScaled / RATE_SCALE;
     return floored > 0n ? floored : 1n;
+  }
+
+  _pivotQuoteToWei(quoteToPivotScaled: bigint, pivotRateWei: bigint) {
+    if (quoteToPivotScaled <= 0n || pivotRateWei <= 0n) return 0n;
+    const floored = (quoteToPivotScaled * pivotRateWei) / RATE_SCALE;
+    return floored > 0n ? floored : 1n;
+  }
+
+  _getStateUpdatedAt(state: PoolStateLike & { timestamp?: number }, fallbackNow: number) {
+    const ts = Number(state?.timestamp);
+    return Number.isFinite(ts) && ts > 0 ? ts : fallbackNow;
+  }
+
+  _maxUpdatedAt(updatedAtByToken: Map<string, number>, fallbackNow: number, touched: boolean) {
+    let maxUpdatedAt = 0;
+    for (const updatedAt of updatedAtByToken.values()) {
+      if (updatedAt > maxUpdatedAt) maxUpdatedAt = updatedAt;
+    }
+    if (maxUpdatedAt > 0) return maxUpdatedAt;
+    return touched ? fallbackNow : this._updatedAt;
   }
 
   _deriveQuoteRateScaled(state: PoolStateLike, token0AsBase: boolean) {

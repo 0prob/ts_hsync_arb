@@ -7,6 +7,10 @@ interface IERC20Minimal {
     function approve(address spender, uint256 amount) external returns (bool);
 }
 
+interface IERC20AllowanceMinimal is IERC20Minimal {
+    function allowance(address owner, address spender) external view returns (uint256);
+}
+
 interface IFlashLoanRecipient {
     function receiveFlashLoan(
         IERC20Minimal[] memory tokens,
@@ -73,6 +77,7 @@ contract ArbExecutor is IFlashLoanRecipient {
     error DeadlineExpired();
     error EmptyRoute();
     error TooManyCalls();
+    error FlashLoanRequired();
     error InvalidRouteHash();
     error FlashLoanOnly();
     error InvalidFlashLoanContext();
@@ -153,9 +158,15 @@ contract ArbExecutor is IFlashLoanRecipient {
     }
 
     function preApprove(address token, address spender) external onlyAuthorized {
-        bool ok = IERC20Minimal(token).approve(spender, type(uint256).max);
-        if (!ok) revert ApproveFailed(token, spender);
+        _safeApproveMaxIfNeeded(token, spender, type(uint256).max);
         emit PreApproved(token, spender);
+    }
+
+    function approveIfNeeded(address token, address spender, uint256 amount) external {
+        if (msg.sender != address(this) && msg.sender != owner && !operators[msg.sender]) {
+            revert Unauthorized();
+        }
+        _safeApproveMaxIfNeeded(token, spender, amount);
     }
 
     function rescueToken(address token, address to, uint256 amount) external onlyOwner {
@@ -164,19 +175,16 @@ contract ArbExecutor is IFlashLoanRecipient {
     }
 
     function rescueNative(address payable to, uint256 amount) external onlyOwner {
-        (bool ok, ) = to.call{value: amount}("");
+        (bool ok,) = to.call{value: amount}("");
         if (!ok) revert TransferFailed(address(0), to, amount);
         emit NativeRescued(to, amount);
     }
 
-    function executeArb(
-        address flashToken,
-        uint256 flashAmount,
-        FlashParams calldata params
-    ) external onlyAuthorized {
+    function executeArb(address flashToken, uint256 flashAmount, FlashParams calldata params) external onlyAuthorized {
         if (block.timestamp > params.deadline) revert DeadlineExpired();
         if (params.calls.length == 0) revert EmptyRoute();
         if (params.calls.length > MAX_CALLS) revert TooManyCalls();
+        if (flashAmount == 0) revert FlashLoanRequired();
 
         bytes32 routeHash = keccak256(abi.encode(params.calls));
         if (routeHash != params.routeHash) revert InvalidRouteHash();
@@ -189,31 +197,18 @@ contract ArbExecutor is IFlashLoanRecipient {
         _activeMinProfit = params.minProfit;
         _activeInitialProfitBalance = initialProfitBalance;
 
-        if (flashAmount == 0) {
-            _phase = PHASE_CALLBACK;
-            _executeCalls(params.calls);
-            _phase = PHASE_IDLE;
-            _assertProfit();
-        } else {
-            IERC20Minimal[] memory tokens = new IERC20Minimal[](1);
-            tokens[0] = IERC20Minimal(flashToken);
-            uint256[] memory amounts = new uint256[](1);
-            amounts[0] = flashAmount;
-            IBalancerVault(balancerVault).flashLoan(this, tokens, amounts, abi.encode(params));
-        }
+        IERC20Minimal[] memory tokens = new IERC20Minimal[](1);
+        tokens[0] = IERC20Minimal(flashToken);
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = flashAmount;
+        IBalancerVault(balancerVault).flashLoan(this, tokens, amounts, abi.encode(params));
 
         uint256 finalProfitBalance = IERC20Minimal(params.profitToken).balanceOf(address(this));
         uint256 profitAmount = finalProfitBalance - initialProfitBalance;
 
         _clearExecutionContext();
 
-        emit ArbitrageExecuted(
-            msg.sender,
-            params.profitToken,
-            profitAmount,
-            routeHash,
-            balancerVault
-        );
+        emit ArbitrageExecuted(msg.sender, params.profitToken, profitAmount, routeHash, balancerVault);
     }
 
     function receiveFlashLoan(
@@ -235,7 +230,7 @@ contract ArbExecutor is IFlashLoanRecipient {
         _executeCalls(params.calls);
 
         uint256 len = tokens.length;
-        for (uint256 i = 0; i < len; ) {
+        for (uint256 i = 0; i < len;) {
             _safeTransfer(address(tokens[i]), balancerVault, amounts[i] + feeAmounts[i]);
             unchecked {
                 ++i;
@@ -246,36 +241,21 @@ contract ArbExecutor is IFlashLoanRecipient {
         _assertProfit();
     }
 
-    function uniswapV3SwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) external {
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
         _handlePoolSwapCallback(PROTOCOL_UNISWAP_V3, amount0Delta, amount1Delta, data);
     }
 
-    function algebraSwapCallback(
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) external {
+    function algebraSwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
         _handlePoolSwapCallback(PROTOCOL_QUICKSWAP_V3, amount0Delta, amount1Delta, data);
     }
 
-    function swapCallback(
-        int256 deltaQty0,
-        int256 deltaQty1,
-        bytes calldata data
-    ) external {
+    function swapCallback(int256 deltaQty0, int256 deltaQty1, bytes calldata data) external {
         _handlePoolSwapCallback(PROTOCOL_KYBER_ELASTIC, deltaQty0, deltaQty1, data);
     }
 
-    function _handlePoolSwapCallback(
-        uint8 protocolId,
-        int256 amount0Delta,
-        int256 amount1Delta,
-        bytes calldata data
-    ) internal {
+    function _handlePoolSwapCallback(uint8 protocolId, int256 amount0Delta, int256 amount1Delta, bytes calldata data)
+        internal
+    {
         if (_phase != PHASE_CALLBACK) revert CallbackOnly();
 
         CallbackData memory callbackData = abi.decode(data, (CallbackData));
@@ -295,38 +275,28 @@ contract ArbExecutor is IFlashLoanRecipient {
 
     function _resolveExpectedPool(CallbackData memory callbackData) internal view returns (address) {
         if (callbackData.protocolId == PROTOCOL_UNISWAP_V3) {
-            return IUniswapV3FactoryLike(uniswapV3Factory).getPool(
-                callbackData.token0,
-                callbackData.token1,
-                callbackData.fee
-            );
+            return
+                IUniswapV3FactoryLike(uniswapV3Factory)
+                    .getPool(callbackData.token0, callbackData.token1, callbackData.fee);
         }
         if (callbackData.protocolId == PROTOCOL_SUSHISWAP_V3) {
-            return IUniswapV3FactoryLike(sushiV3Factory).getPool(
-                callbackData.token0,
-                callbackData.token1,
-                callbackData.fee
-            );
+            return
+                IUniswapV3FactoryLike(sushiV3Factory)
+                    .getPool(callbackData.token0, callbackData.token1, callbackData.fee);
         }
         if (callbackData.protocolId == PROTOCOL_QUICKSWAP_V3) {
-            return IAlgebraFactoryLike(quickswapV3Factory).poolByPair(
-                callbackData.token0,
-                callbackData.token1
-            );
+            return IAlgebraFactoryLike(quickswapV3Factory).poolByPair(callbackData.token0, callbackData.token1);
         }
         if (callbackData.protocolId == PROTOCOL_KYBER_ELASTIC) {
-            return IKyberElasticFactoryLike(kyberElasticFactory).getPool(
-                callbackData.token0,
-                callbackData.token1,
-                callbackData.fee
-            );
+            return IKyberElasticFactoryLike(kyberElasticFactory)
+                .getPool(callbackData.token0, callbackData.token1, callbackData.fee);
         }
         revert UnsupportedProtocol(callbackData.protocolId);
     }
 
     function _executeCalls(Call[] memory calls) internal {
         uint256 len = calls.length;
-        for (uint256 i = 0; i < len; ) {
+        for (uint256 i = 0; i < len;) {
             Call memory call_ = calls[i];
             (bool ok, bytes memory result) = call_.target.call{value: call_.value}(call_.data);
             if (!ok) revert ExternalCallFailed(i, call_.target, result);
@@ -353,11 +323,33 @@ contract ArbExecutor is IFlashLoanRecipient {
     }
 
     function _safeTransfer(address token, address to, uint256 amount) internal {
-        (bool ok, bytes memory result) = token.call(
-            abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount)
-        );
+        (bool ok, bytes memory result) = token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
         if (!ok || (result.length != 0 && !abi.decode(result, (bool)))) {
             revert TransferFailed(token, to, amount);
         }
+    }
+
+    function _safeAllowance(address token, address owner_, address spender) internal view returns (uint256) {
+        (bool ok, bytes memory result) =
+            token.staticcall(abi.encodeWithSelector(IERC20AllowanceMinimal.allowance.selector, owner_, spender));
+        if (!ok || result.length < 32) revert ApproveFailed(token, spender);
+        return abi.decode(result, (uint256));
+    }
+
+    function _safeApprove(address token, address spender, uint256 amount) internal {
+        (bool ok, bytes memory result) =
+            token.call(abi.encodeWithSelector(IERC20Minimal.approve.selector, spender, amount));
+        if (!ok || (result.length != 0 && !abi.decode(result, (bool)))) {
+            revert ApproveFailed(token, spender);
+        }
+    }
+
+    function _safeApproveMaxIfNeeded(address token, address spender, uint256 amount) internal {
+        if (_safeAllowance(token, address(this), spender) >= amount) return;
+
+        if (_safeAllowance(token, address(this), spender) != 0) {
+            _safeApprove(token, spender, 0);
+        }
+        _safeApprove(token, spender, type(uint256).max);
     }
 }

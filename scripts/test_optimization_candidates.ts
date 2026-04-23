@@ -104,4 +104,17 @@ assert(
   "profit-based selection should still preserve the top raw-profit candidate",
 );
 
+const reversedSelected = selectOptimizationCandidates([...candidates].reverse(), 1, {
+  gasPriceWei,
+  getTokenToMaticRate() {
+    return 0n;
+  },
+});
+assert.equal(reversedSelected.length, 1, "selector should still respect the limit when rates are unavailable");
+assert.equal(
+  reversedSelected[0].id,
+  candidates[0].id,
+  "profit bucket should be sorted by profit instead of depending on incoming candidate order",
+);
+
 console.log("Optimization candidate checks passed.");

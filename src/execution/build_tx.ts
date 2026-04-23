@@ -19,6 +19,7 @@ import { encodeRoute, encodeExecuteArb, buildFlashParams } from "./calldata.ts";
 import { BALANCER_VAULT } from "./addresses.ts";
 import { gasEstimateCacheKey, recommendGasParams } from "./gas.ts";
 import { routeExecutionCacheKey } from "../routing/route_identity.ts";
+import { getPathHopCount } from "../routing/path_hops.ts";
 
 // ─── Defaults ─────────────────────────────────────────────────
 
@@ -55,6 +56,21 @@ function assertValidRouteForExecution(route: any) {
   if (!Array.isArray(route.result.poolPath) || route.result.poolPath.length !== route.path.edges.length) {
     throw new Error("buildArbTx: poolPath length mismatch");
   }
+  if (route.result.tokenPath[0] !== route.path.startToken) {
+    throw new Error("buildArbTx: tokenPath must start with path.startToken");
+  }
+  for (let i = 0; i < route.path.edges.length; i++) {
+    const edge = route.path.edges[i];
+    if (route.result.tokenPath[i] !== edge.tokenIn) {
+      throw new Error(`buildArbTx: tokenPath input mismatch at hop ${i}`);
+    }
+    if (route.result.tokenPath[i + 1] !== edge.tokenOut) {
+      throw new Error(`buildArbTx: tokenPath output mismatch at hop ${i}`);
+    }
+    if (route.result.poolPath[i] !== edge.poolAddress) {
+      throw new Error(`buildArbTx: poolPath mismatch at hop ${i}`);
+    }
+  }
 
   for (const [index, edge] of route.path.edges.entries()) {
     if (!edge?.protocol) throw new Error(`buildArbTx: edge ${index} missing protocol`);
@@ -81,7 +97,7 @@ function resolveFlashLoan(route: any) {
 export function gasEstimateCacheKeyForRoute(route: any) {
   const startToken = route?.path?.startToken;
   const edges = route?.path?.edges;
-  const hopCount = route?.path?.hopCount ?? edges?.length;
+  const hopCount = getPathHopCount(route?.path);
 
   if (!startToken) {
     throw new Error("gasEstimateCacheKeyForRoute: path.startToken required");
@@ -90,7 +106,7 @@ export function gasEstimateCacheKeyForRoute(route: any) {
     throw new Error("gasEstimateCacheKeyForRoute: path.edges must be non-empty");
   }
   if (!Number.isFinite(hopCount) || hopCount <= 0) {
-    throw new Error("gasEstimateCacheKeyForRoute: path.hopCount must be > 0");
+    throw new Error("gasEstimateCacheKeyForRoute: path hop count must be > 0");
   }
 
   return routeExecutionCacheKey(startToken, hopCount, edges);

@@ -21,13 +21,13 @@
 import { encodeFunctionData, getAddress, keccak256, encodeAbiParameters } from "viem";
 import {
   ERC20_TRANSFER_ABI,
-  ERC20_APPROVE_ABI,
   V2_PAIR_SWAP_ABI,
   V3_POOL_SWAP_ABI,
   CURVE_EXCHANGE_INT128_ABI,
   CURVE_EXCHANGE_UINT256_ABI,
   BALANCER_VAULT_SWAP_ABI,
   EXECUTOR_ABI,
+  EXECUTOR_APPROVE_IF_NEEDED_ABI,
 } from "./abi_fragments.ts";
 import {
   BALANCER_VAULT,
@@ -38,6 +38,17 @@ import {
   V3_SWAP_PROTOCOLS,
 } from "./addresses.ts";
 import { MIN_SQRT_RATIO, MAX_SQRT_RATIO } from "../math/tick_math.ts";
+
+const CALL_STRUCT_ARRAY_ABI = [
+  {
+    type: "tuple[]",
+    components: [
+      { name: "target", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "data", type: "bytes" },
+    ],
+  },
+] as const;
 
 // ─── Per-hop encoders ─────────────────────────────────────────
 
@@ -65,6 +76,23 @@ function poolTokensFromHop(hop: any) {
   return hop.zeroForOne
     ? { token0: getAddress(hop.tokenIn), token1: getAddress(hop.tokenOut) }
     : { token0: getAddress(hop.tokenOut), token1: getAddress(hop.tokenIn) };
+}
+
+function encodeDynamicApprovalCall(
+  executor: string,
+  token: string,
+  spender: string,
+  amount: bigint,
+) {
+  return {
+    target: getAddress(executor),
+    value: 0n,
+    data: encodeFunctionData({
+      abi: EXECUTOR_APPROVE_IF_NEEDED_ABI,
+      functionName: "approveIfNeeded",
+      args: [getAddress(token), getAddress(spender), amount],
+    }),
+  };
 }
 
 /**
@@ -187,7 +215,7 @@ export function encodeV3Hop(hop: any, recipient: any, options: any = {}) {
 /**
  * Encode a Curve pool swap via exchange().
  */
-export function encodeCurveHop(hop: any, options: any = {}) {
+export function encodeCurveHop(hop: any, executor: any, options: any = {}) {
   const { slippageBps = 50 } = options;
   const pool     = getAddress(hop.poolAddress);
   const tokenIn  = getAddress(hop.tokenIn);
@@ -197,16 +225,8 @@ export function encodeCurveHop(hop: any, options: any = {}) {
 
   const calls = [];
 
-  // Call 1: Approve pool to spend tokenIn (exact amount)
-  calls.push({
-    target: tokenIn,
-    value: 0n,
-    data: encodeFunctionData({
-      abi: ERC20_APPROVE_ABI,
-      functionName: "approve",
-      args: [pool, hop.amountIn],
-    }),
-  });
+  // Call 1: Ensure the pool can pull tokenIn from the executor.
+  calls.push(encodeDynamicApprovalCall(executor, tokenIn, pool, hop.amountIn));
 
   // Call 2: Execute the exchange
   const abi = hop.isCrypto ? CURVE_EXCHANGE_UINT256_ABI : CURVE_EXCHANGE_INT128_ABI;
@@ -249,16 +269,8 @@ export function encodeBalancerHop(hop: any, executor: any, options: any = {}) {
 
   const calls = [];
 
-  // Call 1: Approve Balancer Vault to pull tokenIn
-  calls.push({
-    target: tokenIn,
-    value: 0n,
-    data: encodeFunctionData({
-      abi: ERC20_APPROVE_ABI,
-      functionName: "approve",
-      args: [vault, hop.amountIn],
-    }),
-  });
+  // Call 1: Ensure the Vault can pull tokenIn from the executor.
+  calls.push(encodeDynamicApprovalCall(exec, tokenIn, vault, hop.amountIn));
 
   // Call 2: Vault.swap
   calls.push({
@@ -331,7 +343,7 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
     } else if (V3_SWAP_PROTOCOLS.has(proto)) {
       calls.push(...encodeV3Hop(hop, executor, options));
     } else if (CURVE_STABLE_PROTOCOLS.has(proto) || CURVE_CRYPTO_PROTOCOLS.has(proto)) {
-      calls.push(...encodeCurveHop(hop, options));
+      calls.push(...encodeCurveHop(hop, executor, options));
     } else if (BALANCER_PROTOCOLS.has(proto)) {
       calls.push(...encodeBalancerHop(hop, executor, options));
     } else {
@@ -347,22 +359,13 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
 /**
  * Compute the routeHash for a Call[] array.
  *
- * Must match the Solidity: keccak256(abi.encode(calls))
+ * Must match Solidity exactly: keccak256(abi.encode(calls)) where
+ * `calls` is `Call[]` and `Call` is `(address target,uint256 value,bytes data)`.
  */
 export function computeRouteHash(calls: any) {
-  const encoded = encodeAbiParameters(
-    [
-      {
-        type: "tuple[]",
-        components: [
-          { name: "target", type: "address" },
-          { name: "value", type: "uint256" },
-          { name: "data", type: "bytes" },
-        ],
-      },
-    ],
-    [calls.map((c: any) => ({ target: c.target, value: c.value, data: c.data }))]
-  );
+  const encoded = encodeAbiParameters(CALL_STRUCT_ARRAY_ABI, [
+    calls.map((c: any) => ({ target: c.target, value: c.value, data: c.data })),
+  ]);
 
   return keccak256(encoded);
 }

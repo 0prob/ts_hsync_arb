@@ -8,6 +8,12 @@ type DecodeResult = {
   metadata: Record<string, unknown>;
 };
 
+export type ProtocolCapabilities = {
+  discovery: boolean;
+  routing: boolean;
+  execution: boolean;
+};
+
 type ProtocolDefinition = {
   name: string;
   address: string;
@@ -15,12 +21,20 @@ type ProtocolDefinition = {
   decode?: (decoded: any, rawLog?: any) => DecodeResult;
   enrichTokens?: (poolMeta: any) => Promise<string[]>;
   discover?: (context: any) => Promise<any>;
+  capabilities?: ProtocolCapabilities;
 };
+
+export const FULLY_SUPPORTED_CAPABILITIES: ProtocolCapabilities = Object.freeze({
+  discovery: true,
+  routing: true,
+  execution: true,
+});
 
 export function createPairCreatedProtocol(name: string, address: string): ProtocolDefinition {
   return {
     name,
     address,
+    capabilities: FULLY_SUPPORTED_CAPABILITIES,
     signature: "event PairCreated(address indexed token0, address indexed token1, address pair, uint256)",
     decode(decoded: any) {
       return {
@@ -38,11 +52,13 @@ export function createPairCreatedProtocol(name: string, address: string): Protoc
 export function createUniV3PoolProtocol(
   name: string,
   address: string,
-  metadata: Record<string, unknown> = EMPTY_METADATA
+  metadata: Record<string, unknown> = EMPTY_METADATA,
+  capabilities: ProtocolCapabilities = FULLY_SUPPORTED_CAPABILITIES,
 ): ProtocolDefinition {
   return {
     name,
     address,
+    capabilities,
     signature:
       "event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)",
     decode(decoded: any) {
@@ -68,8 +84,11 @@ export function createRpcTokenProtocol({
   signature,
   decode,
   enrichTokens,
-}: Required<Pick<ProtocolDefinition, "name" | "address" | "signature" | "decode" | "enrichTokens">>): ProtocolDefinition {
-  return { name, address, signature, decode, enrichTokens };
+  capabilities = FULLY_SUPPORTED_CAPABILITIES,
+}: Required<Pick<ProtocolDefinition, "name" | "address" | "signature" | "decode" | "enrichTokens">> & {
+  capabilities?: ProtocolCapabilities;
+}): ProtocolDefinition {
+  return { name, address, signature, decode, enrichTokens, capabilities };
 }
 
 type CurveListedFactoryOptions = {
@@ -90,6 +109,7 @@ export function createCurveListedFactoryProtocol({
   return {
     name,
     address,
+    capabilities: FULLY_SUPPORTED_CAPABILITIES,
     async discover({ key, registry, chainHeight }: any) {
       return discoverCurveListedFactory({
         protocolKey: key,

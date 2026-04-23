@@ -11,9 +11,9 @@
  *   6. Batch insert into registry + update checkpoint from nextBlock
  */
 
-import { encodeEventTopics, parseAbiItem } from "viem";
 import { client, Decoder, LogField } from "../hypersync/client.ts";
 import { fetchAllLogs } from "../hypersync/paginate.ts";
+import { topic0sForSignatures } from "../hypersync/topics.ts";
 import {
   buildHyperSyncLogQuery,
   DEFAULT_HYPERSYNC_LOG_FIELDS,
@@ -30,14 +30,15 @@ import { buildDiscoveredPoolBatch } from "./helpers.ts";
 type DiscoveryProtocol = {
   name: string;
   address: string;
-  signature: string;
+  signature?: string;
+  signatures?: string[];
   decode: (decoded: any, rawLog: any) => any;
   enrichTokens?: (pool: any) => Promise<string[]>;
   discover?: (context: any) => Promise<any>;
 };
 
 const discoveryQuerySpecCache = new Map<string, {
-  topic0: string;
+  topic0s: string[];
   decoder: InstanceType<typeof Decoder>;
 }>();
 const discoveryLogger: any = logger.child({ component: "discovery" });
@@ -81,15 +82,19 @@ function decodeDiscoveryLogs(protocol: any, logs: any[], decodedLogs: any[]) {
 }
 
 function getDiscoveryQuerySpec(protocol: DiscoveryProtocol) {
-  const cacheKey = `${protocol.address.toLowerCase()}:${protocol.signature}`;
+  const signatures = protocol.signatures?.length
+    ? protocol.signatures
+    : protocol.signature
+      ? [protocol.signature]
+      : [];
+  const cacheKey = `${protocol.address.toLowerCase()}:${signatures.join("|")}`;
   const cached = discoveryQuerySpecCache.get(cacheKey);
   if (cached) return cached;
 
-  const abiItem = parseAbiItem(protocol.signature) as any;
-  const topics = encodeEventTopics({ abi: [abiItem], eventName: abiItem.name });
+  const topic0s = topic0sForSignatures(signatures);
   const spec = {
-    topic0: topics[0],
-    decoder: Decoder.fromSignatures([protocol.signature]),
+    topic0s,
+    decoder: Decoder.fromSignatures(signatures),
   };
   discoveryQuerySpecCache.set(cacheKey, spec);
   return spec;
@@ -149,14 +154,14 @@ async function discoverProtocol(key: any, protocol: any, registry: any, context:
     "[discovery] Protocol scan starting",
   );
 
-  const { topic0, decoder } = getDiscoveryQuerySpec(protocol);
+  const { topic0s, decoder } = getDiscoveryQuerySpec(protocol);
 
   const query = buildHyperSyncLogQuery({
     fromBlock,
     logs: [
       {
         address: [protocol.address],
-        topics: [[topic0]],
+        topics: [topic0s],
       },
     ],
     logFields: DEFAULT_HYPERSYNC_LOG_FIELDS,
@@ -216,14 +221,14 @@ async function discoverCurveRemovals(registry: any) {
 
   console.log(`\n[Curve PoolRemoved] Scanning from block ${fromBlock}...`);
 
-  const { topic0, decoder } = getDiscoveryQuerySpec(CURVE_POOL_REMOVED as DiscoveryProtocol);
+  const { topic0s, decoder } = getDiscoveryQuerySpec(CURVE_POOL_REMOVED as DiscoveryProtocol);
 
   const query = buildHyperSyncLogQuery({
     fromBlock,
     logs: [
       {
         address: [CURVE_POOL_REMOVED.address],
-        topics: [[topic0]],
+        topics: [topic0s],
       },
     ],
     logFields: [

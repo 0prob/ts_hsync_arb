@@ -345,6 +345,33 @@ export const MAX_SYNC_WARMUP_V3_POOLS = _num(
   48
 );
 
+/**
+ * Number of bitmap words on each side of the active tick to hydrate for
+ * staged V3 admission when full tick hydration would be too expensive.
+ */
+export const V3_NEARBY_WORD_RADIUS = _num(
+  "V3_NEARBY_WORD_RADIUS",
+  "V3_NEARBY_WORD_RADIUS",
+  2
+);
+
+/**
+ * Background sweeper budget for active pools that still lack routable state
+ * after startup and have not emitted watcher events yet.
+ */
+export const QUIET_POOL_SWEEP_BATCH_SIZE = _num(
+  "QUIET_POOL_SWEEP_BATCH_SIZE",
+  "QUIET_POOL_SWEEP_BATCH_SIZE",
+  24
+);
+
+/** Minimum delay between quiet-pool sweep passes (ms). */
+export const QUIET_POOL_SWEEP_INTERVAL_MS = _num(
+  "QUIET_POOL_SWEEP_INTERVAL_MS",
+  "QUIET_POOL_SWEEP_INTERVAL_MS",
+  60_000
+);
+
 /** Max age of per-pool state allowed for execution-triggered route revalidation (ms). */
 export const ROUTE_STATE_MAX_AGE_MS = _num(
   "ROUTE_STATE_MAX_AGE_MS",

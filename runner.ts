@@ -87,6 +87,9 @@ import {
   ENRICH_CONCURRENCY,
   MAX_SYNC_WARMUP_POOLS,
   MAX_SYNC_WARMUP_V3_POOLS,
+  V3_NEARBY_WORD_RADIUS,
+  QUIET_POOL_SWEEP_BATCH_SIZE,
+  QUIET_POOL_SWEEP_INTERVAL_MS,
   ROUTE_STATE_MAX_AGE_MS,
   ROUTE_STATE_MAX_SKEW_MS,
   CYCLE_REFRESH_INTERVAL_MS,
@@ -162,6 +165,7 @@ const runtime = createRuntimeContext({
 const { stateCache, routeCache, botState } = runtime;
 
 let _arbActivityWindow: Array<{ ts: number; changedPools: number }> = [];
+let lastQuietPoolSweepAt = 0;
 
 // ─── TUI Setup ─────────────────────────────────────────────────
 
@@ -277,6 +281,20 @@ function getAdaptiveDebounceMs() {
   pruneArbActivityWindow(now);
   const changedPools = _arbActivityWindow.reduce((total, entry) => total + entry.changedPools, 0);
   return changedPools > ARB_BURST_POOL_THRESHOLD ? FAST_ARB_DEBOUNCE_MS : BASE_ARB_DEBOUNCE_MS;
+}
+
+function compareDeferredHydrationPriority(a: PoolRecord, b: PoolRecord) {
+  const aTokens = getPoolTokens(a);
+  const bTokens = getPoolTokens(b);
+  const aHubMatches = aTokens.filter((token) => POLYGON_HUB_TOKENS.has(token)).length;
+  const bHubMatches = bTokens.filter((token) => POLYGON_HUB_TOKENS.has(token)).length;
+  if (aHubMatches !== bHubMatches) return bHubMatches - aHubMatches;
+
+  const aIsV3 = /V3|ELASTIC/.test(a.protocol);
+  const bIsV3 = /V3|ELASTIC/.test(b.protocol);
+  if (aIsV3 !== bIsV3) return aIsV3 ? 1 : -1;
+
+  return a.pool_address.localeCompare(b.pool_address);
 }
 
 function deriveOnChainMinProfit(assessment: AssessmentLike | null | undefined, tokenToMaticRate: bigint) {
@@ -426,6 +444,7 @@ topologyService = createTopologyService({
   maxTotalPaths: MAX_TOTAL_PATHS,
   polygonHubTokens: POLYGON_HUB_TOKENS,
   hub4Tokens: HUB_4_TOKENS,
+  selective4HopTokenLimit: SELECTIVE_4HOP_TOKEN_LIMIT,
   workerCount: WORKER_COUNT,
   workerPool,
   isWorkerPoolInitialized: () => workerPool.initialized,
@@ -463,6 +482,49 @@ async function refreshCycles(force = false) {
     getRateWei,
     clearExecutionRouteQuarantine: (reason) => opportunityEngine?.clearExecutionRouteQuarantine(reason),
   });
+}
+
+async function maybeHydrateQuietPools() {
+  const now = Date.now();
+  if (now - lastQuietPoolSweepAt < QUIET_POOL_SWEEP_INTERVAL_MS) return;
+  lastQuietPoolSweepAt = now;
+
+  const activePools = registry?.getActivePoolsMeta() ?? [];
+  const pending = activePools
+    .filter((pool: PoolRecord) => !validatePoolState(stateCache.get(pool.pool_address.toLowerCase())).valid)
+    .sort(compareDeferredHydrationPriority)
+    .slice(0, QUIET_POOL_SWEEP_BATCH_SIZE);
+
+  if (pending.length === 0) return;
+
+  log(`[runner] Quiet-pool sweep: hydrating ${pending.length} deferred pool(s).`, "info", {
+    event: "quiet_pool_sweep_start",
+    pendingPools: pending.length,
+    batchSize: QUIET_POOL_SWEEP_BATCH_SIZE,
+  });
+
+  const warmupStats = await _fetchAndCacheStates(pending, {
+    v3HydrationMode: "nearby",
+    v3NearWordRadius: V3_NEARBY_WORD_RADIUS,
+  });
+  const hydratedAddrs = new Set<string>(
+    pending
+      .map((pool: PoolRecord) => pool.pool_address.toLowerCase())
+      .filter((addr: string) => validatePoolState(stateCache.get(addr)).valid),
+  );
+  const admitted = topologyService?.admitPools(hydratedAddrs) ?? 0;
+
+  log(`[runner] Quiet-pool sweep complete: ${hydratedAddrs.size}/${pending.length} routable.`, "info", {
+    event: "quiet_pool_sweep_complete",
+    pendingPools: pending.length,
+    routablePools: hydratedAddrs.size,
+    admittedPools: admitted,
+    warmupStats,
+  });
+
+  if (admitted > 0) {
+    await refreshCycles(true);
+  }
 }
 
 opportunityEngine = createOpportunityEngine({
@@ -596,7 +658,10 @@ async function runPass() {
         );
         if (!runtime.isRunning()) return;
         // Fetch live state for newly discovered pools before rebuilding topology
-        await _fetchAndCacheStates(newPools);
+        await _fetchAndCacheStates(newPools, {
+          v3HydrationMode: "nearby",
+          v3NearWordRadius: V3_NEARBY_WORD_RADIUS,
+        });
         if (!runtime.isRunning()) return;
       }
       // Rebuild cycle topology with the new pool set
@@ -611,6 +676,12 @@ async function runPass() {
 
     // Refresh cycles if not yet built
     await refreshCycles();
+    trackBackgroundTask(maybeHydrateQuietPools().catch((err: any) => {
+      log(`Quiet-pool sweep error: ${err?.message ?? err}`, "warn", {
+        event: "quiet_pool_sweep_error",
+        err,
+      });
+    }));
 
     // Update price oracle from live state only when stale; watcher batches do incremental refreshes.
     const priceOracle = runtime.getPriceOracle();

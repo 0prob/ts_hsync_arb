@@ -17,13 +17,38 @@
 import { client } from "./client.ts";
 import { applyHistoricalHyperSyncQueryPolicy } from "./query_policy.ts";
 
-/**
- * Fetch all logs matching `query` from `fromBlock` to the current archive tip.
- *
- * @param {object} query  HyperSync query object (fromBlock, logs, fieldSelection, etc.)
- * @returns {{ logs: object[], archiveHeight: number|null, rollbackGuard: object|null, nextBlock: number|null }}
- */
-export async function fetchAllLogs(query: any) {
+function resolvePaginationTarget(query: Record<string, any>, nextBlock: number, archiveHeight: number | null) {
+  const toBlock = query.toBlock != null ? Number(query.toBlock) : null;
+  if (toBlock != null) return toBlock;
+  if (archiveHeight != null) return archiveHeight;
+  return nextBlock;
+}
+
+export async function fetchAllLogsWithClient(hypersyncClient: { get: (query: any) => Promise<any> }, query: any) {
+  if (!Number.isFinite(Number(query?.fromBlock))) {
+    throw new Error("HyperSync query must include a finite fromBlock.");
+  }
+  if (query?.toBlock != null && !Number.isFinite(Number(query.toBlock))) {
+    throw new Error("HyperSync query toBlock must be finite when provided.");
+  }
+
+  const initialFromBlock = Number(query.fromBlock);
+  const initialToBlock = query?.toBlock != null ? Number(query.toBlock) : null;
+  if (initialToBlock != null && initialToBlock < initialFromBlock) {
+    throw new Error(
+      `HyperSync query has invalid block range: fromBlock ${initialFromBlock} exceeds toBlock ${initialToBlock}.`,
+    );
+  }
+
+  if (initialToBlock != null && initialToBlock === initialFromBlock) {
+    return {
+      logs: [],
+      archiveHeight: null,
+      rollbackGuard: null,
+      nextBlock: initialFromBlock,
+    };
+  }
+
   const allLogs = [];
   let currentQuery = applyHistoricalHyperSyncQueryPolicy(query);
   let archiveHeight = null;
@@ -32,7 +57,8 @@ export async function fetchAllLogs(query: any) {
   let pages = 0;
 
   while (true) {
-    const res = await client.get(currentQuery);
+    const pageFromBlock = Number(currentQuery.fromBlock);
+    const res = await hypersyncClient.get(currentQuery);
     pages++;
 
     if (res.archiveHeight != null) {
@@ -52,8 +78,23 @@ export async function fetchAllLogs(query: any) {
         "HyperSync response did not include a finite nextBlock cursor; cannot paginate safely."
       );
     }
+    const targetEnd = resolvePaginationTarget(currentQuery, nextBlock, archiveHeight);
+    if (nextBlock < pageFromBlock) {
+      throw new Error(
+        `HyperSync nextBlock cursor regressed from ${pageFromBlock} to ${nextBlock}; refusing to paginate.`,
+      );
+    }
+    if (nextBlock === pageFromBlock) {
+      if (targetEnd <= pageFromBlock) {
+        lastNextBlock = nextBlock;
+        break;
+      }
+      throw new Error(
+        `HyperSync nextBlock cursor stalled at ${nextBlock}; refusing to loop forever.`,
+      );
+    }
+
     lastNextBlock = nextBlock;
-    const targetEnd = currentQuery.toBlock ?? archiveHeight ?? nextBlock;
 
     if (nextBlock >= targetEnd) {
       break;
@@ -72,4 +113,14 @@ export async function fetchAllLogs(query: any) {
     rollbackGuard,
     nextBlock: lastNextBlock,
   };
+}
+
+/**
+ * Fetch all logs matching `query` from `fromBlock` to the current archive tip.
+ *
+ * @param {object} query  HyperSync query object (fromBlock, logs, fieldSelection, etc.)
+ * @returns {{ logs: object[], archiveHeight: number|null, rollbackGuard: object|null, nextBlock: number|null }}
+ */
+export async function fetchAllLogs(query: any) {
+  return fetchAllLogsWithClient(client, query);
 }

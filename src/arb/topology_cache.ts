@@ -64,6 +64,16 @@ export function createTopologyCache(maxTotalPaths: number) {
     const seen = new Set<string>();
 
     for (const s of serialised) {
+      const expectedHops = s.poolAddresses.length;
+      if (
+        !Array.isArray(s.tokenIns) ||
+        !Array.isArray(s.tokenOuts) ||
+        s.tokenIns.length !== expectedHops ||
+        s.tokenOuts.length !== expectedHops
+      ) {
+        continue;
+      }
+
       const key = routeIdentityFromSerializedPath(
         s.startToken,
         s.poolAddresses,
@@ -93,7 +103,7 @@ export function createTopologyCache(maxTotalPaths: number) {
         paths.push({
           startToken: s.startToken,
           edges,
-          hopCount: s.hopCount,
+          hopCount: edges.length,
           logWeight: s.logWeight,
           cumulativeFeesBps: s.cumulativeFeesBps,
         });

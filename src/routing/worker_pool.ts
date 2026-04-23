@@ -23,6 +23,7 @@ import { routeIdentityFromEdges, routeIdentityFromSerializedPath } from "./route
 const WORKER_URL = new URL("./persistent_worker.ts", import.meta.url);
 const WORKER_EXEC_ARGV = [...process.execArgv, '--import', 'tsx'];
 const workerLogger: any = logger.child({ component: "worker_pool" });
+const STARTUP_OOM_FAILURE_LIMIT = 3;
 
 type PathLike = {
   startToken: string;
@@ -81,6 +82,9 @@ type WorkerSlot = {
   syncedStateVersions: Map<string, number>;
   syncedPoolAddresses: Set<string>;
   syncedTopologyKey: string | null;
+  respawnTimer: NodeJS.Timeout | null;
+  startupFailures: number;
+  disabled: boolean;
 };
 type PendingJob = {
   resolve: (value: any) => void;
@@ -282,6 +286,7 @@ export class WorkerPool {
   private _nextId: number;
   private _initialized: boolean;
   private _terminating: boolean;
+  private _spawnEpoch: number;
 
   constructor(size: number) {
     this._size = Math.max(1, size);
@@ -291,6 +296,7 @@ export class WorkerPool {
     this._nextId = 0;
     this._initialized = false;
     this._terminating = false;
+    this._spawnEpoch = 0;
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────
@@ -313,7 +319,14 @@ export class WorkerPool {
    */
   async terminate() {
     this._terminating = true;
+    this._spawnEpoch++;
     this._rejectAllPending(new Error("[worker_pool] Worker pool terminated"));
+    for (const slot of this._slots) {
+      if (slot.respawnTimer) {
+        clearTimeout(slot.respawnTimer);
+        slot.respawnTimer = null;
+      }
+    }
     for (const { worker } of this._slots) {
       if (worker) await worker.terminate().catch(() => {});
     }
@@ -339,8 +352,13 @@ export class WorkerPool {
    */
   async evaluate(paths: PathLike[], stateCache: WorkerStateMap, testAmount: bigint, options: Record<string, any> = {}) {
     if (!this._initialized) this.init();
+    const activeWorkerCount = this._activeWorkerCount();
+    if (activeWorkerCount === 0) {
+      const { evaluatePaths } = await import("./simulator.ts");
+      return evaluatePaths(paths, stateCache, testAmount, options);
+    }
 
-    const chunks = buildEvaluationChunks(paths, this._size);
+    const chunks = buildEvaluationChunks(paths, activeWorkerCount);
     if (workerLogger.isLevelEnabled("debug")) {
       workerLogger.debug(
         {
@@ -426,11 +444,12 @@ export class WorkerPool {
     if (!this._initialized) this.init();
 
     if (startTokens.length === 0) return [];
+    const activeWorkerCount = this._activeWorkerCount();
 
     const { topologyKey = null, ...enumerateOptions } = options;
 
     // Below threshold or single worker: run inline to avoid IPC overhead
-    if (startTokens.length < 2 || this._size < 2) {
+    if (startTokens.length < 2 || activeWorkerCount < 2) {
       const { deserializeTopology } = await import("./graph.ts");
       const { findArbPaths }        = await import("./finder.ts");
       const graph = deserializeTopology(adjacency);
@@ -448,7 +467,7 @@ export class WorkerPool {
     }
 
     // Split tokens across workers
-    const chunkSize = Math.ceil(startTokens.length / this._size);
+    const chunkSize = Math.ceil(startTokens.length / activeWorkerCount);
     const chunks: string[][] = [];
     for (let i = 0; i < startTokens.length; i += chunkSize) {
       chunks.push(startTokens.slice(i, i + chunkSize));
@@ -644,6 +663,14 @@ export class WorkerPool {
    */
   _spawnSlot(i: number) {
     if (this._terminating) return;
+    const existingSlot = this._slots[i];
+    if (existingSlot?.disabled) return;
+    if (existingSlot?.respawnTimer) {
+      clearTimeout(existingSlot.respawnTimer);
+      existingSlot.respawnTimer = null;
+    }
+
+    const epoch = this._spawnEpoch;
 
     const worker = new Worker(WORKER_URL, {
       execArgv: WORKER_EXEC_ARGV,
@@ -655,9 +682,77 @@ export class WorkerPool {
       syncedStateVersions: new Map(),
       syncedPoolAddresses: new Set<string>(),
       syncedTopologyKey: null,
+      respawnTimer: null,
+      startupFailures: existingSlot?.startupFailures ?? 0,
+      disabled: false,
+    };
+    let failureHandled = false;
+
+    const replaceWithEmptySlot = () => {
+      const idx = this._slots.indexOf(slot);
+      if (idx !== -1) {
+        this._slots[idx] = {
+          worker: null,
+          busy: false,
+          currentJobId: null,
+          syncedStateVersions: new Map(),
+          syncedPoolAddresses: new Set<string>(),
+          syncedTopologyKey: null,
+          respawnTimer: null,
+          startupFailures: slot.startupFailures,
+          disabled: slot.disabled,
+        };
+      }
+    };
+
+    const scheduleRespawn = (message: string, err?: Error, exitCode?: number) => {
+      if (failureHandled) return;
+      failureHandled = true;
+
+      const isStartupOom =
+        slot.currentJobId == null &&
+        /out of memory/i.test(err?.message ?? message);
+
+      if (isStartupOom) {
+        slot.startupFailures += 1;
+        if (slot.startupFailures >= STARTUP_OOM_FAILURE_LIMIT) {
+          slot.disabled = true;
+          workerLogger.error(
+            {
+              event: "worker_slot_disabled",
+              slotIndex: i,
+              startupFailures: slot.startupFailures,
+            },
+            `[worker_pool] Worker ${i} disabled after repeated startup Wasm OOM failures`
+          );
+        }
+      } else {
+        slot.startupFailures = 0;
+      }
+
+      this._rejectSlotPending(slot);
+      replaceWithEmptySlot();
+
+      const suffix = exitCode != null ? ` (code ${exitCode})` : "";
+      const action = slot.disabled ? "disabling slot" : "respawning";
+      logger.warn(`[worker_pool] Worker ${i} ${message}${suffix} — ${action}`);
+
+      if (slot.disabled || this._terminating || epoch !== this._spawnEpoch) return;
+
+      const delayMs = isStartupOom ? Math.min(1_000, 100 * 2 ** (slot.startupFailures - 1)) : 50;
+      const replacement = this._slots[i];
+      if (replacement) {
+        replacement.respawnTimer = setTimeout(() => {
+          const pendingSlot = this._slots[i];
+          if (pendingSlot) pendingSlot.respawnTimer = null;
+          if (this._terminating || epoch !== this._spawnEpoch) return;
+          this._spawnSlot(i);
+        }, delayMs);
+      }
     };
 
     worker.on("message", ({ id, type, profitable, paths, error }: any) => {
+      slot.startupFailures = 0;
       const pending = this._pending.get(id);
       if (pending) {
         this._pending.delete(id);
@@ -674,40 +769,11 @@ export class WorkerPool {
     });
 
     worker.on("error", (err: Error) => {
-      logger.warn(`[worker_pool] Worker ${i} error: ${err.message} — respawning`);
-      this._rejectSlotPending(slot);
-      // Replace in slots array
-      const idx = this._slots.indexOf(slot);
-      if (idx !== -1) {
-          this._slots[idx] = {
-            worker: null,
-            busy: false,
-            currentJobId: null,
-            syncedStateVersions: new Map(),
-            syncedPoolAddresses: new Set<string>(),
-            syncedTopologyKey: null,
-          };
-      }
-      this._spawnSlot(i);
+      scheduleRespawn(`error: ${err.message}`, err);
     });
 
     worker.on("exit", (code: number) => {
-      if (code !== 0 && !this._terminating) {
-        logger.warn(`[worker_pool] Worker ${i} exited (code ${code}) — respawning`);
-        this._rejectSlotPending(slot);
-        const idx = this._slots.indexOf(slot);
-        if (idx !== -1) {
-          this._slots[idx] = {
-            worker: null,
-            busy: false,
-            currentJobId: null,
-            syncedStateVersions: new Map(),
-            syncedPoolAddresses: new Set<string>(),
-            syncedTopologyKey: null,
-          };
-        }
-        setTimeout(() => this._spawnSlot(i), 50);
-      }
+      if (code !== 0 && !this._terminating) scheduleRespawn("exited", undefined, code);
     });
 
     if (this._slots[i]) {
@@ -757,6 +823,10 @@ export class WorkerPool {
       pending.reject(error);
     }
     this._pending.clear();
+  }
+
+  _activeWorkerCount() {
+    return this._slots.filter((slot) => slot.worker != null && !slot.disabled).length;
   }
 
   /** Number of paths currently queued or in-flight */

@@ -27,9 +27,18 @@ type CandidateEntryLike = {
   result: CandidateResultLike;
 };
 
-function roiForCandidate(result: CandidateResultLike | null | undefined) {
-  if (!result?.amountIn || result.amountIn <= 0n) return -Infinity;
-  return Number((result.profit * 1_000_000n) / result.amountIn);
+function scoreForCandidate(
+  entry: CandidateEntryLike,
+  options: {
+    gasPriceWei: bigint;
+    getTokenToMaticRate: (tokenAddress: string) => bigint;
+  },
+) {
+  const tokenToMaticRate = options.getTokenToMaticRate(entry.path.startToken);
+  return scoreRoute(entry.path as any, entry.result as any, {
+    gasPriceWei: options.gasPriceWei,
+    tokenToMaticRate: tokenToMaticRate > 0n ? tokenToMaticRate : null,
+  });
 }
 
 export function selectOptimizationCandidates<T extends CandidateEntryLike>(
@@ -53,19 +62,19 @@ export function selectOptimizationCandidates<T extends CandidateEntryLike>(
     }
   };
 
-  const topByProfit = [...candidates];
-  const topByRoi = [...candidates].sort((a, b) => roiForCandidate(b.result) - roiForCandidate(a.result));
+  const topByProfit = [...candidates].sort((a, b) => {
+    if (b.result.profit > a.result.profit) return 1;
+    if (b.result.profit < a.result.profit) return -1;
+    return 0;
+  });
+  const topByRoi = [...candidates].sort((a, b) => {
+    const scoredA = scoreForCandidate(a, options);
+    const scoredB = scoreForCandidate(b, options);
+    return (scoredB?.roi ?? -Infinity) - (scoredA?.roi ?? -Infinity);
+  });
   const topByScore = [...candidates].sort((a, b) => {
-    const rateA = options.getTokenToMaticRate(a.path.startToken);
-    const rateB = options.getTokenToMaticRate(b.path.startToken);
-    const scoredA = scoreRoute(a.path as any, a.result as any, {
-      gasPriceWei: options.gasPriceWei,
-      tokenToMaticRate: rateA > 0n ? rateA : null,
-    });
-    const scoredB = scoreRoute(b.path as any, b.result as any, {
-      gasPriceWei: options.gasPriceWei,
-      tokenToMaticRate: rateB > 0n ? rateB : null,
-    });
+    const scoredA = scoreForCandidate(a, options);
+    const scoredB = scoreForCandidate(b, options);
     return (scoredB?.score ?? -Infinity) - (scoredA?.score ?? -Infinity);
   });
   const topByLogWeight = [...candidates].sort(

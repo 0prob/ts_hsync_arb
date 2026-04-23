@@ -20,19 +20,20 @@ export async function handleWatcherLogs({
   registry,
   cache,
   closed,
-  topics,
+  topic0,
   refreshBalancer,
   refreshCurve,
   enqueueEnrichment,
-  commitState,
+  commitStates,
 }: any) {
   const changedAddrs = new Set();
   const protocolHandlers = createWatcherProtocolHandlers({
-    topics,
+    topic0,
     updateV2State,
     updateV3SwapState,
     updateV3LiquidityState,
   });
+  const pendingStateUpdates = new Map<string, { addr: string; state: any; rawLog: any }>();
 
   for (let i = 0; i < logs.length; i++) {
     const log = logs[i];
@@ -44,7 +45,17 @@ export async function handleWatcherLogs({
     const pool = registry.getPoolMeta(addr);
     if (!pool) continue;
 
-    const state = cloneWatcherState(cache.get(addr));
+    let pending = pendingStateUpdates.get(addr);
+    if (!pending) {
+      pending = {
+        addr,
+        state: cloneWatcherState(cache.get(addr)),
+        rawLog: log,
+      };
+      pendingStateUpdates.set(addr, pending);
+    }
+
+    const state = pending.state;
     if (!state) continue;
 
     const topic0 = toTopicArray(log)[0];
@@ -58,17 +69,21 @@ export async function handleWatcherLogs({
         pool,
         state,
         decoded: dec,
-        commitState,
         enqueueEnrichment,
         refreshBalancer,
         refreshCurve,
       })) {
-        changedAddrs.add(addr);
+        pending.rawLog = log;
       }
     } catch (err: any) {
       watcherStateLogger.error({ poolAddress: addr, err }, "Watcher state update failed");
       throw new Error(`watcher update failed for ${addr}: ${err?.message ?? err}`);
     }
+  }
+
+  if (pendingStateUpdates.size > 0) {
+    const committed = commitStates([...pendingStateUpdates.values()]);
+    for (const addr of committed) changedAddrs.add(addr);
   }
 
   return changedAddrs;
@@ -113,7 +128,9 @@ export function updateTickState(state: any, tick: any, amount: any, isNetPositiv
   if (data.liquidityGross === 0n) state.ticks.delete(tick);
   else state.ticks.set(tick, data);
 
-  state._sortedTicks = null;
+  state.tickVersion = Number.isFinite(Number(state.tickVersion))
+    ? Number(state.tickVersion) + 1
+    : 1;
 }
 
 function cloneWatcherState(state: any) {
@@ -164,12 +181,54 @@ export function commitWatcherState(cache: any, persistState: any, addr: any, sta
   persistState(addr, state, rawLog);
 }
 
+export function commitWatcherStatesBatch(cache: any, persistStates: any, updates: any[]) {
+  if (!Array.isArray(updates) || updates.length === 0) return [];
+
+  const committed: Array<{ pool_address: string; block: number; data: any }> = [];
+  const changedAddrs: string[] = [];
+  const committedAt = Date.now();
+
+  for (const update of updates) {
+    const addr = update?.addr?.toLowerCase?.();
+    const state = update?.state;
+    if (!addr || !state) continue;
+    validateWatcherStateOrThrow(state);
+    state.timestamp = committedAt;
+    cache.set(addr, state);
+    committed.push({
+      pool_address: addr,
+      block: Number(update?.rawLog?.blockNumber ?? 0),
+      data: state,
+    });
+    changedAddrs.push(addr);
+  }
+
+  if (committed.length > 0) {
+    persistStates(committed);
+  }
+
+  return changedAddrs;
+}
+
 export function persistWatcherState(registry: any, addr: any, state: any, rawLog: any, fallbackBlock: any) {
   registry.updatePoolState({
     pool_address: addr,
     block: Number(rawLog?.blockNumber ?? fallbackBlock),
     data: state,
   });
+}
+
+export function persistWatcherStates(registry: any, states: any[], fallbackBlock: any) {
+  const normalized = states
+    .filter((state) => state?.pool_address && state?.data)
+    .map((state) => ({
+      pool_address: state.pool_address.toLowerCase(),
+      block: Number(state.block ?? fallbackBlock),
+      data: state.data,
+    }));
+
+  if (normalized.length === 0) return;
+  registry.batchUpdateStates(normalized);
 }
 
 export function reloadWatcherCache(registry: any, cache: any, pendingEnrichment: any) {

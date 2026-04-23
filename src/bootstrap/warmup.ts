@@ -29,6 +29,14 @@ type WarmupGroupResult = {
   normalized?: Record<string, unknown> | null;
   noDataFailures?: Set<string>;
 };
+type FetchAndCacheOptions = {
+  v3HydrationMode?: "full" | "nearby" | "none";
+  v3NearWordRadius?: number;
+};
+type V3FetchOptions = {
+  hydrationMode?: "full" | "nearby" | "none";
+  nearWordRadius?: number;
+};
 type WarmupGroup = {
   key: keyof WarmupStats["protocols"];
   protocols: Set<string>;
@@ -45,7 +53,13 @@ type WarmupDeps = {
   validatePoolState: (state: any) => { valid: boolean; reason?: string };
   normalizePoolState: (addr: string, protocol: string, tokens: string[], raw: unknown, metadata?: unknown) => Record<string, unknown> | null;
   fetchMultipleV2States: (addresses: string[], concurrency: number) => Promise<any>;
-  fetchMultipleV3States: (addresses: string[], concurrency: number, poolMeta: Map<any, any>, onProgress: (completed: number, total: number) => void) => Promise<any>;
+  fetchMultipleV3States: (
+    addresses: string[],
+    concurrency: number,
+    poolMeta: Map<any, any>,
+    onProgress: (completed: number, total: number) => void,
+    fetchOptions?: V3FetchOptions,
+  ) => Promise<any>;
   fetchAndNormalizeBalancerPool: (pool: PoolRecord) => Promise<{ addr: string; normalized: Record<string, unknown> }>;
   fetchAndNormalizeCurvePool: (pool: PoolRecord) => Promise<{ addr: string; normalized: Record<string, unknown> }>;
   throttledMap: <T, R>(items: T[], mapper: (item: T) => Promise<R>, concurrency: number) => Promise<R[]>;
@@ -58,7 +72,7 @@ type WarmupDeps = {
   enrichConcurrency: number;
 };
 
-const WARMUP_V2 = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2"]);
+const WARMUP_V2 = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2"]);
 const WARMUP_V3 = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
 const WARMUP_BAL = new Set(["BALANCER_WEIGHTED", "BALANCER_STABLE", "BALANCER_V2"]);
 const WARMUP_CRV = new Set([
@@ -209,7 +223,7 @@ export function createWarmupManager(deps: WarmupDeps) {
     }
   }
 
-  async function fetchAndCacheStates(pools: PoolRecord[]) {
+  async function fetchAndCacheStates(pools: PoolRecord[], options: FetchAndCacheOptions = {}) {
     if (!pools.length) {
       return {
         scheduled: 0,
@@ -272,6 +286,10 @@ export function createWarmupManager(deps: WarmupDeps) {
                   remaining: Math.max(0, total - completed),
                 });
               }
+            },
+            {
+              hydrationMode: options.v3HydrationMode ?? "full",
+              nearWordRadius: options.v3NearWordRadius,
             },
           );
           return group.map((pool) => {
@@ -343,12 +361,24 @@ export function createWarmupManager(deps: WarmupDeps) {
   function poolBothTokensAreHubs(pool: PoolRecord, hubTokens: Set<string>) {
     const tokens = deps.getPoolTokens(pool);
     if (!tokens || tokens.length < 2) return false;
-    return hubTokens.has(tokens[0]) && hubTokens.has(tokens[1]);
+    let hubMatches = 0;
+    for (const token of tokens) {
+      if (!hubTokens.has(token)) continue;
+      hubMatches++;
+      if (hubMatches >= 2) return true;
+    }
+    return false;
   }
 
   function warmupPriority(pool: PoolRecord) {
     const tokens = deps.getPoolTokens(pool);
-    const bothCoreHubs = tokens.length >= 2 && deps.hub4Tokens.has(tokens[0]) && deps.hub4Tokens.has(tokens[1]);
+    let coreHubMatches = 0;
+    for (const token of tokens) {
+      if (!deps.hub4Tokens.has(token)) continue;
+      coreHubMatches++;
+      if (coreHubMatches >= 2) break;
+    }
+    const bothCoreHubs = coreHubMatches >= 2;
 
     let protocolRank = 3;
     if (WARMUP_V2.has(pool.protocol)) protocolRank = 0;

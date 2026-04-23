@@ -102,6 +102,50 @@ function makeCandidate(id: string) {
 }
 
 {
+  let quarantinedReason = "";
+
+  const coordinator = createExecutionCoordinator({
+    liveMode: true,
+    privateKey: PRIVATE_KEY,
+    executorAddress: ADDRESS,
+    rpcUrl: "http://localhost:8545",
+    getNonceManager: () => null,
+    maxExecutionBatch: 1,
+    executionRouteQuarantineMs: 60_000,
+    minProfitWei: 1n,
+    log: () => {},
+    fmtPath: () => "path",
+    getRouteFreshness: () => ({ ok: true }),
+    getCurrentFeeSnapshot: async () => null,
+    getFreshTokenToMaticRate: () => 1n,
+    deriveOnChainMinProfit: () => 1n,
+    buildArbTx: async () => ({
+      to: ADDRESS,
+      data: "0x1234",
+      gasLimit: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+      maxFeePerGas: 1n,
+      maxPriorityFeePerGas: 1n,
+    }),
+    sendTx: async () => ({ submitted: true, confirmed: false, txHash: "0x1" }),
+    sendTxBundle: async () => ({ submitted: true, confirmed: false, txHashes: ["0x1"] }),
+    hasPendingExecution: () => false,
+    scalePriorityFeeByProfitMargin: () => null,
+    onPreparedCandidateError: (_candidate: any, reason: string) => {
+      quarantinedReason = reason;
+    },
+  });
+
+  const result = await coordinator.executeBatchIfIdle([makeCandidate("4")], "test");
+
+  assert.equal(result.submitted, false, "oversized gas limits should not reach submission");
+  assert.match(
+    quarantinedReason,
+    /exceeds Number\.MAX_SAFE_INTEGER/,
+    "oversized gas limits should surface an explicit preparation failure",
+  );
+}
+
+{
   let inFlight = 0;
   let maxConcurrent = 0;
 
