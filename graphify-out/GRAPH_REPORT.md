@@ -1,12 +1,12 @@
 # Graph Report - t  (2026-04-23)
 
 ## Corpus Check
-- 149 files · ~146,279 words
+- 161 files · ~160,533 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 819 nodes · 1864 edges · 19 communities detected
-- Extraction: 67% EXTRACTED · 33% INFERRED · 0% AMBIGUOUS · INFERRED: 609 edges (avg confidence: 0.8)
+- 877 nodes · 1974 edges · 20 communities detected
+- Extraction: 69% EXTRACTED · 31% INFERRED · 0% AMBIGUOUS · INFERRED: 619 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -29,26 +29,27 @@
 - [[_COMMUNITY_Community 16|Community 16]]
 - [[_COMMUNITY_Community 17|Community 17]]
 - [[_COMMUNITY_Community 18|Community 18]]
+- [[_COMMUNITY_Community 19|Community 19]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `get()` - 66 edges
-2. `RegistryService` - 53 edges
+2. `RegistryService` - 59 edges
 3. `log()` - 35 edges
-4. `StateWatcher` - 24 edges
+4. `StateWatcher` - 25 edges
 5. `discoverProtocol()` - 23 edges
 6. `WorkerPool` - 20 edges
 7. `refreshCycles()` - 17 edges
 8. `RpcManager` - 17 edges
-9. `PriceOracle` - 16 edges
-10. `executeWithRpcRetry()` - 16 edges
+9. `discoverCurveRemovals()` - 17 edges
+10. `main()` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `main()` --calls--> `startTui()`  [INFERRED]
   runner.ts → src/tui/index.tsx
-- `main()` --calls--> `startMetricsServer()`  [INFERRED]
-  runner.ts → /home/x/t/src/utils/metrics.ts
-- `partitionFreshCandidates()` --calls--> `createArbSearcher()`  [INFERRED]
-  /home/x/t/src/routing/filter_fresh_candidates.ts → src/arb/search.ts
+- `log()` --calls--> `quoteBasedLogWeight()`  [INFERRED]
+  runner.ts → src/routing/finder.ts
+- `log()` --calls--> `edgeSpotLogWeight()`  [INFERRED]
+  runner.ts → src/routing/finder.ts
 - `log()` --calls--> `_completePass()`  [INFERRED]
   runner.ts → /home/x/t/src/state/poller_base.ts
 - `log()` --calls--> `_storeBatchResults()`  [INFERRED]
@@ -57,90 +58,94 @@
 ## Communities
 
 ### Community 0 - "Community 0"
-Cohesion: 0.03
-Nodes (42): reloadCacheFromRegistry(), detectReorg(), pick(), discoverPools(), discoverPoolsWithDeps(), routeKeyFromEdges(), clearGasEstimateCache(), startMetricsServer() (+34 more)
+Cohesion: 0.04
+Nodes (36): takeTopNBy(), parsePositiveInteger(), parseRunnerArgs(), partitionFreshCandidates(), clampBigInt(), estimateGas(), fetchEIP1559Fees(), fetchGasPrice() (+28 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.04
-Nodes (49): toFiniteNumber(), takeTopNBy(), enumerateCycles(), enumerateCyclesDual(), enumerateCyclesForToken(), pruneByLiquidity(), selectTopPaths(), sortByLogWeight() (+41 more)
+Cohesion: 0.07
+Nodes (31): mergeStateIntoCache(), recommendGasParams(), getLiveStateRef(), NonceManager, _completePass(), PriceOracle, getPoolFee(), getTokenMeta() (+23 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.08
-Nodes (30): mergeStateIntoCache(), getDiscoveryQuerySpec(), find2HopPaths(), find3HopPaths(), find4HopPathsBidirectional(), findArbPaths(), shouldPruneEdge(), getLiveStateRef() (+22 more)
+Cohesion: 0.06
+Nodes (50): reloadCacheFromRegistry(), assetStmt(), batchUpsertTokenMeta(), getTokenDecimals(), normalizeTokenAddress(), normalizeTokenDecimals(), normalizeTokenText(), upsertPoolFee() (+42 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.05
-Nodes (20): fetchAbi(), fetchAbiWithRetry(), sleep(), throwUnsupportedHypersync(), UnsupportedDecoder, decode(), buildDiscoveryScanQuery(), decodeDiscoveryLogs() (+12 more)
+Nodes (33): detectReorg(), pick(), createRegistryStub(), createV2State(), testDetectReorgOnlyComparesMatchingBoundaries(), testWatcherInvalidatesStaleEnrichmentAcrossReorg(), chunk(), classifyWatcherPollError() (+25 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.06
-Nodes (47): assetStmt(), batchUpsertTokenMeta(), getTokenDecimals(), normalizeTokenAddress(), normalizeTokenDecimals(), normalizeTokenText(), upsertPoolFee(), upsertTokenMeta() (+39 more)
+Nodes (35): throwUnsupportedHypersync(), UnsupportedDecoder, discoverCurveListedFactory(), assertDecodedLogsAligned(), buildDiscoveryScanQuery(), decodeDiscoveryLogs(), discoverCurveRemovals(), discoverPools() (+27 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.06
-Nodes (29): exp(), getBalancerAmountIn(), getBalancerAmountOut(), ln(), powDown(), simulateBalancerSwap(), toBigInt(), gasEstimateCacheKeyForRoute() (+21 more)
+Cohesion: 0.05
+Nodes (43): assessmentNetProfit(), assessRouteResult(), compareAssessmentProfit(), getAssessmentOptimizationOptions(), getOptimizationOptions(), minProfitInTokenUnits(), applySlippage(), bigintToApproxNumber() (+35 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.06
-Nodes (5): discoverCurveListedFactory(), getPoolAddressesForProtocol(), validateAllPools(), RegistryService, runValidation()
+Cohesion: 0.05
+Nodes (29): normalizeBalancerState(), normalizeCurveState(), normalizePoolState(), normalizeV2State(), normalizeV3State(), splitEvenWeights(), fetchAndNormalizeBalancerPool(), fetchBalancerPoolState() (+21 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.09
-Nodes (25): assessmentNetProfit(), assessRouteResult(), compareAssessmentProfit(), getAssessmentOptimizationOptions(), getOptimizationOptions(), minProfitInTokenUnits(), applySlippage(), bigintToApproxNumber() (+17 more)
+Cohesion: 0.07
+Nodes (26): enumerateCycles(), enumerateCyclesDual(), enumerateCyclesForToken(), pruneByLiquidity(), resolvePhaseBudget(), selectTopPaths(), sortByLogWeight(), annotatePath() (+18 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.1
-Nodes (24): assertValidRouteForExecution(), buildArbTx(), buildTransferTx(), resolveFlashLoan(), buildFlashParams(), callbackProtocolId(), computeRouteHash(), encodeBalancerHop() (+16 more)
+Cohesion: 0.05
+Nodes (5): RegistryMetaCache, loadPoolMetaCache(), validateAllPools(), RegistryService, runValidation()
 
 ### Community 9 - "Community 9"
-Cohesion: 0.1
-Nodes (10): fetchGasPrice(), executeWithRpcRetry(), isEndpointCapabilityError(), _isMethodUnavailableError(), isRateLimitError(), isRetryableError(), lazyMetrics(), RpcEndpoint (+2 more)
+Cohesion: 0.06
+Nodes (21): fetchAbi(), fetchAbiWithRetry(), sleep(), toFiniteNumber(), decode(), addPoolEdges(), buildGraph(), buildHubGraph() (+13 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.1
-Nodes (21): getBalancerTokens(), enrichTokens(), getCurveTokens(), enrichTokens(), PollUniv2, isNoDataReadContractError(), multicallWithRetry(), readContractWithRetry() (+13 more)
+Cohesion: 0.07
+Nodes (24): getBalancerTokens(), normalizeAddressList(), enrichTokens(), getCurveTokens(), enrichTokens(), normalizeCurveTokenList(), _num(), _parseSafeNonNegativeConfigNumber() (+16 more)
 
 ### Community 11 - "Community 11"
-Cohesion: 0.08
-Nodes (14): fetchAndNormalizeBalancerPool(), fetchBalancerPoolState(), PollBalancer, readContractWithTimeout(), withTimeout(), BALANCE_ABI(), fetchAndNormalizeCurvePool(), fetchCurvePoolState() (+6 more)
+Cohesion: 0.09
+Nodes (13): gasEstimateCacheKeyForRoute(), deserializeTopology(), routeExecutionCacheKey(), routeIdentityFromEdges(), routeIdentityFromSerializedPath(), collectChunkPoolAddresses(), getStateVersion(), isUsableSlot() (+5 more)
 
 ### Community 12 - "Community 12"
-Cohesion: 0.15
-Nodes (20): defaultRates(), getCurveAmountIn(), getCurveAmountOut(), getD(), getY(), simulateCurveSwap(), toXp(), normalizeBalancerState() (+12 more)
+Cohesion: 0.11
+Nodes (9): executeWithRpcRetry(), isEndpointCapabilityError(), _isMethodUnavailableError(), isRateLimitError(), isRetryableError(), lazyMetrics(), RpcEndpoint, RpcManager (+1 more)
 
 ### Community 13 - "Community 13"
-Cohesion: 0.19
-Nodes (12): NonceManager, clearTrackedReceipt(), dryRun(), logFailure(), mapWithConcurrency(), pollPendingReceipts(), pollTrackedReceipt(), sendTx() (+4 more)
+Cohesion: 0.16
+Nodes (16): assertValidRouteForExecution(), buildArbTx(), buildTransferTx(), resolveFlashLoan(), buildFlashParams(), callbackProtocolId(), computeRouteHash(), encodeBalancerHop() (+8 more)
 
 ### Community 14 - "Community 14"
 Cohesion: 0.15
 Nodes (13): evaluateCandidatePipeline(), scoreForCandidate(), selectOptimizationCandidates(), shouldOptimizeCandidate(), bigintToApproxNumber(), ceilDiv(), estimateGasCostWei(), gasCostInStartTokenUnits() (+5 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.16
-Nodes (7): partitionFreshCandidates(), configureWatcherCallbacks(), createArbScheduler(), createShutdownHandler(), testSchedulerWaitForIdle(), testShutdownWaitsForOwnedWork(), testWatcherCallbacksScheduleAfterStateWork()
+Cohesion: 0.41
+Nodes (10): divRoundingUp(), mulDiv(), mulDivRoundingUp(), getAmount0Delta(), getAmount1Delta(), getNextSqrtPriceFromAmount0RoundingUp(), getNextSqrtPriceFromAmount1RoundingDown(), getNextSqrtPriceFromInput() (+2 more)
 
 ### Community 16 - "Community 16"
 Cohesion: 0.36
 Nodes (10): colorize(), formatLogs(), formatStatus(), normalizeOpportunity(), pad(), renderFrame(), section(), startTui() (+2 more)
 
 ### Community 17 - "Community 17"
-Cohesion: 0.41
-Nodes (10): divRoundingUp(), mulDiv(), mulDivRoundingUp(), getAmount0Delta(), getAmount1Delta(), getNextSqrtPriceFromAmount0RoundingUp(), getNextSqrtPriceFromAmount1RoundingDown(), getNextSqrtPriceFromInput() (+2 more)
-
-### Community 18 - "Community 18"
 Cohesion: 0.36
 Nodes (9): jsonRpc(), polygonPrivateMempoolHeaders(), privateMempoolSupportsBundles(), racePublicRPCs(), sendBundleAlchemy(), sendPolygonPrivateTransaction(), sendPrivateBundle(), sendPrivateTransaction() (+1 more)
+
+### Community 18 - "Community 18"
+Cohesion: 0.31
+Nodes (6): configureWatcherCallbacks(), createArbScheduler(), createShutdownHandler(), testSchedulerWaitForIdle(), testShutdownWaitsForOwnedWork(), testWatcherCallbacksScheduleAfterStateWork()
+
+### Community 19 - "Community 19"
+Cohesion: 0.44
+Nodes (7): exp(), getBalancerAmountIn(), getBalancerAmountOut(), ln(), powDown(), simulateBalancerSwap(), toBigInt()
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `log()` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 6`, `Community 7`, `Community 13`, `Community 18`?**
-  _High betweenness centrality (0.101) - this node is a cross-community bridge._
-- **Why does `RegistryService` connect `Community 6` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`?**
-  _High betweenness centrality (0.082) - this node is a cross-community bridge._
-- **Why does `executeWithRpcRetry()` connect `Community 9` to `Community 8`, `Community 10`?**
-  _High betweenness centrality (0.074) - this node is a cross-community bridge._
+- **Why does `log()` connect `Community 4` to `Community 0`, `Community 1`, `Community 3`, `Community 5`, `Community 6`, `Community 7`, `Community 17`?**
+  _High betweenness centrality (0.095) - this node is a cross-community bridge._
+- **Why does `RegistryService` connect `Community 8` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 7`?**
+  _High betweenness centrality (0.084) - this node is a cross-community bridge._
+- **Why does `executeWithRpcRetry()` connect `Community 12` to `Community 0`, `Community 10`?**
+  _High betweenness centrality (0.070) - this node is a cross-community bridge._
 - **Are the 65 inferred relationships involving `get()` (e.g. with `selectPendingQuietPools()` and `partitionChangedPools()`) actually correct?**
   _`get()` has 65 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 29 inferred relationships involving `log()` (e.g. with `quoteBasedLogWeight()` and `edgeSpotLogWeight()`) actually correct?**
@@ -148,4 +153,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Are the 17 inferred relationships involving `discoverProtocol()` (e.g. with `getCheckpoint()` and `getPoolCountForProtocol()`) actually correct?**
   _`discoverProtocol()` has 17 INFERRED edges - model-reasoned connections that need verification._
 - **Should `Community 0` be split into smaller, more focused modules?**
-  _Cohesion score 0.03 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.04 - nodes in this community are weakly interconnected._

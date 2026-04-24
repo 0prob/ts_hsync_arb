@@ -33,6 +33,7 @@ const DEFAULTS = {
   include2Hop:          true,
   include3Hop:          true,
   include4Hop:          false,
+  maxHops:              4,
   maxPathsPerToken:     5_000,
   max4HopPathsPerToken: 2_000,
   maxTotalPaths:        20_000,
@@ -86,6 +87,13 @@ function selectTopPaths(paths: any, limit: number) {
   return takeTopNBy(paths, limit, compareByLogWeight);
 }
 
+function resolvePhaseBudget(rawBudget: number | undefined, maxTotal: number, fallbackRatio: number) {
+  const fallback = Math.ceil(maxTotal * fallbackRatio);
+  const requested = rawBudget ?? fallback;
+  if (!Number.isFinite(requested)) return fallback;
+  return Math.max(0, Math.min(maxTotal, Math.floor(requested)));
+}
+
 // ─── Single-graph (backward-compatible) ──────────────────────
 
 export function enumerateCycles(graph: any, options: any = {}) {
@@ -110,6 +118,7 @@ export function enumerateCycles(graph: any, options: any = {}) {
     include2Hop:          opts.include2Hop,
     include3Hop:          opts.include3Hop,
     include4Hop:          opts.include4Hop,
+    maxHops:              opts.maxHops,
     maxPathsPerToken:     opts.maxPathsPerToken,
     max4HopPathsPerToken: opts.max4HopPathsPerToken,
     minV2Reserve:         opts.minV2Reserve,
@@ -129,18 +138,26 @@ export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any 
   const opts      = { ...DEFAULTS, ...options };
   const maxTotal  = opts.maxTotalPaths;
   if (!Number.isFinite(maxTotal) || maxTotal <= 0) return [];
-  const hubBudget = opts.hubPathBudget ?? Math.ceil(maxTotal * 0.6);
+  const hubBudget = resolvePhaseBudget(opts.hubPathBudget, maxTotal, 0.6);
   const pruneOpts = { minV2Reserve: opts.minV2Reserve, probeWei: opts.probeWei };
 
   // Phase 1: hub graph — all depths including 4-hop bidirectional
-  const hubStart = new Set([...HUB_4_TOKENS].filter((t) => hubGraph.hasToken(t)));
-  let hubPaths = findArbPaths(hubGraph, hubStart, {
-    include2Hop: opts.include2Hop, include3Hop: opts.include3Hop, include4Hop: true,
-    maxPathsPerToken: opts.maxPathsPerToken, max4HopPathsPerToken: opts.max4HopPathsPerToken,
-    ...pruneOpts,
-  });
-  if (opts.dedup) hubPaths = deduplicatePaths(hubPaths);
-  hubPaths = selectTopPaths(hubPaths, hubBudget);
+  let hubPaths = [];
+  if (hubBudget > 0) {
+    const hubStart = new Set([...HUB_4_TOKENS].filter((t) => hubGraph.hasToken(t)));
+    if (hubStart.size === 0) {
+      hubPaths = [];
+    } else {
+    hubPaths = findArbPaths(hubGraph, hubStart, {
+      include2Hop: opts.include2Hop, include3Hop: opts.include3Hop, include4Hop: true,
+      maxHops: opts.maxHops,
+      maxPathsPerToken: opts.maxPathsPerToken, max4HopPathsPerToken: opts.max4HopPathsPerToken,
+      ...pruneOpts,
+    });
+    if (opts.dedup) hubPaths = deduplicatePaths(hubPaths);
+    hubPaths = selectTopPaths(hubPaths, hubBudget);
+    }
+  }
 
   // Phase 2: full graph — 3-hop only (4-hop too expensive on large graph)
   const fullBudget = Math.max(0, maxTotal - hubPaths.length);
@@ -150,6 +167,7 @@ export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any 
     if (fullStart.size > 0) {
       fullPaths = findArbPaths(fullGraph, fullStart, {
         include2Hop: opts.include2Hop, include3Hop: opts.include3Hop, include4Hop: false,
+        maxHops: Math.min(opts.maxHops, 3),
         maxPathsPerToken: opts.maxPathsPerToken,
         ...pruneOpts,
       });

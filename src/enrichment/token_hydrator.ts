@@ -49,6 +49,12 @@ const SYMBOL_ABI = [
 const NAME_ABI = [
   { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "string" }] },
 ];
+const SYMBOL_BYTES32_ABI = [
+  { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bytes32" }] },
+];
+const NAME_BYTES32_ABI = [
+  { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bytes32" }] },
+];
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -57,6 +63,60 @@ function chunk(arr: any, size: any) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+export function decodeBytes32Text(value: unknown) {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) return null;
+  const bytes = Buffer.from(value.slice(2), "hex");
+  const nulIndex = bytes.indexOf(0);
+  const content = (nulIndex >= 0 ? bytes.subarray(0, nulIndex) : bytes).toString("utf8").trim();
+  return content || null;
+}
+
+function normalizeHydratedDecimals(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric > 255) return null;
+  return numeric;
+}
+
+function normalizeHydratedText(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+export function mergeMetadataBatchResults(addresses: string[], results: any[], fallbackResultsByAddressIndex = new Map<number, { symbol?: string | null; name?: string | null }>()) {
+  return addresses.map((addr: any, i: any) => {
+    const dec  = results[i * 3];
+    const sym  = results[i * 3 + 1];
+    const name = results[i * 3 + 2];
+    const fallback = fallbackResultsByAddressIndex.get(i);
+    return {
+      address:  addr,
+      decimals: dec?.status  === "success" ? normalizeHydratedDecimals(dec.result) : null,
+      symbol:   sym?.status  === "success" ? normalizeHydratedText(sym.result) ?? (fallback?.symbol ?? null) : (fallback?.symbol ?? null),
+      name:     name?.status === "success" ? normalizeHydratedText(name.result) ?? (fallback?.name ?? null) : (fallback?.name ?? null),
+    };
+  });
+}
+
+type MetadataFallbackField = "symbol" | "name";
+type MetadataFallback = { symbol?: string | null; name?: string | null };
+
+async function runMulticall(contracts: any[]) {
+  if (hyperRpcMulticallAvailable) {
+    try {
+      return await hyperRpcClient.multicall({ contracts, allowFailure: true });
+    } catch (err) {
+      if (isEndpointCapabilityError(err)) {
+        hyperRpcMulticallAvailable = false;
+        logger.warn("[token_hydrator] HyperRPC does not support multicall here — falling back to RPC manager");
+      } else {
+        logger.debug("[token_hydrator] HyperRPC multicall failed — falling back to RPC manager");
+      }
+    }
+  }
+  return await (dynamicPublicClient as any).multicall({ contracts, allowFailure: true });
 }
 
 // ─── Multicall batch ──────────────────────────────────────────
@@ -74,23 +134,7 @@ async function fetchMetaBatch(addresses: any) {
     { address: addr, abi: SYMBOL_ABI,   functionName: "symbol"   },
     { address: addr, abi: NAME_ABI,     functionName: "name"     },
   ]);
-
-  let results;
-  if (hyperRpcMulticallAvailable) {
-    try {
-      results = await hyperRpcClient.multicall({ contracts, allowFailure: true });
-    } catch (err) {
-      if (isEndpointCapabilityError(err)) {
-        hyperRpcMulticallAvailable = false;
-        logger.warn("[token_hydrator] HyperRPC does not support multicall here — falling back to RPC manager");
-      } else {
-        logger.debug("[token_hydrator] HyperRPC multicall failed — falling back to RPC manager");
-      }
-      results = await (dynamicPublicClient as any).multicall({ contracts, allowFailure: true });
-    }
-  } else {
-    results = await (dynamicPublicClient as any).multicall({ contracts, allowFailure: true });
-  }
+  const results = await runMulticall(contracts);
 
   const successCount = Array.isArray(results)
     ? results.filter((r) => r?.status === "success").length
@@ -102,17 +146,41 @@ async function fetchMetaBatch(addresses: any) {
     successCount,
   }, "[token_hydrator] multicall raw result summary");
 
-  return addresses.map((addr: any, i: any) => {
-    const dec  = results[i * 3];
-    const sym  = results[i * 3 + 1];
-    const name = results[i * 3 + 2];
-    return {
-      address:  addr,
-      decimals: dec.status  === "success" ? Number(dec.result)  : null,
-      symbol:   sym.status  === "success" ? String(sym.result)  : null,
-      name:     name.status === "success" ? String(name.result) : null,
-    };
-  });
+  const fallbackContracts = [];
+  const fallbackLookups: Array<{ addressIndex: number; field: MetadataFallbackField }> = [];
+  for (let i = 0; i < addresses.length; i++) {
+    const symbolResult = results[i * 3 + 1];
+    const nameResult = results[i * 3 + 2];
+    if (symbolResult?.status !== "success") {
+      fallbackLookups.push({ addressIndex: i, field: "symbol" });
+      fallbackContracts.push({ address: addresses[i], abi: SYMBOL_BYTES32_ABI, functionName: "symbol" });
+    }
+    if (nameResult?.status !== "success") {
+      fallbackLookups.push({ addressIndex: i, field: "name" });
+      fallbackContracts.push({ address: addresses[i], abi: NAME_BYTES32_ABI, functionName: "name" });
+    }
+  }
+
+  let fallbackResults: any[] = [];
+  if (fallbackContracts.length > 0) {
+    fallbackResults = await runMulticall(fallbackContracts);
+    const fallbackResolved = fallbackResults.filter((result) => decodeBytes32Text(result?.result) != null).length;
+    logger.info({
+      fallbackCallCount: fallbackContracts.length,
+      fallbackResolved,
+    }, "[token_hydrator] bytes32 metadata fallback summary");
+  }
+
+  const fallbackByAddressIndex = new Map<number, MetadataFallback>();
+  for (let i = 0; i < fallbackLookups.length; i++) {
+    const lookup = fallbackLookups[i];
+    const decoded = decodeBytes32Text(fallbackResults[i]?.status === "success" ? fallbackResults[i]?.result : null);
+    const next = fallbackByAddressIndex.get(lookup.addressIndex) ?? {};
+    next[lookup.field] = decoded;
+    fallbackByAddressIndex.set(lookup.addressIndex, next);
+  }
+
+  return mergeMetadataBatchResults(addresses, results, fallbackByAddressIndex);
 }
 
 // ─── Public API ───────────────────────────────────────────────

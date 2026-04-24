@@ -5,13 +5,13 @@ import { validatePoolState } from "../src/state/normalizer.ts";
 
 const HUB_A = "0x1111111111111111111111111111111111111111";
 const HUB_B = "0x2222222222222222222222222222222222222222";
+const HUB_C = "0x1212121212121212121212121212121212121212";
 const NON_HUB = "0x3333333333333333333333333333333333333333";
 const POOL = "0x4444444444444444444444444444444444444444";
 const ONE_HUB_POOL = "0x5555555555555555555555555555555555555555";
 const V3_A = "0x7777777777777777777777777777777777777771";
 const V3_B = "0x7777777777777777777777777777777777777772";
 const V3_C = "0x7777777777777777777777777777777777777773";
-
 const pool = {
   pool_address: POOL,
   protocol: "BALANCER_V2",
@@ -141,5 +141,208 @@ assert.equal(
   true,
   "warmup should leave the admitted multi-token hub pool routable in the state cache",
 );
+
+{
+  const SATURATED_HUB_PAIR_A = "0x8888888888888888888888888888888888888881";
+  const SATURATED_HUB_PAIR_B = "0x8888888888888888888888888888888888888882";
+  const SATURATED_ONE_HUB = "0x8888888888888888888888888888888888888883";
+  let saturatedBalancerFetches = 0;
+
+  const additiveBudgetWarmup = createWarmupManager({
+    getRegistry: () => ({
+      getPools: () => [
+        {
+          pool_address: SATURATED_HUB_PAIR_A,
+          protocol: "BALANCER_V2",
+          status: "active",
+          tokens: [HUB_A, HUB_B, NON_HUB],
+          metadata: {},
+        },
+        {
+          pool_address: SATURATED_HUB_PAIR_B,
+          protocol: "BALANCER_V2",
+          status: "active",
+          tokens: [HUB_A, HUB_B, "0x9999999999999999999999999999999999999999"],
+          metadata: {},
+        },
+        {
+          pool_address: SATURATED_ONE_HUB,
+          protocol: "BALANCER_V2",
+          status: "active",
+          tokens: [HUB_A, NON_HUB, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+          metadata: {},
+        },
+      ],
+      getActivePoolsMeta() {
+        return this.getPools();
+      },
+      getCheckpoint: () => ({ last_block: 123 }),
+      getGlobalCheckpoint: () => 123,
+      batchUpdateStates: () => {},
+      disablePool: () => {},
+    }),
+    stateCache: new Map<string, Record<string, any>>(),
+    log: () => {},
+    getPoolTokens: (entry: any) => entry.tokens,
+    getPoolMetadata: (entry: any) => entry.metadata ?? {},
+    validatePoolState,
+    normalizePoolState: (_addr: string, protocol: string, tokens: string[]) => ({
+      poolId: "0xpool",
+      protocol,
+      token0: tokens[0],
+      token1: tokens[1],
+      tokens,
+      fee: 3_000_000_000_000_000n,
+      balances: [1_000n, 1_000n, 1_000n],
+      weights: [333_333_333_333_333_333n, 333_333_333_333_333_333n, 333_333_333_333_333_334n],
+      swapFee: 3_000_000_000_000_000n,
+      timestamp: Date.now(),
+    }),
+    fetchMultipleV2States: async () => new Map(),
+    fetchMultipleV3States: async () => new Map(),
+    fetchAndNormalizeBalancerPool: async (entry: any) => {
+      saturatedBalancerFetches += 1;
+      return {
+        addr: entry.pool_address.toLowerCase(),
+        normalized: {
+          poolId: entry.pool_address.toLowerCase(),
+          protocol: entry.protocol,
+          token0: entry.tokens[0],
+          token1: entry.tokens[1],
+          tokens: entry.tokens,
+          fee: 3_000_000_000_000_000n,
+          balances: [1_000n, 1_000n, 1_000n],
+          weights: [333_333_333_333_333_333n, 333_333_333_333_333_333n, 333_333_333_333_333_334n],
+          swapFee: 3_000_000_000_000_000n,
+          timestamp: Date.now(),
+        },
+      };
+    },
+    fetchAndNormalizeCurvePool: async () => {
+      throw new Error("curve fetch should not be used in additive warmup budget test");
+    },
+    throttledMap: async <T, R>(items: T[], mapper: (item: T) => Promise<R>) => Promise.all(items.map(mapper)),
+    polygonHubTokens: new Set([HUB_A, HUB_B]),
+    hub4Tokens: new Set([HUB_A, HUB_B]),
+    maxSyncWarmupPools: 2,
+    maxSyncWarmupV3Pools: 0,
+    maxSyncWarmupOneHubPools: 1,
+    v2PollConcurrency: 1,
+    v3PollConcurrency: 1,
+    enrichConcurrency: 1,
+  });
+
+  additiveBudgetWarmup.seedStateCache();
+  await additiveBudgetWarmup.warmupStateCache();
+
+  assert.equal(
+    saturatedBalancerFetches,
+    3,
+    "warmup should apply the one-hub budget in addition to the saturated hub-pair budget",
+  );
+}
+
+{
+  const CORE_SIMPLE = "0x9999999999999999999999999999999999999991";
+  const CORE_COMPLEX = "0x9999999999999999999999999999999999999992";
+  const NON_CORE = "0x9999999999999999999999999999999999999993";
+  let selectedAddresses: string[] = [];
+
+  const prioritizationWarmup = createWarmupManager({
+    getRegistry: () => ({
+      getPools: () => [
+        {
+          pool_address: NON_CORE,
+          protocol: "UNISWAP_V3",
+          status: "active",
+          tokens: [HUB_C, NON_HUB],
+          metadata: { fee: 3000, tickSpacing: 60 },
+        },
+        {
+          pool_address: CORE_COMPLEX,
+          protocol: "UNISWAP_V3",
+          status: "active",
+          tokens: [HUB_A, NON_HUB, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+          metadata: { fee: 3000 },
+        },
+        {
+          pool_address: CORE_SIMPLE,
+          protocol: "UNISWAP_V3",
+          status: "active",
+          tokens: [HUB_A, NON_HUB],
+          metadata: { fee: 3000, tickSpacing: 60 },
+        },
+      ],
+      getActivePoolsMeta() {
+        return this.getPools();
+      },
+      getCheckpoint: () => ({ last_block: 123 }),
+      getGlobalCheckpoint: () => 123,
+      batchUpdateStates: () => {},
+      disablePool: () => {},
+    }),
+    stateCache: new Map<string, Record<string, any>>(),
+    log: () => {},
+    getPoolTokens: (entry: any) => entry.tokens,
+    getPoolMetadata: (entry: any) => entry.metadata ?? {},
+    validatePoolState,
+    normalizePoolState: (_addr: string, protocol: string, tokens: string[]) => ({
+      poolId: "0xpool",
+      protocol,
+      token0: tokens[0],
+      token1: tokens[1],
+      tokens,
+      fee: 3000n,
+      sqrtPriceX96: 1n << 96n,
+      tick: 0,
+      liquidity: 1000n,
+      tickSpacing: 60,
+      ticks: new Map(),
+      initialized: true,
+      timestamp: Date.now(),
+    }),
+    fetchMultipleV2States: async () => new Map(),
+    fetchMultipleV3States: async (addresses: string[]) => {
+      selectedAddresses = addresses.map((address) => address.toLowerCase());
+      const states = new Map<string, Record<string, any>>();
+      for (const address of selectedAddresses) {
+        states.set(address, {
+          sqrtPriceX96: 1n << 96n,
+          tick: 0,
+          liquidity: 1000n,
+          tickSpacing: 60,
+          ticks: new Map(),
+          initialized: true,
+          fetchedAt: Date.now(),
+        });
+      }
+      return states;
+    },
+    fetchAndNormalizeBalancerPool: async () => {
+      throw new Error("balancer fetch should not be used in warmup prioritization test");
+    },
+    fetchAndNormalizeCurvePool: async () => {
+      throw new Error("curve fetch should not be used in warmup prioritization test");
+    },
+    throttledMap: async <T, R>(items: T[], mapper: (item: T) => Promise<R>) => Promise.all(items.map(mapper)),
+    polygonHubTokens: new Set([HUB_A, HUB_B, HUB_C]),
+    hub4Tokens: new Set([HUB_A, HUB_B]),
+    maxSyncWarmupPools: 0,
+    maxSyncWarmupV3Pools: 1,
+    maxSyncWarmupOneHubPools: 1,
+    v2PollConcurrency: 1,
+    v3PollConcurrency: 1,
+    enrichConcurrency: 1,
+  });
+
+  prioritizationWarmup.seedStateCache();
+  await prioritizationWarmup.warmupStateCache();
+
+  assert.deepEqual(
+    selectedAddresses,
+    [CORE_SIMPLE.toLowerCase()],
+    "warmup should prioritize simpler core-hub pools over non-core or more complex one-hub candidates",
+  );
+}
 
 console.log("Warmup checks passed.");

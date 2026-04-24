@@ -103,6 +103,7 @@ export function mapPoolRow(row: any) {
     tx: row.created_tx,
     metadata: parseJson(row.metadata, {}),
     status: row.status || "active",
+    removed_block: row.removed_block ?? null,
     state: row.state_data
       ? { block: row.last_updated_block, data: rehydrateStateData(row.protocol, parseJson(row.state_data, null)) }
       : null,
@@ -118,6 +119,7 @@ export function mapPoolMetaRow(row: any) {
     tx: row.created_tx,
     metadata: parseJson(row.metadata, {}),
     status: row.status || "active",
+    removed_block: row.removed_block ?? null,
     state: null,
   };
 }

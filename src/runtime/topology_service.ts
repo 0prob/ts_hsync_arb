@@ -43,6 +43,8 @@ type RegistryAdapter = {
 };
 
 type TopologyServiceDeps = {
+  routingCycleMode: "all" | "triangular";
+  routingMaxHops: number;
   maxTotalPaths: number;
   polygonHubTokens: Set<string>;
   hub4Tokens: Set<string>;
@@ -78,6 +80,24 @@ export function createTopologyService(deps: TopologyServiceDeps) {
   let queuedRefreshForce = false;
   let dirtyPoolAddresses = new Set<string>();
   let dirtyHubStartTokens = new Set<string>();
+
+  function cycleModeOptions(include4Hop: boolean) {
+    if (deps.routingCycleMode === "triangular") {
+      return {
+        include2Hop: false,
+        include3Hop: true,
+        include4Hop: false,
+        maxHops: 3,
+      };
+    }
+
+    return {
+      include2Hop: deps.routingMaxHops >= 2,
+      include3Hop: deps.routingMaxHops >= 3,
+      include4Hop: include4Hop && deps.routingMaxHops >= 4,
+      maxHops: deps.routingMaxHops,
+    };
+  }
 
   function edgeLiquidityWmatic(edge: SwapEdge, getRateWei: ((token: string) => bigint) | null) {
     if (!getRateWei) return 0n;
@@ -302,7 +322,9 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       const topologyKeyBase = `topology:${++topologyVersion}`;
       const activeHubGraph = hubGraph!;
       const activeFullGraph = fullGraph!;
-      const selective4HopTokens = selectHighLiquidityHubTokens(activeFullGraph, options.getRateWei);
+      const selective4HopTokens = deps.routingCycleMode === "triangular"
+        ? []
+        : selectHighLiquidityHubTokens(activeFullGraph, options.getRateWei);
       const dirtyStartTokens = [...dirtyHubStartTokens].filter((token) => activeFullGraph.hasToken(token));
       const canUseIncrementalRefresh =
         !rebuildGraphs &&
@@ -319,17 +341,13 @@ export function createTopologyService(deps: TopologyServiceDeps) {
 
         const [hubSer, fullSer, selective4HopSer] = await Promise.all([
           deps.workerPool.enumerate(hubTopo, hubTokens, {
-            include2Hop: true,
-            include3Hop: true,
-            include4Hop: true,
+            ...cycleModeOptions(true),
             maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.5 / Math.max(hubTokens.length, 1)),
             max4HopPathsPerToken: 2_000,
             topologyKey: `${topologyKeyBase}:hub`,
           }),
           deps.workerPool.enumerate(fullTopo, fullTokens, {
-            include2Hop: true,
-            include3Hop: true,
-            include4Hop: false,
+            ...cycleModeOptions(false),
             maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.35 / Math.max(fullTokens.length, 1)),
             topologyKey: `${topologyKeyBase}:full`,
           }),
@@ -363,9 +381,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         const partialHubCycles = affectedHubGraphTokens.length > 0
           ? deps.enumerateCycles(activeHubGraph, {
               startTokens: new Set(affectedHubGraphTokens),
-              include2Hop: true,
-              include3Hop: true,
-              include4Hop: true,
+              ...cycleModeOptions(true),
               maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.5 / Math.max(affectedHubGraphTokens.length, 1)),
               max4HopPathsPerToken: 2_000,
               maxTotalPaths: deps.maxTotalPaths,
@@ -373,9 +389,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
           : [];
         const partialFullCycles = deps.enumerateCycles(activeFullGraph, {
           startTokens: new Set(dirtyStartTokens),
-          include2Hop: true,
-          include3Hop: true,
-          include4Hop: false,
+          ...cycleModeOptions(false),
           maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.35 / Math.max(dirtyStartTokens.length, 1)),
           maxTotalPaths: deps.maxTotalPaths,
           minLiquidityWmatic: options.getRateWei ? options.minLiquidityWmatic : 0n,
@@ -401,8 +415,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         cachedCycles = mergeArbPaths(unaffectedCycles, partialHubCycles, partialFullCycles, selective4HopCycles);
       } else {
         const baseCycles = deps.enumerateCyclesDual(activeHubGraph, activeFullGraph, {
-          include2Hop: true,
-          include3Hop: true,
+          ...cycleModeOptions(false),
           maxPathsPerToken: Math.ceil(deps.maxTotalPaths / 7),
           max4HopPathsPerToken: 2_000,
           maxTotalPaths: deps.maxTotalPaths,
@@ -433,12 +446,13 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       dirtyPoolAddresses.clear();
       dirtyHubStartTokens.clear();
       lastCycleRefreshMs = Date.now();
-      deps.log(`Cycle refresh: ${cachedCycles.length} paths (hub+full, max ${deps.maxTotalPaths}).`, "info", {
+      deps.log(`Cycle refresh: ${cachedCycles.length} paths (${deps.routingCycleMode}, max ${deps.maxTotalPaths}).`, "info", {
         event: "cycle_refresh_complete",
         forced: force,
         topologyVersion,
         cachedPaths: cachedCycles.length,
         maxTotalPaths: deps.maxTotalPaths,
+        routingCycleMode: deps.routingCycleMode,
         selective4HopTokens: selective4HopTokens.length,
         routeCacheSize: deps.routeCache.routes.length,
       });

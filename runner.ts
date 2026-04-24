@@ -53,6 +53,8 @@ import {
   candidateOptimizedCount,
   candidateProfitableCount,
   candidateProfitableYield,
+  recordWatcherHalt,
+  setWatcherHealthy,
   startMetricsServer,
   stopMetricsServer,
 } from "./src/utils/metrics.ts";
@@ -69,6 +71,7 @@ import {
 import { createOpportunityEngine } from "./src/arb/opportunity_engine.ts";
 import { createWarmupManager } from "./src/bootstrap/warmup.ts";
 import { createDiscoveryCoordinator } from "./src/bootstrap/discovery.ts";
+import { parseRunnerArgs } from "./src/bootstrap/cli.ts";
 import { configureWatcherCallbacks, createArbScheduler, createShutdownHandler } from "./src/bootstrap/lifecycle.ts";
 import { createRuntimeContext } from "./src/runtime/runtime_context.ts";
 import { createTopologyService } from "./src/runtime/topology_service.ts";
@@ -100,6 +103,8 @@ import {
   SELECTIVE_4HOP_TOKEN_LIMIT,
   SELECTIVE_4HOP_PATH_BUDGET,
   SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
+  ROUTING_MAX_HOPS,
+  ROUTING_CYCLE_MODE,
   ENVIO_API_TOKEN,
 } from "./src/config/index.ts";
 
@@ -118,13 +123,12 @@ type PoolRecord = {
 // ─── CLI Arguments ─────────────────────────────────────────────
 
 const args = process.argv.slice(2);
-const LOOP_MODE       = args.includes("--loop");
-const LIVE_MODE       = args.includes("--live");
-const DISCOVERY_ONLY  = args.includes("--discovery-only");
-const TUI_MODE        = args.includes("--tui");
-const INTERVAL_IDX    = args.indexOf("--interval");
-const POLL_INTERVAL_SEC =
-  INTERVAL_IDX !== -1 ? parseInt(args[INTERVAL_IDX + 1], 10) : DEFAULT_POLL_INTERVAL_SEC;
+const parsedArgs = parseRunnerArgs(args, DEFAULT_POLL_INTERVAL_SEC);
+const LOOP_MODE      = parsedArgs.loopMode;
+const LIVE_MODE      = parsedArgs.liveMode;
+const DISCOVERY_ONLY = parsedArgs.discoveryOnly;
+const TUI_MODE       = parsedArgs.tuiMode;
+const POLL_INTERVAL_SEC = parsedArgs.pollIntervalSec;
 
 // ─── Configuration ─────────────────────────────────────────────
 
@@ -417,6 +421,8 @@ function stopHeartbeat() {
 }
 
 topologyService = createTopologyService({
+  routingCycleMode: ROUTING_CYCLE_MODE,
+  routingMaxHops: ROUTING_MAX_HOPS,
   maxTotalPaths: MAX_TOTAL_PATHS,
   polygonHubTokens: POLYGON_HUB_TOKENS,
   hub4Tokens: HUB_4_TOKENS,
@@ -859,6 +865,17 @@ async function main() {
         });
       }
     },
+    onHaltDetected: ({ payload }) => {
+      runtime.setRunning(false);
+      botState.status = 'error';
+      cancelScheduledArb();
+      stopHeartbeat();
+      recordWatcherHalt(payload);
+      log("[runner] Watcher halted; arb loop disabled until restart", "error", {
+        event: "watcher_halt",
+        ...payload,
+      });
+    },
     scheduleArb,
   });
 
@@ -869,6 +886,7 @@ async function main() {
     heartbeatMs: HEARTBEAT_INTERVAL_MS,
   });
       await watcher.start(undefined);
+  setWatcherHealthy();
 
   // Heartbeat: guarantee a scan even if the market is quiet
   heartbeat = setInterval(scheduleArb, HEARTBEAT_INTERVAL_MS);
@@ -878,6 +896,9 @@ async function main() {
 
   // Block until watcher stops (stop() resolves _loopPromise)
   await watcher.wait();
+  if (watcher.haltMeta) {
+    throw new Error(`Watcher halted: ${String(watcher.haltMeta.reason ?? "unknown reason")}`);
+  }
   stopHeartbeat();
 }
 

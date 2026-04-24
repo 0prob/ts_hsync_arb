@@ -30,10 +30,34 @@ function toBigIntInput(value: RawRouteResult[string]) {
     : 0;
 }
 
+function normalizeRouteAmount(value: RawRouteResult[string], fallback = 0n) {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "boolean") return value ? 1n : 0n;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) return fallback;
+    try {
+      return BigInt(value);
+    } catch {
+      return fallback;
+    }
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    if (!/^-?\d+$/.test(trimmed)) return fallback;
+    try {
+      return BigInt(trimmed);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 export function toRouteResultLike(result: RawRouteResult): RouteResultLike {
-  const amountIn = toBigIntInput(result.amountIn);
-  const amountOut = toBigIntInput(result.amountOut);
-  const profit = toBigIntInput(result.profit);
+  const amountIn = normalizeRouteAmount(toBigIntInput(result.amountIn));
+  const amountOut = normalizeRouteAmount(toBigIntInput(result.amountOut));
+  const profit = normalizeRouteAmount(toBigIntInput(result.profit));
   const profitable = typeof result.profitable === "boolean" ? result.profitable : undefined;
   const poolPath = Array.isArray(result.poolPath) && result.poolPath.every((item) => typeof item === "string")
     ? result.poolPath
@@ -42,12 +66,12 @@ export function toRouteResultLike(result: RawRouteResult): RouteResultLike {
     ? result.tokenPath
     : undefined;
   const hopAmounts = Array.isArray(result.hopAmounts)
-    ? result.hopAmounts.map((amount) => BigInt(amount))
+    ? result.hopAmounts.map((amount) => normalizeRouteAmount(amount))
     : undefined;
   const routeResult = {
-    amountIn: BigInt(amountIn),
-    amountOut: BigInt(amountOut),
-    profit: BigInt(profit),
+    amountIn,
+    amountOut,
+    profit,
     profitable,
     totalGas: Number(result.totalGas ?? 0),
     poolPath,

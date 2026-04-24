@@ -24,6 +24,14 @@ const GET_POOL_TOKENS_ABI = [
   },
 ];
 
+function normalizeAddressList(values: unknown) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => /^0x[0-9a-f]{40}$/.test(value));
+}
+
 /**
  * Fetch token addresses for a Balancer pool by its poolId.
  * Retries automatically on HTTP 429 / 5xx with exponential backoff.
@@ -31,15 +39,15 @@ const GET_POOL_TOKENS_ABI = [
  * @param {string} poolId  The 32-byte Balancer pool ID
  * @returns {Promise<string[]>}
  */
-export async function getBalancerTokens(poolId: any) {
+export async function getBalancerTokens(poolId: any, readContractImpl = readContractWithRetry) {
   try {
-    const [tokens] = await readContractWithRetry({
+    const [tokens] = await readContractImpl({
       address: VAULT_ADDRESS,
       abi: GET_POOL_TOKENS_ABI,
       functionName: "getPoolTokens",
       args: [poolId],
     });
-    return (tokens as any[]).map((t: any) => t.toString());
+    return normalizeAddressList(tokens);
   } catch (error: any) {
     if (isNoDataReadContractError(error)) {
       console.error(

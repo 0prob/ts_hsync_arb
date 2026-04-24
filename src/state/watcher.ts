@@ -38,7 +38,10 @@ import { logger } from "../utils/logger.ts";
 
 const WATCHER_LOOKBACK_BLOCKS = 100;
 const WATCHER_IDLE_SLEEP_MS = 1_000;
-const WATCHER_ERROR_SLEEP_MS = 5_000;
+const WATCHER_TRANSIENT_ERROR_SLEEP_MS = 5_000;
+const WATCHER_INTEGRITY_ERROR_SLEEP_MS = 15_000;
+const WATCHER_TRANSIENT_ERROR_SLEEP_MAX_MS = 30_000;
+const WATCHER_MAX_CONSECUTIVE_INTEGRITY_ERRORS = 3;
 
 const V2_SYNC = "event Sync(uint112 reserve0, uint112 reserve1)";
 const V3_SWAP = "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)";
@@ -82,7 +85,7 @@ const LOG_FIELDS = [
   LogField.LogIndex,
   LogField.TransactionIndex,
 ];
-const watcherLogger: any = logger.child({ component: "watcher" });
+export const watcherLogger: any = logger.child({ component: "watcher" });
 
 function compareRollbackGuards(a: any, b: any) {
   return (
@@ -164,6 +167,20 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+function normalizeWatchedAddresses(addresses: any[]) {
+  if (!Array.isArray(addresses) || addresses.length === 0) return [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const address of addresses) {
+    if (typeof address !== "string") continue;
+    const next = address.trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(next) || seen.has(next)) continue;
+    seen.add(next);
+    normalized.push(next);
+  }
+  return normalized;
+}
+
 export function watcherCheckpointFromNextBlock(nextBlock: any, currentLastBlock: any, archiveHeight?: any) {
   if (!Number.isFinite(nextBlock)) {
     throw new Error("HyperSync response did not include a finite nextBlock cursor; cannot advance watcher safely.");
@@ -176,7 +193,16 @@ export function watcherCheckpointFromNextBlock(nextBlock: any, currentLastBlock:
     );
   }
 
-  const numericArchiveHeight = Number(archiveHeight);
+  const rawArchiveHeight = archiveHeight;
+  const numericArchiveHeight = Number(rawArchiveHeight);
+  if (
+    nextBlock === requestedFromBlock &&
+    (rawArchiveHeight == null || !Number.isFinite(numericArchiveHeight))
+  ) {
+    throw new Error(
+      `HyperSync nextBlock cursor stalled at ${nextBlock} without archive height; cannot advance watcher safely.`,
+    );
+  }
   if (
     nextBlock === requestedFromBlock &&
     Number.isFinite(numericArchiveHeight) &&
@@ -191,6 +217,134 @@ export function watcherCheckpointFromNextBlock(nextBlock: any, currentLastBlock:
     return nextBlock - 1;
   }
   return Math.max(0, currentLastBlock);
+}
+
+export function watcherProgressMeta(
+  nextBlock: any,
+  currentLastBlock: any,
+  archiveHeight: any,
+  logCount = 0,
+  shardSummary: { archiveHeights?: number[] | null } | null = null,
+) {
+  const numericNextBlock = Number(nextBlock);
+  const numericArchiveHeight = Number(archiveHeight);
+  const checkpointBlock = watcherCheckpointFromNextBlock(numericNextBlock, currentLastBlock, archiveHeight);
+  const requestedFromBlock = Math.max(0, Number(currentLastBlock) + 1);
+  const advancedBlocks = Math.max(0, checkpointBlock - Number(currentLastBlock));
+  const caughtUp =
+    Number.isFinite(numericNextBlock) &&
+    Number.isFinite(numericArchiveHeight) &&
+    numericNextBlock >= numericArchiveHeight;
+  const hadLogs = Number(logCount) > 0;
+  const archiveHeights = Array.isArray(shardSummary?.archiveHeights) && shardSummary.archiveHeights.length > 0
+    ? [...shardSummary.archiveHeights]
+    : null;
+
+  let waitReason = null;
+  if (!hadLogs) {
+    waitReason = "empty_poll";
+  } else if (caughtUp) {
+    waitReason = "caught_up";
+  }
+
+  return {
+    requestedFromBlock,
+    nextBlock: numericNextBlock,
+    archiveHeight: Number.isFinite(numericArchiveHeight) ? numericArchiveHeight : null,
+    checkpointBlock,
+    advancedBlocks,
+    hadLogs,
+    caughtUp,
+    waitReason,
+    constrainedBySlowestShardArchiveHeight: Array.isArray(archiveHeights) && archiveHeights.length > 1,
+    shardArchiveHeights: archiveHeights,
+  };
+}
+
+export function watcherErrorBackoffMeta(
+  error: unknown,
+  consecutivePollErrors: number,
+  backoffMs: number,
+  currentLastBlock: any,
+  errorCategory: string | null = null,
+) {
+  const err = error as { message?: string; name?: string } | null | undefined;
+  return {
+    error: String(err?.message ?? error ?? "Unknown watcher error"),
+    errorName: err?.name ?? null,
+    errorCategory,
+    consecutivePollErrors: Math.max(1, Number(consecutivePollErrors) || 1),
+    backoffMs: Math.max(0, Number(backoffMs) || 0),
+    currentLastBlock: Math.max(0, Number(currentLastBlock) || 0),
+  };
+}
+
+export function classifyWatcherPollError(error: unknown) {
+  const message = String((error as { message?: string } | null | undefined)?.message ?? error ?? "").toLowerCase();
+  if (
+    message.includes("did not include a finite nextblock cursor") ||
+    message.includes("stalled at") ||
+    message.includes("regressed from requested block") ||
+    message.includes("mismatched rollback guards") ||
+    message.includes("incomplete shard metadata") ||
+    message.includes("inconsistent chain views")
+  ) {
+    return "integrity";
+  }
+  return "transient";
+}
+
+export function watcherErrorBackoffMs(error: unknown, consecutivePollErrors: number) {
+  const category = classifyWatcherPollError(error);
+  if (category === "integrity") {
+    return WATCHER_INTEGRITY_ERROR_SLEEP_MS;
+  }
+
+  const streak = Math.max(1, Number(consecutivePollErrors) || 1);
+  return Math.min(
+    WATCHER_TRANSIENT_ERROR_SLEEP_MS * Math.max(1, 2 ** (streak - 1)),
+    WATCHER_TRANSIENT_ERROR_SLEEP_MAX_MS,
+  );
+}
+
+export function watcherShouldHaltAfterIntegrityError(consecutiveIntegrityErrors: number) {
+  return Math.max(0, Number(consecutiveIntegrityErrors) || 0) >= WATCHER_MAX_CONSECUTIVE_INTEGRITY_ERRORS;
+}
+
+export function watcherReorgMeta(
+  reorgBlock: any,
+  rollbackResult: { poolsRemoved?: any; statesRemoved?: any } | null | undefined,
+  changedAddrs: unknown,
+  checkpointBlock: any,
+) {
+  const changedAddrCount = Array.isArray(changedAddrs)
+    ? changedAddrs.length
+    : changedAddrs instanceof Set
+      ? changedAddrs.size
+      : 0;
+  return {
+    reorgBlock: Math.max(0, Number(reorgBlock) || 0),
+    checkpointBlock: Math.max(0, Number(checkpointBlock) || 0),
+    poolsRemoved: Math.max(0, Number(rollbackResult?.poolsRemoved) || 0),
+    statesRemoved: Math.max(0, Number(rollbackResult?.statesRemoved) || 0),
+    cacheEntriesReloaded: changedAddrCount,
+  };
+}
+
+export function watcherHaltMeta(
+  error: unknown,
+  consecutiveIntegrityPollErrors: number,
+  haltThreshold: number,
+  currentLastBlock: any,
+) {
+  const err = error as { message?: string; name?: string } | null | undefined;
+  return {
+    reason: String(err?.message ?? error ?? "Unknown watcher halt reason"),
+    errorName: err?.name ?? null,
+    consecutiveIntegrityPollErrors: Math.max(0, Number(consecutiveIntegrityPollErrors) || 0),
+    haltThreshold: Math.max(0, Number(haltThreshold) || 0),
+    currentLastBlock: Math.max(0, Number(currentLastBlock) || 0),
+  };
 }
 
 export class StateWatcher {
@@ -208,8 +362,12 @@ export class StateWatcher {
   private _enrichmentEpoch: number;
   private _sleepTimer: ReturnType<typeof setTimeout> | null;
   private _sleepResolve: (() => void) | null;
+  private _consecutivePollErrors: number;
+  private _consecutiveIntegrityPollErrors: number;
+  private _haltMeta: Record<string, unknown> | null;
   onBatch: ((batch: any) => void) | null;
   onReorg: ((reorg: any) => void) | null;
+  onHalt: ((event: Record<string, unknown>) => void) | null;
 
   constructor(registry: any, stateCache: any) {
     this._registry = registry;
@@ -226,9 +384,13 @@ export class StateWatcher {
     this._enrichmentEpoch = 0;
     this._sleepTimer = null;
     this._sleepResolve = null;
+    this._consecutivePollErrors = 0;
+    this._consecutiveIntegrityPollErrors = 0;
+    this._haltMeta = null;
 
     this.onBatch = null;
     this.onReorg = null;
+    this.onHalt = null;
   }
 
   async start(fromBlock: any) {
@@ -318,14 +480,19 @@ export class StateWatcher {
     return this._lastBlock;
   }
 
+  get haltMeta() {
+    return this._haltMeta;
+  }
+
   _buildQueries() {
+    const watchedAddresses = normalizeWatchedAddresses(this._watchedAddresses);
     // HyperSync enforces a 2 MB HTTP request-body limit. Instead of dropping to
     // topic-only filtering once the address set grows, shard the address list
     // across multiple filters and requests so the watcher stays selective at
     // larger pool counts without overflowing request payload limits.
     const logFilters =
-      this._watchedAddresses.length > 0
-        ? chunk(this._watchedAddresses, HYPERSYNC_MAX_ADDRESS_FILTER).map((addresses) => ({
+      watchedAddresses.length > 0
+        ? chunk(watchedAddresses, HYPERSYNC_MAX_ADDRESS_FILTER).map((addresses) => ({
             address: addresses,
             topics: [TOPICS],
           }))
@@ -349,6 +516,7 @@ export class StateWatcher {
     let rollbackGuard = null;
     let nextBlock = Number.POSITIVE_INFINITY;
     let archiveHeight = Number.POSITIVE_INFINITY;
+    const shardArchiveHeights = new Set<number>();
 
     const responses = await Promise.all(queries.map((query) => client.get(query)));
     if (!this._running) {
@@ -360,7 +528,7 @@ export class StateWatcher {
         if (!rollbackGuard) {
           rollbackGuard = res.rollbackGuard;
         } else if (!compareRollbackGuards(rollbackGuard, res.rollbackGuard)) {
-          watcherLogger.warn("Watcher shard responses returned mismatched rollback guards; using the first guard");
+          throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
         }
       }
 
@@ -368,15 +536,25 @@ export class StateWatcher {
         logs.push(...res.data.logs);
       }
 
-      const shardNextBlock = Number(res.nextBlock);
-      if (Number.isFinite(shardNextBlock)) {
-        nextBlock = Math.min(nextBlock, shardNextBlock);
+      const rawShardNextBlock = res.nextBlock;
+      const shardNextBlock = Number(rawShardNextBlock);
+      if (rawShardNextBlock == null || !Number.isFinite(shardNextBlock)) {
+        throw new Error("Watcher shard response did not include a finite nextBlock cursor; cannot merge incomplete shard metadata.");
       }
+      nextBlock = Math.min(nextBlock, shardNextBlock);
 
       const shardArchiveHeight = Number(res.archiveHeight);
       if (Number.isFinite(shardArchiveHeight)) {
         archiveHeight = Math.min(archiveHeight, shardArchiveHeight);
+        shardArchiveHeights.add(shardArchiveHeight);
       }
+    }
+
+    if (shardArchiveHeights.size > 1) {
+      watcherLogger.warn(
+        { archiveHeights: [...shardArchiveHeights].sort((a, b) => a - b) },
+        "Watcher shard responses returned inconsistent archive heights; using the slowest shard height",
+      );
     }
 
     return {
@@ -384,6 +562,9 @@ export class StateWatcher {
       data: { logs: dedupeWatcherLogs(sortWatcherLogs(logs)) },
       nextBlock: Number.isFinite(nextBlock) ? nextBlock : null,
       archiveHeight: Number.isFinite(archiveHeight) ? archiveHeight : null,
+      shardSummary: {
+        archiveHeights: [...shardArchiveHeights].sort((a, b) => a - b),
+      },
     };
   }
 
@@ -434,6 +615,18 @@ export class StateWatcher {
         const res = await this._pollOnce();
         if (!res) break;
         if (!this._running) break;
+        if (this._consecutivePollErrors > 0) {
+          watcherLogger.info(
+            {
+              consecutivePollErrors: this._consecutivePollErrors,
+              consecutiveIntegrityPollErrors: this._consecutiveIntegrityPollErrors,
+              resumedFromBlock: this._lastBlock + 1,
+            },
+            "Watcher poll recovered after errors"
+          );
+          this._consecutivePollErrors = 0;
+          this._consecutiveIntegrityPollErrors = 0;
+        }
 
         if (res.rollbackGuard) {
           const reorgBlock = detectReorg(this._registry, res.rollbackGuard);
@@ -441,12 +634,13 @@ export class StateWatcher {
             watcherLogger.warn({ reorgBlock }, "Reorg detected; rolling back registry state");
             this._advanceEnrichmentEpoch();
             const rb = this._registry.rollbackToBlock(reorgBlock);
-            watcherLogger.warn(
-              { reorgBlock, poolsRemoved: rb.poolsRemoved, statesRemoved: rb.statesRemoved },
-              "Registry rollback completed"
-            );
-            this._lastBlock = Math.max(0, reorgBlock - 1);
+            const checkpointBlock = Math.max(0, reorgBlock - 1);
+            this._lastBlock = checkpointBlock;
             const changedAddrs = this._reloadCacheFromRegistry();
+            watcherLogger.warn(
+              watcherReorgMeta(reorgBlock, rb, changedAddrs, checkpointBlock),
+              "Watcher reorg rollback summary"
+            );
             this._registry.setCheckpoint(this._checkpointKey, this._lastBlock);
             this._registry.setRollbackGuard(res.rollbackGuard);
             if (this.onReorg) {
@@ -468,7 +662,14 @@ export class StateWatcher {
 
         const nextBlock = Number(res.nextBlock);
         const archiveHeight = Number(res.archiveHeight);
-        const checkpointBlock = watcherCheckpointFromNextBlock(nextBlock, this._lastBlock, archiveHeight);
+        const progress = watcherProgressMeta(
+          nextBlock,
+          this._lastBlock,
+          archiveHeight,
+          logs.length,
+          res.shardSummary ?? null,
+        );
+        const checkpointBlock = progress.checkpointBlock;
         if (checkpointBlock > this._lastBlock) {
           this._lastBlock = checkpointBlock;
           this._registry.setCheckpoint(this._checkpointKey, this._lastBlock);
@@ -478,18 +679,56 @@ export class StateWatcher {
           this.onBatch(changedAddrs);
         }
 
-        const caughtUp =
-          Number.isFinite(nextBlock) &&
-          Number.isFinite(archiveHeight) &&
-          nextBlock >= archiveHeight;
+        if (
+          progress.advancedBlocks > 0 ||
+          progress.waitReason != null ||
+          progress.constrainedBySlowestShardArchiveHeight
+        ) {
+          watcherLogger.info(progress, "Watcher poll progress");
+        }
 
-        if (logs.length === 0 || caughtUp) {
+        if (logs.length === 0 || progress.caughtUp) {
           await this._sleep(WATCHER_IDLE_SLEEP_MS);
         }
       } catch (err: any) {
         if (!this._running) break;
-        watcherLogger.error({ error: err.message }, "HyperSync poll error");
-        await this._sleep(WATCHER_ERROR_SLEEP_MS);
+        this._consecutivePollErrors += 1;
+        const errorCategory = classifyWatcherPollError(err);
+        if (errorCategory === "integrity") {
+          this._consecutiveIntegrityPollErrors += 1;
+        } else {
+          this._consecutiveIntegrityPollErrors = 0;
+        }
+        const backoffMs = watcherErrorBackoffMs(err, this._consecutivePollErrors);
+        watcherLogger.error(
+          {
+            ...watcherErrorBackoffMeta(err, this._consecutivePollErrors, backoffMs, this._lastBlock, errorCategory),
+            consecutiveIntegrityPollErrors: this._consecutiveIntegrityPollErrors,
+          },
+          "HyperSync poll error"
+        );
+        if (
+          errorCategory === "integrity" &&
+          watcherShouldHaltAfterIntegrityError(this._consecutiveIntegrityPollErrors)
+        ) {
+          const haltMeta = watcherHaltMeta(
+            err,
+            this._consecutiveIntegrityPollErrors,
+            WATCHER_MAX_CONSECUTIVE_INTEGRITY_ERRORS,
+            this._lastBlock,
+          );
+          this._haltMeta = haltMeta;
+          watcherLogger.error(
+            haltMeta,
+            "Watcher halted after repeated integrity failures"
+          );
+          this._running = false;
+          this._closed = true;
+          this.onHalt?.(haltMeta);
+          this._wakeSleep();
+          break;
+        }
+        await this._sleep(backoffMs);
       }
     }
   }

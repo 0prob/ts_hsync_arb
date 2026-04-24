@@ -27,6 +27,10 @@ type CachedPath = { startToken: string; edges: CachedEdge[] };
 type CachedResult = { profit: bigint | string };
 type CachedEntry = { path: CachedPath; result: CachedResult; profit: bigint };
 
+function normalisePoolAddress(poolAddress: string) {
+  return poolAddress.toLowerCase();
+}
+
 export class RouteCache {
   private _maxSize: number;
   private _routes: CachedEntry[];
@@ -59,24 +63,21 @@ export class RouteCache {
       profit: typeof result.profit === "bigint" ? result.profit : BigInt(result.profit),
     }));
 
-    // Merge with existing routes, then sort and cap
-    const merged = [...this._routes, ...toAdd];
-    merged.sort((a, b) => (b.profit > a.profit ? 1 : b.profit < a.profit ? -1 : 0));
-
-    // Deduplicate by ordered route key. Pool-set-only dedup drops
-    // order-sensitive cyclic routes that can still execute differently.
-    const seen = new Set();
-    const deduped: CachedEntry[] = [];
-    for (const entry of merged) {
-      const key = routeKeyFromEdges(entry.path.startToken, entry.path.edges);
-      if (!seen.has(key)) {
-        seen.add(key);
-        deduped.push(entry);
-        if (deduped.length >= this._maxSize) break;
-      }
+    // Prefer the latest observation for a route before ranking by profit.
+    // Otherwise an older, stale high-profit snapshot can mask a fresh lower-profit update.
+    const latestByRouteKey = new Map<string, CachedEntry>();
+    for (const entry of this._routes) {
+      latestByRouteKey.set(routeKeyFromEdges(entry.path.startToken, entry.path.edges), entry);
+    }
+    for (const entry of toAdd) {
+      latestByRouteKey.set(routeKeyFromEdges(entry.path.startToken, entry.path.edges), entry);
     }
 
-    this._routes = deduped;
+    // Rank current route snapshots and cap the cache size.
+    const merged = [...latestByRouteKey.values()];
+    merged.sort((a, b) => (b.profit > a.profit ? 1 : b.profit < a.profit ? -1 : 0));
+
+    this._routes = merged.slice(0, this._maxSize);
     this._rebuildIndex();
   }
 
@@ -126,9 +127,12 @@ export class RouteCache {
    * @param {Map<string, object>} stateCache
    */
   prune(stateCache: Map<string, object>) {
+    const normalisedStatePools = new Set(
+      [...stateCache.keys()].map((poolAddress) => normalisePoolAddress(poolAddress))
+    );
     const before = this._routes.length;
     this._routes = this._routes.filter((entry) =>
-      entry.path.edges.every((e) => stateCache.has(e.poolAddress))
+      entry.path.edges.every((e) => normalisedStatePools.has(normalisePoolAddress(e.poolAddress)))
     );
     if (this._routes.length < before) this._rebuildIndex();
   }
@@ -143,7 +147,7 @@ export class RouteCache {
    * @returns {number} number of removed routes
    */
   removeByPools(poolAddresses: Set<string> | string[]) {
-    const blocked = new Set([...poolAddresses].map((pool) => pool.toLowerCase()));
+    const blocked = new Set([...poolAddresses].map((pool) => normalisePoolAddress(pool)));
     if (blocked.size === 0 || this._routes.length === 0) return 0;
 
     const before = this._routes.length;
@@ -172,7 +176,7 @@ export class RouteCache {
     this._poolIndex.clear();
     for (let i = 0; i < this._routes.length; i++) {
       for (const edge of this._routes[i].path.edges) {
-        const pool = edge.poolAddress.toLowerCase();
+        const pool = normalisePoolAddress(edge.poolAddress);
         if (!this._poolIndex.has(pool)) this._poolIndex.set(pool, new Set());
         this._poolIndex.get(pool)?.add(i);
       }

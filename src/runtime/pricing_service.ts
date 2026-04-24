@@ -16,6 +16,21 @@ type PricingServiceDeps = {
   testAmountWei: bigint;
 };
 
+function normalizeDecimals(decimals: unknown) {
+  const numeric = Number(decimals);
+  if (!Number.isFinite(numeric)) return 18;
+  const truncated = Math.trunc(numeric);
+  return Math.max(0, Math.min(truncated, 18));
+}
+
+function normalizeNonNegativeBigInt(value: unknown) {
+  return typeof value === "bigint" && value >= 0n ? value : 0n;
+}
+
+function normalizePositiveBigInt(value: unknown, fallback: bigint) {
+  return typeof value === "bigint" && value > 0n ? value : fallback;
+}
+
 function uniqueSortedBigInts(values: Array<string | number | bigint>) {
   return [...new Set(values.map(String))]
     .map((value) => BigInt(value))
@@ -46,35 +61,36 @@ function formatTokenAmount(amount: bigint, decimals: number, fractionDigits = 6)
 
 export function createPricingService(deps: PricingServiceDeps) {
   function getFreshTokenToMaticRate(tokenAddress: string) {
-    return deps.getPriceOracle()?.getFreshRate?.(tokenAddress, deps.maxPriceAgeMs) ?? 0n;
+    const rate = deps.getPriceOracle()?.getFreshRate?.(tokenAddress, deps.maxPriceAgeMs);
+    return normalizeNonNegativeBigInt(rate);
   }
 
   function getProbeAmountsForToken(tokenAddress: string) {
-    let decimals = deps.getTokenMeta(tokenAddress)?.decimals;
-    if (decimals == null) decimals = 18;
-
-    const rawUnit = 10n ** BigInt(Math.max(0, Math.min(Number(decimals), 18)));
+    const decimals = normalizeDecimals(deps.getTokenMeta(tokenAddress)?.decimals);
+    const rawUnit = 10n ** BigInt(decimals);
+    const minProbeAmount = normalizePositiveBigInt(deps.minProbeAmount, 1n);
+    const testAmountWei = normalizePositiveBigInt(deps.testAmountWei, rawUnit);
     const oracle = deps.getPriceOracle();
     const oracleScaledProbes = oracle
       ? [
-          oracle.fromMatic(tokenAddress, 5n * 10n ** 16n), // 0.05 MATIC
-          oracle.fromMatic(tokenAddress, 5n * 10n ** 17n), // 0.5 MATIC
-          oracle.fromMatic(tokenAddress, 2n * 10n ** 18n), // 2 MATIC
-          oracle.fromMatic(tokenAddress, 10n ** 19n),      // 10 MATIC
+          normalizeNonNegativeBigInt(oracle.fromMatic(tokenAddress, 5n * 10n ** 16n)), // 0.05 MATIC
+          normalizeNonNegativeBigInt(oracle.fromMatic(tokenAddress, 5n * 10n ** 17n)), // 0.5 MATIC
+          normalizeNonNegativeBigInt(oracle.fromMatic(tokenAddress, 2n * 10n ** 18n)), // 2 MATIC
+          normalizeNonNegativeBigInt(oracle.fromMatic(tokenAddress, 10n ** 19n)),      // 10 MATIC
         ]
       : [];
     const probes = uniqueSortedBigInts([
-      deps.minProbeAmount,
+      minProbeAmount,
       rawUnit / 10n,
       rawUnit,
       rawUnit * 10n,
       rawUnit * 100n,
       rawUnit * 1_000n,
-      deps.testAmountWei,
+      testAmountWei,
       ...oracleScaledProbes,
     ]);
 
-    return probes.filter((amount) => amount >= deps.minProbeAmount);
+    return probes.filter((amount) => amount > 0n && amount >= minProbeAmount);
   }
 
   function fmtSym(addr: string) {

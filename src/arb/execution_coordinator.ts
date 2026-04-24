@@ -5,6 +5,7 @@ import {
   type ArbPathLike,
   type ExecutableCandidate,
 } from "./assessment.ts";
+import { routeIdentityFromEdges } from "../routing/route_identity.ts";
 
 type QuarantineEntry = {
   until: number;
@@ -72,7 +73,7 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
   }
 
   function executionRouteKey(path: ArbPathLike) {
-    return `${path.startToken.toLowerCase()}::${path.edges.map((edge) => edge.poolAddress.toLowerCase()).join("::")}`;
+    return routeIdentityFromEdges(path.startToken, path.edges);
   }
 
   function pruneExecutionRouteQuarantine(now = Date.now()) {

@@ -50,6 +50,36 @@ const CALL_STRUCT_ARRAY_ABI = [
   },
 ] as const;
 
+function normalizeExecutorCall(call: any, index: number) {
+  if (!call || typeof call !== "object") {
+    throw new Error(`executor call ${index} must be an object`);
+  }
+
+  const target = getAddress(call.target);
+  const value = BigInt(call.value ?? 0);
+  if (value < 0n) {
+    throw new Error(`executor call ${index} value must be >= 0`);
+  }
+
+  const data = typeof call.data === "string" ? call.data : "";
+  if (!/^0x([0-9a-fA-F]{2})*$/.test(data)) {
+    throw new Error(`executor call ${index} data must be a 0x-prefixed even-length hex string`);
+  }
+
+  return {
+    target,
+    value,
+    data: data.toLowerCase(),
+  };
+}
+
+function normalizeExecutorCalls(calls: any) {
+  if (!Array.isArray(calls)) {
+    throw new Error("executor calls must be an array");
+  }
+  return calls.map((call, index) => normalizeExecutorCall(call, index));
+}
+
 // ─── Per-hop encoders ─────────────────────────────────────────
 
 const CALLBACK_PROTOCOL_UNISWAP_V3 = 1;
@@ -219,6 +249,18 @@ export function encodeCurveHop(hop: any, executor: any, options: any = {}) {
   const { slippageBps = 50 } = options;
   const pool     = getAddress(hop.poolAddress);
   const tokenIn  = getAddress(hop.tokenIn);
+  const tokenInIdx = Number(hop.tokenInIdx);
+  const tokenOutIdx = Number(hop.tokenOutIdx);
+
+  if (!Number.isInteger(tokenInIdx) || tokenInIdx < 0) {
+    throw new Error(`encodeCurveHop: tokenInIdx required for pool ${hop.poolAddress}`);
+  }
+  if (!Number.isInteger(tokenOutIdx) || tokenOutIdx < 0) {
+    throw new Error(`encodeCurveHop: tokenOutIdx required for pool ${hop.poolAddress}`);
+  }
+  if (tokenInIdx === tokenOutIdx) {
+    throw new Error(`encodeCurveHop: token indices must differ for pool ${hop.poolAddress}`);
+  }
 
   // Apply slippage to minimum output
   const minDy = (hop.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
@@ -230,8 +272,8 @@ export function encodeCurveHop(hop: any, executor: any, options: any = {}) {
 
   // Call 2: Execute the exchange
   const abi = hop.isCrypto ? CURVE_EXCHANGE_UINT256_ABI : CURVE_EXCHANGE_INT128_ABI;
-  const iIdx = hop.isCrypto ? BigInt(hop.tokenInIdx)  : hop.tokenInIdx;
-  const jIdx = hop.isCrypto ? BigInt(hop.tokenOutIdx) : hop.tokenOutIdx;
+  const iIdx = hop.isCrypto ? BigInt(tokenInIdx)  : tokenInIdx;
+  const jIdx = hop.isCrypto ? BigInt(tokenOutIdx) : tokenOutIdx;
 
   calls.push({
     target: pool,
@@ -363,8 +405,9 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
  * `calls` is `Call[]` and `Call` is `(address target,uint256 value,bytes data)`.
  */
 export function computeRouteHash(calls: any) {
+  const normalizedCalls = normalizeExecutorCalls(calls);
   const encoded = encodeAbiParameters(CALL_STRUCT_ARRAY_ABI, [
-    calls.map((c: any) => ({ target: c.target, value: c.value, data: c.data })),
+    normalizedCalls.map((c: any) => ({ target: c.target, value: c.value, data: c.data })),
   ]);
 
   return keccak256(encoded);
@@ -381,14 +424,15 @@ export function buildFlashParams({
   deadline,
   calls,
 }: any) {
-  const routeHash = computeRouteHash(calls);
+  const normalizedCalls = normalizeExecutorCalls(calls);
+  const routeHash = computeRouteHash(normalizedCalls);
 
   return {
     profitToken: getAddress(profitToken),
     minProfit,
     deadline,
     routeHash,
-    calls,
+    calls: normalizedCalls,
   };
 }
 

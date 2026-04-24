@@ -93,7 +93,7 @@ type PendingJob = {
 };
 
 function isUsableSlot(slot: WorkerSlot | null | undefined): slot is WorkerSlot {
-  return slot != null && slot.worker != null && !slot.busy;
+  return slot != null && slot.worker != null && !slot.busy && !slot.disabled;
 }
 
 function buildChunkStateObject(paths: PathLike[], stateCache: WorkerStateMap) {

@@ -89,7 +89,10 @@ const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled
 
 export function createWarmupManager(deps: WarmupDeps) {
   function effectiveSyncWarmupV3FullBudget() {
-    const cappedByTotalWarmup = Math.min(deps.maxSyncWarmupV3Pools, deps.maxSyncWarmupPools);
+    const cappedByTotalWarmup = Math.min(
+      deps.maxSyncWarmupV3Pools,
+      deps.maxSyncWarmupPools + deps.maxSyncWarmupOneHubPools,
+    );
     return Math.max(0, cappedByTotalWarmup);
   }
 
@@ -427,19 +430,42 @@ export function createWarmupManager(deps: WarmupDeps) {
   function warmupPriority(pool: PoolRecord) {
     const tokens = deps.getPoolTokens(pool);
     let coreHubMatches = 0;
+    let totalHubMatches = 0;
     for (const token of tokens) {
-      if (!deps.hub4Tokens.has(token)) continue;
-      coreHubMatches++;
-      if (coreHubMatches >= 2) break;
+      if (deps.polygonHubTokens.has(token)) totalHubMatches++;
+      if (deps.hub4Tokens.has(token)) coreHubMatches++;
     }
     const bothCoreHubs = coreHubMatches >= 2;
+    const tokenCount = tokens.length > 0 ? tokens.length : Number.MAX_SAFE_INTEGER;
+    const metadata = deps.getPoolMetadata(pool);
 
     let protocolRank = 3;
     if (WARMUP_V2.has(pool.protocol)) protocolRank = 0;
     else if (WARMUP_V3.has(pool.protocol)) protocolRank = 1;
     else if (WARMUP_BAL.has(pool.protocol)) protocolRank = 2;
 
-    return [bothCoreHubs ? 0 : 1, protocolRank, pool.pool_address.toLowerCase()];
+    let metadataReadiness = 0;
+    if (WARMUP_V2.has(pool.protocol)) {
+      if (metadata.feeNumerator != null || metadata.fee != null) metadataReadiness += 1;
+    } else if (WARMUP_V3.has(pool.protocol)) {
+      if (metadata.fee != null) metadataReadiness += 2;
+      if (metadata.tickSpacing != null) metadataReadiness += 1;
+      if (metadata.isAlgebra === true) metadataReadiness += 1;
+    } else if (WARMUP_BAL.has(pool.protocol)) {
+      if (metadata.poolId != null || metadata.pool_id != null) metadataReadiness += 2;
+    } else if (WARMUP_CRV.has(pool.protocol)) {
+      if (metadata.coins != null || metadata.nCoins != null) metadataReadiness += 1;
+    }
+
+    return [
+      bothCoreHubs ? 0 : 1,
+      -Math.min(coreHubMatches, 4),
+      -Math.min(totalHubMatches, 8),
+      tokenCount,
+      -metadataReadiness,
+      protocolRank,
+      pool.pool_address.toLowerCase(),
+    ];
   }
 
   function compareWarmupPriority(a: PoolRecord, b: PoolRecord) {
@@ -505,15 +531,11 @@ export function createWarmupManager(deps: WarmupDeps) {
     }
 
     const prioritizedHubPairPools = takeTopNBy(hubPairPools, deps.maxSyncWarmupPools, compareWarmupPriority);
-    const secondaryWarmupBudget = Math.max(0, Math.min(
-      deps.maxSyncWarmupOneHubPools,
-      deps.maxSyncWarmupPools - prioritizedHubPairPools.length,
-    ));
+    const secondaryWarmupBudget = Math.max(0, deps.maxSyncWarmupOneHubPools);
     const prioritizedOneHubPools = takeTopNBy(oneHubPools, secondaryWarmupBudget, compareWarmupPriority);
     const syncWarmupPools = [];
 
     for (const pool of prioritizedHubPairPools) {
-      if (syncWarmupPools.length >= deps.maxSyncWarmupPools) break;
       syncWarmupPools.push(pool);
     }
 

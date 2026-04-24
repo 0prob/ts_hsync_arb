@@ -20,6 +20,15 @@ const GET_COINS_ABI = [
   },
 ];
 
+function normalizeCurveTokenList(values: unknown) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value !== ZERO)
+    .filter((value) => /^0x[0-9a-f]{40}$/.test(value));
+}
+
 /**
  * Fetch token addresses for a Curve pool via the registry.
  * Retries automatically on HTTP 429 / 5xx with exponential backoff.
@@ -28,17 +37,15 @@ const GET_COINS_ABI = [
  * @param {string} registryAddress Curve registry that tracks this pool
  * @returns {Promise<string[]>}
  */
-export async function getCurveTokens(poolAddress: any, registryAddress: any) {
+export async function getCurveTokens(poolAddress: any, registryAddress: any, readContractImpl = readContractWithRetry) {
   try {
-    const tokens = await readContractWithRetry({
+    const tokens = await readContractImpl({
       address: registryAddress,
       abi: GET_COINS_ABI,
       functionName: "get_coins",
       args: [poolAddress],
     });
-    return (tokens as any[])
-      .filter((t: any) => t !== ZERO)
-      .map((t: any) => t.toString());
+    return normalizeCurveTokenList(tokens);
   } catch (error: any) {
     if (isNoDataReadContractError(error)) {
       console.error(

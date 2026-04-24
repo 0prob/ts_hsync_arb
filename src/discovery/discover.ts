@@ -67,11 +67,47 @@ function discoveryCheckpointFromNextBlock(nextBlock: number | null, fallbackFrom
   return Math.max(0, fallbackFromBlock - 1);
 }
 
-function decodeDiscoveryLogs(
+function normalizeDiscoveryDecodeResult(extracted: unknown): DecodeResult {
+  const decoded = extracted && typeof extracted === "object"
+    ? extracted as Record<string, unknown>
+    : {};
+  const poolAddress = typeof decoded.pool_address === "string"
+    ? decoded.pool_address.trim().toLowerCase()
+    : undefined;
+  const tokens = Array.isArray(decoded.tokens)
+    ? decoded.tokens
+        .map((token) => (typeof token === "string" ? token.trim().toLowerCase() : null))
+        .filter((token): token is string => Boolean(token))
+    : [];
+  const metadata =
+    decoded.metadata && typeof decoded.metadata === "object" && !Array.isArray(decoded.metadata)
+      ? decoded.metadata as Record<string, unknown>
+      : {};
+
+  return {
+    pool_address: poolAddress,
+    tokens,
+    metadata,
+  };
+}
+
+function assertDecodedLogsAligned(protocolName: string, logs: DiscoveryRawLog[], decodedLogs: unknown[]) {
+  if (!Array.isArray(decodedLogs)) {
+    throw new Error(`${protocolName} decoder returned a non-array decode result.`);
+  }
+  if (decodedLogs.length !== logs.length) {
+    throw new Error(
+      `${protocolName} decoder returned ${decodedLogs.length} decoded log(s) for ${logs.length} raw log(s).`,
+    );
+  }
+}
+
+export function decodeDiscoveryLogs(
   protocol: DiscoveryProtocol,
   logs: DiscoveryRawLog[],
   decodedLogs: unknown[],
 ): { extractedPools: DiscoveredPoolCandidate[]; errors: number } {
+  assertDecodedLogsAligned(protocol.name, logs, decodedLogs);
   let errors = 0;
   const extractedPools: DiscoveredPoolCandidate[] = [];
 
@@ -81,7 +117,7 @@ function decodeDiscoveryLogs(
     if (!decoded) continue;
 
     try {
-      const extracted = protocol.decode(decoded, rawLog) as DecodeResult;
+      const extracted = normalizeDiscoveryDecodeResult(protocol.decode(decoded, rawLog) as DecodeResult);
       if (!extracted.pool_address || typeof extracted.pool_address !== "string") {
         console.warn(
           `  Warning: Could not extract pool address for ${protocol.name} at block ${rawLog.blockNumber}`
@@ -293,25 +329,34 @@ async function discoverCurveRemovals(registry: RegistryService, context: { chain
   }
 
   const decodedLogs = await decoder.decodeLogs(logs);
-  const removedPoolAddresses = new Set<string>();
+  const removedPoolBlocks = new Map<string, number>();
 
   for (let i = 0; i < decodedLogs.length; i++) {
     const decoded = decodedLogs[i];
     if (!decoded) continue;
 
     const poolAddress = decoded.indexed[0]?.val?.toString()?.toLowerCase();
+    const blockNumber = Number((logs[i] as any)?.blockNumber ?? 0);
     if (poolAddress) {
-      removedPoolAddresses.add(poolAddress);
+      const prior = removedPoolBlocks.get(poolAddress);
+      if (prior == null || (Number.isFinite(blockNumber) && blockNumber < prior)) {
+        removedPoolBlocks.set(poolAddress, Number.isFinite(blockNumber) ? blockNumber : 0);
+      }
     }
   }
 
-  const removed = registry.batchRemovePools([...removedPoolAddresses]);
+  const removed = registry.batchRemovePools(
+    [...removedPoolBlocks.entries()].map(([address, block]) => ({
+      address,
+      removed_block: block,
+    })),
+  );
   registry.setCheckpoint(checkpointKey, checkpointBlock);
-  console.log(`  Marked ${removed} pools as removed from ${removedPoolAddresses.size} removal event(s).`);
+  console.log(`  Marked ${removed} pools as removed from ${removedPoolBlocks.size} removal event(s).`);
   discoveryLogger.info(
     {
       protocol: checkpointKey,
-      removalEvents: removedPoolAddresses.size,
+      removalEvents: removedPoolBlocks.size,
       poolsRemoved: removed,
       checkpointBlock,
     },

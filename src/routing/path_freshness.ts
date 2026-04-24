@@ -6,16 +6,25 @@ type PathLike = {
 
 type StateCacheLike = Map<string, { timestamp?: number } | undefined>;
 
+function normalisePoolAddress(poolAddress: string) {
+  return poolAddress.toLowerCase();
+}
+
 export function getPathFreshness(
   path: PathLike,
   stateCache: StateCacheLike,
   options: { maxAgeMs: number; maxSkewMs: number },
 ) {
+  const normalisedStateCache = new Map<string, { timestamp?: number } | undefined>();
+  for (const [poolAddress, state] of stateCache.entries()) {
+    normalisedStateCache.set(normalisePoolAddress(poolAddress), state);
+  }
+
   let oldest = Infinity;
   let newest = -Infinity;
 
   for (const edge of path.edges) {
-    const state = stateCache.get(edge.poolAddress);
+    const state = normalisedStateCache.get(normalisePoolAddress(edge.poolAddress));
     const ts = Number(state?.timestamp ?? NaN);
     if (!Number.isFinite(ts)) {
       return { ok: false, reason: "missing pool timestamp" };

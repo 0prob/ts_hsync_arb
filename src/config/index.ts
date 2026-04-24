@@ -62,15 +62,21 @@ const _perf = _loadPerfJson();
  * @param {string} perfKey  Key inside perf.json params object
  * @param {number} def      Built-in default
  */
+function _parseSafeNonNegativeConfigNumber(raw: unknown) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isSafeInteger(n) || n < 0) return null;
+  return n;
+}
+
 function _num(envKey: string, perfKey: string, def: number): number {
   if (process.env[envKey] != null && process.env[envKey] !== "") {
-    const n = Number(process.env[envKey]);
-    if (Number.isFinite(n)) return n;
+    const n = _parseSafeNonNegativeConfigNumber(process.env[envKey]);
+    if (n != null) return n;
     console.warn(`[config] Invalid numeric env ${envKey}=${process.env[envKey]} — using fallback`);
   }
   if (_perf[perfKey] != null) {
-    const n = Number(_perf[perfKey]);
-    if (Number.isFinite(n)) return n;
+    const n = _parseSafeNonNegativeConfigNumber(_perf[perfKey]);
+    if (n != null) return n;
     console.warn(`[config] Invalid numeric perf.json value for ${perfKey}=${_perf[perfKey]} — using fallback`);
   }
   return def;
@@ -83,6 +89,14 @@ function _addressList(envKey: string): string[] {
     .split(",")
     .map((entry) => entry.trim().toLowerCase())
     .filter((entry) => /^0x[0-9a-f]{40}$/.test(entry));
+}
+
+function _routingCycleMode(envKey: string, def: "all" | "triangular"): "all" | "triangular" {
+  const raw = (process.env[envKey] || "").trim().toLowerCase();
+  if (!raw) return def;
+  if (raw === "all" || raw === "triangular") return raw;
+  console.warn(`[config] Invalid routing cycle mode ${envKey}=${process.env[envKey]} — using fallback`);
+  return def;
 }
 
 // ─── HyperSync ─────────────────────────────────────────────────
@@ -461,6 +475,19 @@ export const SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN = _num(
   "SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN",
   1_500
 );
+
+/** Maximum routing hop count considered during bounded path search. */
+export const ROUTING_MAX_HOPS = Math.max(
+  2,
+  Math.floor(_num("ROUTING_MAX_HOPS", "ROUTING_MAX_HOPS", 6))
+);
+
+/**
+ * Route search mode.
+ *   "all"         — scan 2-hop, 3-hop, and selected 4-hop routes
+ *   "triangular"  — scan only 3-hop triangular routes
+ */
+export const ROUTING_CYCLE_MODE = _routingCycleMode("ROUTING_CYCLE_MODE", "all");
 
 /** Optional env-driven hub-token extensions. */
 export const EXTRA_POLYGON_HUB_TOKENS = _addressList("EXTRA_POLYGON_HUB_TOKENS");

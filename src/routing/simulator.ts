@@ -21,6 +21,7 @@ import { simulateBalancerSwap } from "../math/balancer.ts";
 import { workerPool } from "./worker_pool.ts";
 import { EVAL_WORKER_THRESHOLD, WORKER_COUNT } from "../config/index.ts";
 import { getPathHopCount } from "./path_hops.ts";
+import { resolveSwapTokenIndexes } from "./swap_indices.ts";
 
 // ─── Protocol classification ─────────────────────────────────
 
@@ -81,20 +82,28 @@ export function simulateHop(edge: any, amountIn: any, stateCache: any) {
   }
 
   if (CURVE_PROTOCOLS.has(protocol)) {
+    const indexes = resolveSwapTokenIndexes(edge, state);
+    if (!indexes) {
+      return { amountOut: 0n, gasEstimate: 0 };
+    }
     return simulateCurveSwap(
       amountIn,
       state,
-      edge.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
-      edge.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0)
+      indexes.tokenInIdx,
+      indexes.tokenOutIdx,
     );
   }
 
   if (BALANCER_PROTOCOLS.has(protocol)) {
+    const indexes = resolveSwapTokenIndexes(edge, state);
+    if (!indexes) {
+      return { amountOut: 0n, gasEstimate: 0 };
+    }
     return simulateBalancerSwap(
       amountIn,
       state,
-      edge.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
-      edge.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0)
+      indexes.tokenInIdx,
+      indexes.tokenOutIdx,
     );
   }
 

@@ -11,7 +11,15 @@ import { logger } from "../utils/logger.ts";
 const watcherStateLogger: any = logger.child({ component: "watcher_state_ops" });
 
 export function toTopicArray(log: any) {
-  return [log.topic0, log.topic1, log.topic2, log.topic3].filter((v) => v != null);
+  if (Array.isArray(log?.topics)) {
+    const flattened = log.topics.flatMap((topic: any) =>
+      Array.isArray(topic) ? topic : [topic],
+    ).filter((topic: any) => topic != null);
+    if (flattened.length > 0) {
+      return flattened;
+    }
+  }
+  return [log?.topic0, log?.topic1, log?.topic2, log?.topic3].filter((v) => v != null);
 }
 
 export async function handleWatcherLogs({
@@ -180,8 +188,8 @@ export function mergeWatcherState(cache: any, addr: any, nextState: any) {
 }
 
 export function commitWatcherState(cache: any, persistState: any, addr: any, state: any, rawLog: any) {
-  validateWatcherStateOrThrow(state);
   state.timestamp = Date.now();
+  validateWatcherStateOrThrow(state);
   cache.set(addr, state);
   persistState(addr, state, rawLog);
 }
@@ -197,8 +205,8 @@ export function commitWatcherStatesBatch(cache: any, persistStates: any, updates
     const addr = update?.addr?.toLowerCase?.();
     const state = update?.state;
     if (!addr || !state) continue;
-    validateWatcherStateOrThrow(state);
     state.timestamp = committedAt;
+    validateWatcherStateOrThrow(state);
     cache.set(addr, state);
     committed.push({
       pool_address: addr,

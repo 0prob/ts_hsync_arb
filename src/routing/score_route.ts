@@ -70,10 +70,13 @@ function scaledRatioToApproxNumber(
  *
  * @param {number} gasEstimate   Estimated gas units
  * @param {bigint} [gasPriceWei] Gas price in wei (default 30 gwei)
- * @returns {bigint}
+ * @returns {bigint | null}
  */
 export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
   const price = gasPriceWei ?? DEFAULT_GAS_PRICE_GWEI * GWEI;
+  if (!Number.isFinite(gasEstimate) || gasEstimate < 0) return null;
+  if (!Number.isInteger(gasEstimate)) return null;
+  if (price < 0n) return null;
   return BigInt(gasEstimate) * price;
 }
 
@@ -110,9 +113,14 @@ export function scoreRoute(path: RouteLike, result: RouteResultLike, options: Sc
 
   if (!result.profitable || result.profit <= 0n) return null;
   if (result.amountIn <= 0n) return null;
+  if (result.amountOut != null && result.profit !== result.amountOut - result.amountIn) return null;
+  if (!Number.isFinite(result.totalGas) || result.totalGas < 0) return null;
   if (tokenToMaticRate != null && tokenToMaticRate <= 0n) return null;
+  if (gasPriceWei != null && gasPriceWei < 0n) return null;
+  if (minNetProfit < 0n) return null;
 
   const gasCostWei = estimateGasCostWei(result.totalGas, gasPriceWei);
+  if (gasCostWei == null) return null;
   const gasCostInTokens = gasCostInStartTokenUnits(gasCostWei, tokenToMaticRate);
 
   // Ranking-only gas normalization. If we know the token/MATIC conversion,
@@ -194,6 +202,7 @@ type RouteResultLike = {
   profitable: boolean;
   profit: bigint;
   amountIn: bigint;
+  amountOut?: bigint;
   totalGas: number;
 };
 

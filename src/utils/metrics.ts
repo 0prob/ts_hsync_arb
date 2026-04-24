@@ -118,6 +118,58 @@ export const registryInvalidPools = new client.Gauge({
   registers: [register],
 });
 
+/** Gauge for watcher health in loop mode: 1 healthy, 0 halted/unhealthy */
+export const watcherHealth = new client.Gauge({
+  name: "arb_watcher_health",
+  help: "Watcher health status in loop mode (1 healthy, 0 unhealthy)",
+  registers: [register],
+});
+
+/** Counter for watcher halts surfaced to operators/supervisors */
+export const watcherHalts = new client.Counter({
+  name: "arb_watcher_halts_total",
+  help: "Total number of watcher halts by reason category",
+  labelNames: ["reason_category"],
+  registers: [register],
+});
+
+/** Gauge for the most recent block at which the watcher halted */
+export const watcherLastHaltBlock = new client.Gauge({
+  name: "arb_watcher_last_halt_block",
+  help: "Most recent block height associated with a watcher halt",
+  registers: [register],
+});
+
+/** Gauge for the watcher integrity-error streak at the time of health change */
+export const watcherIntegrityErrorStreak = new client.Gauge({
+  name: "arb_watcher_integrity_error_streak",
+  help: "Current or last-seen consecutive watcher integrity error streak",
+  registers: [register],
+});
+
+export function classifyWatcherHaltReason(reason: unknown) {
+  const message = String(reason ?? "").toLowerCase();
+  if (message.includes("rollback guards")) return "rollback_guard";
+  if (message.includes("nextblock") || message.includes("cursor") || message.includes("stalled at")) return "cursor";
+  return "other";
+}
+
+export function setWatcherHealthy() {
+  watcherHealth.set(1);
+  watcherIntegrityErrorStreak.set(0);
+}
+
+export function recordWatcherHalt(payload: {
+  reason?: unknown;
+  consecutiveIntegrityPollErrors?: unknown;
+  currentLastBlock?: unknown;
+}) {
+  watcherHealth.set(0);
+  watcherIntegrityErrorStreak.set(Math.max(0, Number(payload?.consecutiveIntegrityPollErrors) || 0));
+  watcherLastHaltBlock.set(Math.max(0, Number(payload?.currentLastBlock) || 0));
+  watcherHalts.labels(classifyWatcherHaltReason(payload?.reason)).inc();
+}
+
 /**
  * Accessor for the full metrics object — used by validation_job.js to avoid
  * circular imports when metrics may not be loaded.
@@ -125,7 +177,13 @@ export const registryInvalidPools = new client.Gauge({
  * @returns {{ registry_invalid_pools: Gauge }}
  */
 export function getMetrics() {
-  return { registry_invalid_pools: registryInvalidPools };
+  return {
+    registry_invalid_pools: registryInvalidPools,
+    watcher_health: watcherHealth,
+    watcher_halts_total: watcherHalts,
+    watcher_last_halt_block: watcherLastHaltBlock,
+    watcher_integrity_error_streak: watcherIntegrityErrorStreak,
+  };
 }
 
 // ─── Metrics Server ────────────────────────────────────────────

@@ -25,6 +25,48 @@ import { WorkerPool } from "../src/routing/worker_pool.ts";
 }
 
 {
+  const pool = new WorkerPool(2) as any;
+  pool._initialized = true;
+  const dispatched: any[] = [];
+  pool._dispatchToSlot = (slot: any, id: number, data: any) => {
+    dispatched.push({ slot, id, data });
+  };
+  pool._slots = [
+    {
+      worker: {} as any,
+      busy: false,
+      currentJobId: null,
+      syncedStateVersions: new Map(),
+      syncedPoolAddresses: new Set(),
+      syncedTopologyKey: null,
+      respawnTimer: null,
+      startupFailures: 0,
+      disabled: true,
+    },
+    {
+      worker: {} as any,
+      busy: false,
+      currentJobId: null,
+      syncedStateVersions: new Map(),
+      syncedPoolAddresses: new Set(),
+      syncedTopologyKey: null,
+      respawnTimer: null,
+      startupFailures: 0,
+      disabled: false,
+    },
+  ];
+
+  const promise = pool._submit({ type: "EVALUATE", paths: [] });
+  assert.equal(dispatched.length, 1, "submit should dispatch immediately when a usable non-disabled slot exists");
+  assert.equal(dispatched[0].slot, pool._slots[1], "disabled slots should not be treated as usable worker slots");
+  const pending = pool._pending.get(dispatched[0].id);
+  assert(pending, "dispatched work should remain tracked as pending until the worker responds");
+  pending.resolve([]);
+  pool._pending.delete(dispatched[0].id);
+  await promise;
+}
+
+{
   const pool = new WorkerPool(1) as any;
   let rejected: Error | null = null;
   pool._pending.set(7, {

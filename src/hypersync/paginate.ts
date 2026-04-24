@@ -93,6 +93,11 @@ export async function fetchAllLogsWithClient<TLog>(
         "HyperSync response did not include a finite nextBlock cursor; cannot paginate safely."
       );
     }
+    if (archiveHeight == null && currentQuery.toBlock == null && nextBlock === pageFromBlock) {
+      throw new Error(
+        `HyperSync nextBlock cursor stalled at ${nextBlock} without archive height; cannot determine whether pagination is complete.`,
+      );
+    }
     const targetEnd = resolvePaginationTarget(currentQuery, nextBlock, archiveHeight);
     if (nextBlock < pageFromBlock) {
       throw new Error(

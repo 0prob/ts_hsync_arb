@@ -37,6 +37,7 @@ import {
   getPoolFee as getPoolFeeRecord,
   getTokenDecimals as getTokenDecimalsRecord,
   getTokenMeta as getTokenMetaRecord,
+  normalizeTokenDecimals as normalizeTokenDecimalsRecord,
   upsertPoolFee as upsertPoolFeeRecord,
   upsertTokenMeta as upsertTokenMetaRecord,
 } from "./registry_assets.ts";
@@ -72,6 +73,7 @@ export class RegistryService {
   _metaCache: RegistryMetaCache;
   _tokenMetaCache: Map<string, Record<string, unknown> | null>;
   _tokenDecimalsCache: Map<string, number>;
+  _poolFeeCache: Map<string, { feeBps: number; feeRaw: string | null } | null>;
   _stmtFn: (key: string, sql: string) => ReturnType<CompatDatabase["prepare"]>;
   _invalidatePoolMetaCacheFn: () => void;
   _recordLiquidityEventFn: (...args: any[]) => void;
@@ -90,6 +92,7 @@ export class RegistryService {
     this._metaCache = new RegistryMetaCache(this._stmtFn);
     this._tokenMetaCache = new Map();
     this._tokenDecimalsCache = new Map();
+    this._poolFeeCache = new Map();
   }
 
   // ─── Schema ──────────────────────────────────────────────────
@@ -103,7 +106,8 @@ export class RegistryService {
         created_block INTEGER NOT NULL,
         created_tx TEXT NOT NULL,
         metadata TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active'
+        status TEXT NOT NULL DEFAULT 'active',
+        removed_block INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS pool_state (
@@ -190,6 +194,7 @@ export class RegistryService {
     // Migrations for existing databases
     const migrations = [
       `ALTER TABLE pools ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+      `ALTER TABLE pools ADD COLUMN removed_block INTEGER`,
       `CREATE INDEX IF NOT EXISTS idx_pools_status_protocol ON pools(status, protocol)`,
       `CREATE INDEX IF NOT EXISTS idx_liquidity_events_addr_block ON liquidity_events(address, block_number)`,
     ];
@@ -233,6 +238,12 @@ export class RegistryService {
     return trimmed || null;
   }
 
+  _normalizePoolAddress(address: string | null | undefined) {
+    if (typeof address !== "string") return null;
+    const trimmed = address.trim().toLowerCase();
+    return trimmed || null;
+  }
+
   _cacheTokenMetaEntry(meta: {
     address?: string | null;
     decimals?: number | null;
@@ -244,18 +255,70 @@ export class RegistryService {
 
     const cachedMeta = meta == null
       ? null
-      : {
-          address: normalizedAddress,
-          decimals: meta.decimals,
-          symbol: this._normalizeTokenText(meta.symbol ?? null),
-          name: this._normalizeTokenText(meta.name ?? null),
-        };
+      : (() => {
+          try {
+            return {
+              address: normalizedAddress,
+              decimals: normalizeTokenDecimalsRecord(meta.decimals),
+              symbol: this._normalizeTokenText(meta.symbol ?? null),
+              name: this._normalizeTokenText(meta.name ?? null),
+            };
+          } catch {
+            return null;
+          }
+        })();
 
     this._tokenMetaCache.set(normalizedAddress, cachedMeta);
     if (cachedMeta?.decimals != null) {
       this._tokenDecimalsCache.set(normalizedAddress, cachedMeta.decimals);
     }
     return cachedMeta;
+  }
+
+  _cachePoolFeeEntry(poolAddress: string | null | undefined, fee: {
+    feeBps: number;
+    feeRaw: string | null;
+  } | null | undefined) {
+    const normalizedAddress = this._normalizePoolAddress(poolAddress);
+    if (!normalizedAddress) return null;
+
+    const cachedFee = fee == null
+      ? null
+      : {
+          feeBps: Number(fee.feeBps),
+          feeRaw: fee.feeRaw != null ? String(fee.feeRaw) : null,
+        };
+    this._poolFeeCache.set(normalizedAddress, cachedFee);
+    return cachedFee;
+  }
+
+  _invalidateTokenAssetCacheEntry(address: string | null | undefined) {
+    const normalizedAddress = this._normalizeTokenAddress(address);
+    if (!normalizedAddress) return;
+    this._tokenMetaCache.delete(normalizedAddress);
+    this._tokenDecimalsCache.delete(normalizedAddress);
+  }
+
+  _invalidatePoolFeeCacheEntry(poolAddress: string | null | undefined) {
+    const normalizedAddress = this._normalizePoolAddress(poolAddress);
+    if (!normalizedAddress) return;
+    this._poolFeeCache.delete(normalizedAddress);
+  }
+
+  _refreshTokenMetaCacheAfterWrite(address: string, decimals: number, symbol: string | null = null, name: string | null = null) {
+    const normalizedSymbol = this._normalizeTokenText(symbol);
+    const normalizedName = this._normalizeTokenText(name);
+    if (normalizedSymbol != null && normalizedName != null) {
+      this._cacheTokenMetaEntry({ address, decimals, symbol: normalizedSymbol, name: normalizedName });
+      return;
+    }
+    this._invalidateTokenAssetCacheEntry(address);
+  }
+
+  invalidateAssetCaches() {
+    this._tokenMetaCache.clear();
+    this._tokenDecimalsCache.clear();
+    this._poolFeeCache.clear();
   }
 
   upsertPool(metadata: Record<string, unknown>) {
@@ -275,12 +338,12 @@ export class RegistryService {
     );
   }
 
-  batchRemovePools(addresses: string[]) {
+  batchRemovePools(removals: Array<string | { address?: string; pool_address?: string; removed_block?: number; removedBlock?: number; block?: number }>) {
     return batchRemovePoolsRecord(
       this._stmtFn,
       this._invalidatePoolMetaCacheFn,
       this.db,
-      addresses
+      removals
     );
   }
 
@@ -424,7 +487,7 @@ export class RegistryService {
    */
   upsertTokenMeta(address: string, decimals: number, symbol: string | null = null, name: string | null = null) {
     upsertTokenMetaRecord(this.db, address, decimals, symbol, name);
-    this._cacheTokenMetaEntry({ address, decimals, symbol, name });
+    this._refreshTokenMetaCacheAfterWrite(address, decimals, symbol, name);
   }
 
   /**
@@ -472,12 +535,19 @@ export class RegistryService {
 
     const fetched = getTokenDecimalsRecord(this.db, misses);
     for (const [address, decimals] of fetched.entries()) {
-      this._tokenDecimalsCache.set(address, decimals);
-      result.set(address, decimals);
+      let normalizedDecimals: number;
+      try {
+        normalizedDecimals = normalizeTokenDecimalsRecord(decimals);
+      } catch {
+        this._invalidateTokenAssetCacheEntry(address);
+        continue;
+      }
+      this._tokenDecimalsCache.set(address, normalizedDecimals);
+      result.set(address, normalizedDecimals);
       if (this._tokenMetaCache.has(address)) {
         const meta = this._tokenMetaCache.get(address);
         if (meta) {
-          this._tokenMetaCache.set(address, { ...meta, decimals });
+          this._tokenMetaCache.set(address, { ...meta, decimals: normalizedDecimals });
         }
       }
     }
@@ -493,16 +563,12 @@ export class RegistryService {
   batchUpsertTokenMeta(tokens: Array<{ address: string; decimals: number; symbol?: string; name?: string }>) {
     batchUpsertTokenMetaRecords(this.db, tokens);
     for (const token of tokens) {
-      const normalizedAddress = this._normalizeTokenAddress(token?.address);
-      if (!normalizedAddress) continue;
-      const prior = this._tokenMetaCache.get(normalizedAddress);
-      const next = {
-        address: normalizedAddress,
-        decimals: token.decimals,
-        symbol: this._normalizeTokenText(token.symbol ?? prior?.symbol as string | null | undefined),
-        name: this._normalizeTokenText(token.name ?? prior?.name as string | null | undefined),
-      };
-      this._cacheTokenMetaEntry(next);
+      this._refreshTokenMetaCacheAfterWrite(
+        token?.address,
+        token?.decimals,
+        token?.symbol ?? null,
+        token?.name ?? null,
+      );
     }
   }
 
@@ -518,6 +584,7 @@ export class RegistryService {
    */
   upsertPoolFee(poolAddress: any, feeBps: any, feeRaw = null, protocol = null) {
     upsertPoolFeeRecord(this.db, poolAddress, feeBps, feeRaw, protocol);
+    this._invalidatePoolFeeCacheEntry(poolAddress);
   }
 
   /**
@@ -527,7 +594,13 @@ export class RegistryService {
    * @returns {{ feeBps: number, feeRaw: string|null } | null}
    */
   getPoolFee(poolAddress: any) {
-    return getPoolFeeRecord(this.db, poolAddress);
+    const normalizedAddress = this._normalizePoolAddress(poolAddress);
+    if (!normalizedAddress) return null;
+    if (this._poolFeeCache.has(normalizedAddress)) {
+      return this._poolFeeCache.get(normalizedAddress) ?? null;
+    }
+    const fee = getPoolFeeRecord(this.db, normalizedAddress);
+    return this._cachePoolFeeEntry(normalizedAddress, fee);
   }
 
   // ─── Disabled Pool Tracking ───────────────────────────────────

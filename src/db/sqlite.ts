@@ -41,12 +41,14 @@ export class CompatDatabase {
   db: DatabaseSync;
   _statementCache: Map<string, CompatStatement>;
   _namedStatementCache: Map<string, CompatStatement>;
+  _namedStatementSql: Map<string, string>;
   _savepointId: number;
   _closed: boolean;
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this._statementCache = new Map();
     this._namedStatementCache = new Map();
+    this._namedStatementSql = new Map();
     this._savepointId = 0;
     this._closed = false;
   }
@@ -60,8 +62,15 @@ export class CompatDatabase {
   }
 
   statement(key: string, sql: string) {
+    const cachedSql = this._namedStatementSql.get(key);
+    if (cachedSql != null && cachedSql !== sql) {
+      throw new Error(
+        `CompatDatabase.statement key collision for "${key}": existing SQL does not match new SQL`,
+      );
+    }
     if (!this._namedStatementCache.has(key)) {
       this._namedStatementCache.set(key, this.prepare(sql));
+      this._namedStatementSql.set(key, sql);
     }
     return this._namedStatementCache.get(key)!;
   }
@@ -87,6 +96,9 @@ export class CompatDatabase {
 
       try {
         const result = fn(...args);
+        if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+          throw new Error("CompatDatabase.transaction does not support async functions");
+        }
         if (nested) {
           this.db.exec(`RELEASE SAVEPOINT ${savepoint}`);
         } else {
@@ -108,6 +120,7 @@ export class CompatDatabase {
   close() {
     if (this._closed) return;
     this._closed = true;
+    this._namedStatementSql.clear();
     this._namedStatementCache.clear();
     this._statementCache.clear();
     this.db.close();

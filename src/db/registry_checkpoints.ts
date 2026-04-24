@@ -81,16 +81,31 @@ export function rollbackToBlock(db: import('./sqlite.ts').CompatDatabase, block:
   const resetCheckpoints = checkpointStmt(
     db,
     "rollbackResetCheckpoints",
-    `UPDATE checkpoints SET last_block = ? WHERE last_block > ?`
+    `UPDATE checkpoints
+     SET last_block = ?,
+         last_block_hash = NULL,
+         updated_at = datetime('now')
+     WHERE last_block > ?`
+  );
+  const reactivateRemovedPools = checkpointStmt(
+    db,
+    "rollbackReactivateRemovedPools",
+    `UPDATE pools
+     SET status = 'active',
+         removed_block = NULL
+     WHERE status = 'removed'
+       AND removed_block >= ?`
   );
 
   return db.transaction(() => {
     const stateResult = deleteState.run(block);
     const poolResult = deletePools.run(block);
+    const reactivatedResult = reactivateRemovedPools.run(block);
     resetCheckpoints.run(block - 1, block - 1);
     return {
       poolsRemoved: poolResult.changes,
       statesRemoved: stateResult.changes,
+      poolsReactivated: reactivatedResult.changes,
     };
   })();
 }

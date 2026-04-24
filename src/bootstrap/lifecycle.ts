@@ -146,10 +146,12 @@ export function configureWatcherCallbacks(deps: {
   watcher: {
     onBatch: ((changedAddrs: Set<string>) => void) | null;
     onReorg: ((payload: { reorgBlock: number; changedAddrs?: Iterable<string> | Array<string> }) => void) | null;
+    onHalt: ((payload: Record<string, unknown>) => void) | null;
   };
   log: LoggerFn;
   onPoolsChanged: (event: { type: "pools_changed"; changedPools: Set<string> }) => Promise<void> | void;
   onReorgDetected: (event: { type: "reorg_detected"; reorgBlock: number; changedPools: Set<string> }) => Promise<void> | void;
+  onHaltDetected?: (event: { type: "watcher_halt"; payload: Record<string, unknown> }) => Promise<void> | void;
   scheduleArb: (changedPools?: number) => void;
 }) {
   deps.watcher.onBatch = (changedAddrs: Set<string>) => {
@@ -187,6 +189,18 @@ export function configureWatcherCallbacks(deps: {
       });
     }).finally(() => {
       deps.scheduleArb(changedPools.size);
+    });
+  };
+
+  deps.watcher.onHalt = (payload: Record<string, unknown>) => {
+    Promise.resolve(deps.onHaltDetected?.({
+      type: "watcher_halt",
+      payload,
+    })).catch((err: unknown) => {
+      deps.log(`Watcher halt handling failed: ${errorMessage(err)}`, "warn", {
+        event: "watcher_halt_error",
+        err,
+      });
     });
   };
 }

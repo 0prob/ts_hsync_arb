@@ -122,4 +122,54 @@ assert.deepEqual(
   "enumerateCyclesDual should short-circuit the full graph once the hub phase exhausts the path budget",
 );
 
+const dualWithNegativeHubBudget = enumerateCyclesDual({
+  hasToken() {
+    throw new Error("hub graph should not be consulted when the hub budget is clamped to zero");
+  },
+  getEdges() {
+    throw new Error("hub graph should not be consulted when the hub budget is clamped to zero");
+  },
+  getEdgesBetween() {
+    throw new Error("hub graph should not be consulted when the hub budget is clamped to zero");
+  },
+}, graph, {
+  include2Hop: true,
+  include3Hop: false,
+  maxTotalPaths: 2,
+  hubPathBudget: -5,
+});
+
+assert.deepEqual(
+  dualWithNegativeHubBudget.map((path) => path.edges.map((edge: Edge) => edge.poolAddress).join(">")),
+  ["ab-fast>ba-fast", "ac-mid>ca-mid"],
+  "enumerateCyclesDual should clamp negative hub budgets and fall back cleanly to the full-graph phase",
+);
+
+const longHopGraph = new FakeGraph([
+  makeV2Edge(START, "B", "ab-1", 1_000n, 700n),
+  makeV2Edge("B", "C", "bc-2", 1_000n, 700n),
+  makeV2Edge("C", "D", "cd-3", 1_000n, 700n),
+  makeV2Edge("D", "E", "de-4", 1_000n, 700n),
+  makeV2Edge("E", START, "ea-5", 1_000n, 700n),
+]);
+
+const fiveHop = enumerateCycles(longHopGraph, {
+  hubTokensOnly: false,
+  startTokens: new Set([START]),
+  include2Hop: false,
+  include3Hop: false,
+  include4Hop: true,
+  maxHops: 5,
+  max4HopPathsPerToken: 4,
+  maxTotalPaths: 4,
+});
+
+assert.equal(fiveHop.length, 1, "enumerateCycles should discover bounded 5-hop routes when maxHops is raised");
+assert.equal(fiveHop[0]?.hopCount, 5, "bounded long-hop discovery should preserve the canonical hop count");
+assert.deepEqual(
+  fiveHop[0]?.edges.map((edge: Edge) => edge.poolAddress),
+  ["ab-1", "bc-2", "cd-3", "de-4", "ea-5"],
+  "bounded long-hop discovery should keep the full execution order intact",
+);
+
 console.log("Cycle enumeration checks passed.");

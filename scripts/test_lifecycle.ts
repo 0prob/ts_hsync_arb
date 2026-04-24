@@ -176,9 +176,11 @@ async function testWatcherCallbacksScheduleAfterStateWork() {
   const watcher: {
     onBatch: ((changed: Set<string>) => void) | null;
     onReorg: ((payload: { reorgBlock: number; changedAddrs?: Iterable<string> }) => void) | null;
+    onHalt: ((payload: Record<string, unknown>) => void) | null;
   } = {
     onBatch: null,
     onReorg: null,
+    onHalt: null,
   };
 
   configureWatcherCallbacks({
@@ -193,6 +195,9 @@ async function testWatcherCallbacksScheduleAfterStateWork() {
     },
     onReorgDetected: () => {
       steps.push("reorg");
+    },
+    onHaltDetected: ({ payload }) => {
+      steps.push(`halt:${String(payload.reason ?? "unknown")}`);
     },
     scheduleArb: (changedPools = 0) => {
       steps.push(`schedule:${changedPools}`);
@@ -214,6 +219,16 @@ async function testWatcherCallbacksScheduleAfterStateWork() {
   await Promise.resolve();
   await setImmediatePromise();
   assert.equal(steps.join("|"), "batch:start|batch:end|schedule:2|reorg|schedule:1");
+
+  watcher.onHalt?.({ reason: "fatal watcher fault" });
+  await Promise.resolve();
+  await Promise.resolve();
+  await setImmediatePromise();
+  assert.equal(
+    steps.join("|"),
+    "batch:start|batch:end|schedule:2|reorg|schedule:1|halt:fatal watcher fault",
+    "watcher halts should be forwarded to the supervisor callback without scheduling more arb work",
+  );
 }
 
 await testSchedulerWaitForIdle();

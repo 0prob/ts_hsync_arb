@@ -12,6 +12,7 @@ import {
   parseJson,
   stringifyWithBigInt,
 } from "./registry_codec.ts";
+import { parsePoolMetadataValue, parsePoolTokensValue } from "../util/pool_record.ts";
 
 function assertPoolAddress(metadata: any) {
   if (!metadata.pool_address) {
@@ -23,14 +24,18 @@ function assertPoolAddress(metadata: any) {
 
 function normalizePoolUpsertRecord(pool: any) {
   assertPoolAddress(pool);
+  const removedBlock = pool.removed_block ?? pool.removedBlock ?? null;
   return {
     ...pool,
     pool_address: String(pool.pool_address).toLowerCase(),
     protocol: String(pool.protocol ?? ""),
-    tokens: lowerCaseAddressList(Array.isArray(pool.tokens) ? pool.tokens : parseJson(pool.tokens, [])),
+    tokens: lowerCaseAddressList(
+      Array.isArray(pool.tokens) ? pool.tokens : parsePoolTokensValue(pool.tokens),
+    ),
     tx: pool.tx != null ? String(pool.tx) : "",
-    metadata: pool.metadata ?? {},
+    metadata: parsePoolMetadataValue(pool.metadata),
     status: pool.status || "active",
+    removed_block: removedBlock == null ? null : Number(removedBlock),
   };
 }
 
@@ -65,28 +70,30 @@ function normalizeStateUpdateBatch(stateList: any[]) {
 }
 
 export function upsertPool(db: any, stmt: any, invalidatePoolMetaCache: any, metadata: any) {
-  assertPoolAddress(metadata);
+  const normalized = normalizePoolUpsertRecord(metadata);
 
   const upsertPoolStmt = stmt("upsertPool", `
-    INSERT INTO pools (address, protocol, tokens, created_block, created_tx, metadata, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO pools (address, protocol, tokens, created_block, created_tx, metadata, status, removed_block)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(address) DO UPDATE SET
       protocol = excluded.protocol,
       tokens   = excluded.tokens,
       created_block = excluded.created_block,
       created_tx    = excluded.created_tx,
       metadata = excluded.metadata,
-      status   = excluded.status
+      status   = excluded.status,
+      removed_block = excluded.removed_block
   `);
 
   const result = upsertPoolStmt.run(
-    metadata.pool_address.toLowerCase(),
-    metadata.protocol,
-    stringifyWithBigInt(lowerCaseAddressList(metadata.tokens || [])),
-    metadata.block ?? 0,
-    metadata.tx ?? "",
-    stringifyWithBigInt(metadata.metadata || {}),
-    metadata.status || "active"
+    normalized.pool_address,
+    normalized.protocol,
+    stringifyWithBigInt(normalized.tokens),
+    normalized.block ?? 0,
+    normalized.tx,
+    stringifyWithBigInt(normalized.metadata),
+    normalized.status,
+    normalized.removed_block,
   );
   invalidatePoolMetaCache();
   return result;
@@ -101,25 +108,57 @@ export function removePool(stmt: any, invalidatePoolMetaCache: any, address: any
   return result;
 }
 
-export function batchRemovePools(stmt: any, invalidatePoolMetaCache: any, db: any, addresses: any[]) {
-  if (!Array.isArray(addresses) || addresses.length === 0) return 0;
+export function batchRemovePools(stmt: any, invalidatePoolMetaCache: any, db: any, removals: any[]) {
+  if (!Array.isArray(removals) || removals.length === 0) return 0;
 
   const removePoolStmt = stmt(
     "removePool",
-    `UPDATE pools SET status = 'removed' WHERE address = ?`
+    `UPDATE pools
+     SET status = 'removed',
+         removed_block = CASE
+           WHEN removed_block IS NULL THEN ?
+           ELSE removed_block
+         END
+     WHERE address = ?`
   );
 
-  const normalisedAddresses = [...new Set(addresses.map((address) => String(address).toLowerCase()))];
-  const transaction = db.transaction((poolAddresses: string[]) => {
+  const removalByAddress = new Map<string, number | null>();
+  for (const removal of removals) {
+    const addressValue =
+      typeof removal === "string"
+        ? removal
+        : removal?.address ?? removal?.pool_address ?? null;
+    const normalizedAddress = addressValue == null ? null : String(addressValue).toLowerCase();
+    if (!normalizedAddress) continue;
+    const removalBlockRaw =
+      typeof removal === "string"
+        ? null
+        : removal?.removed_block ?? removal?.removedBlock ?? removal?.block ?? null;
+    const removalBlock =
+      removalBlockRaw == null || removalBlockRaw === ""
+        ? null
+        : Number(removalBlockRaw);
+    const finiteRemovalBlock = Number.isFinite(removalBlock) ? removalBlock : null;
+    const prior = removalByAddress.get(normalizedAddress);
+    if (prior == null) {
+      removalByAddress.set(normalizedAddress, finiteRemovalBlock);
+      continue;
+    }
+    if (finiteRemovalBlock != null && (prior == null || finiteRemovalBlock < prior)) {
+      removalByAddress.set(normalizedAddress, finiteRemovalBlock);
+    }
+  }
+
+  const transaction = db.transaction((entries: Array<[string, number | null]>) => {
     let removed = 0;
-    for (const address of poolAddresses) {
-      const result = removePoolStmt.run(address);
+    for (const [address, removedBlock] of entries) {
+      const result = removePoolStmt.run(removedBlock, address);
       removed += Number(result?.changes ?? 0);
     }
     return removed;
   });
 
-  const removed = transaction(normalisedAddresses);
+  const removed = transaction([...removalByAddress.entries()]);
   invalidatePoolMetaCache();
   return removed;
 }
@@ -133,6 +172,7 @@ export function updatePoolState(stmt: any, state: any) {
     ON CONFLICT(address) DO UPDATE SET
       last_updated_block = excluded.last_updated_block,
       state_data         = excluded.state_data
+    WHERE excluded.last_updated_block >= pool_state.last_updated_block
   `).run(
     normalized.pool_address,
     normalized.block,
@@ -169,7 +209,7 @@ export function loadPoolMetaCache(stmt: any, status: string | null = null) {
   const statusSql = status ? " WHERE status = ?" : "";
   const rows = stmt(
     cacheKey,
-    `SELECT address, protocol, tokens, created_block, created_tx, metadata, status
+    `SELECT address, protocol, tokens, created_block, created_tx, metadata, status, removed_block
      FROM pools${statusSql}`
   ).all(...(status ? [status] : []));
   const pools = rows.map(mapPoolMetaRow);
@@ -232,15 +272,16 @@ export function batchUpsertPools(db: any, stmt: any, invalidatePoolMetaCache: an
   if (normalizedPools.length === 0) return;
 
   const upsertPoolStmt = stmt("upsertPool", `
-    INSERT INTO pools (address, protocol, tokens, created_block, created_tx, metadata, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO pools (address, protocol, tokens, created_block, created_tx, metadata, status, removed_block)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(address) DO UPDATE SET
       protocol = excluded.protocol,
       tokens   = excluded.tokens,
       created_block = excluded.created_block,
       created_tx    = excluded.created_tx,
       metadata = excluded.metadata,
-      status   = excluded.status
+      status   = excluded.status,
+      removed_block = excluded.removed_block
   `);
 
   db.transaction((pools: any) => {
@@ -252,7 +293,8 @@ export function batchUpsertPools(db: any, stmt: any, invalidatePoolMetaCache: an
         pool.block ?? 0,
         pool.tx,
         stringifyWithBigInt(pool.metadata),
-        pool.status
+        pool.status,
+        pool.removed_block,
       );
     }
   })(normalizedPools);
@@ -271,6 +313,7 @@ export function batchUpdateStates(db: any, stmt: any, stateList: any) {
     ON CONFLICT(address) DO UPDATE SET
       last_updated_block = excluded.last_updated_block,
       state_data         = excluded.state_data
+    WHERE excluded.last_updated_block >= pool_state.last_updated_block
   `);
 
   db.transaction((states: any) => {
@@ -454,10 +497,7 @@ export function validatePoolMetadata(pool: any) {
   }
 
   let meta = pool.metadata;
-  if (typeof meta === "string") {
-    meta = parseJson(meta, {});
-  }
-  meta = meta || {};
+  meta = parsePoolMetadataValue(meta);
 
   if (pool.protocol && pool.protocol.includes("V3")) {
     if (meta.fee == null) issues.push(`${addr}: V3 pool missing fee`);

@@ -5,7 +5,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { RegistryService } from "../src/db/registry.ts";
-import { buildDiscoveryScanQuery, discoverPoolsWithDeps } from "../src/discovery/discover.ts";
+import { buildDiscoveryScanQuery, decodeDiscoveryLogs, discoverPoolsWithDeps } from "../src/discovery/discover.ts";
 import { buildDiscoveredPoolBatch } from "../src/discovery/helpers.ts";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "discovery-test-"));
@@ -128,6 +128,69 @@ try {
     null,
   );
   assert.equal(queryWithoutSnapshot.toBlock, undefined, "discovery should remain unbounded when chain height is unavailable");
+
+  const normalizedDecode = decodeDiscoveryLogs(
+    {
+      name: "Decode Test",
+      address: "0x1111111111111111111111111111111111111111",
+      signature: "event PoolCreated(address indexed token0, address indexed token1, address pool, uint256)",
+      decode() {
+        return {
+          pool_address: " 0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA ",
+          tokens: [
+            " 0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB ",
+            null,
+            "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+          ],
+          metadata: "not-an-object",
+        };
+      },
+    } as any,
+    [{ blockNumber: 123, transactionHash: "0xtx" }],
+    [{}],
+  );
+  assert.deepEqual(
+    normalizedDecode,
+    {
+      extractedPools: [
+        {
+          extracted: {
+            pool_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            tokens: [
+              "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "0xcccccccccccccccccccccccccccccccccccccccc",
+            ],
+            metadata: {},
+          },
+          rawLog: { blockNumber: 123, transactionHash: "0xtx" },
+        },
+      ],
+      errors: 0,
+    },
+    "discovery decoding should normalize malformed protocol decode output before batching",
+  );
+
+  assert.throws(
+    () =>
+      decodeDiscoveryLogs(
+        {
+          name: "Decode Test",
+          address: "0x1111111111111111111111111111111111111111",
+          signature: "event PoolCreated(address indexed token0, address indexed token1, address pool, uint256)",
+          decode() {
+            return {
+              pool_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              tokens: ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "0xcccccccccccccccccccccccccccccccccccccccc"],
+              metadata: {},
+            };
+          },
+        } as any,
+        [{ blockNumber: 123 }],
+        [],
+      ),
+    /returned 0 decoded log\(s\) for 1 raw log\(s\)/,
+    "discovery decoding should fail fast when decoder output length drifts from the raw log batch",
+  );
 
   const rollbackGuards: number[] = [];
   let inFlight = 0;

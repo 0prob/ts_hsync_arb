@@ -98,10 +98,55 @@ assert.equal(
   routeHash,
   "flash params should embed the computed route hash",
 );
+
+const flashParams = buildFlashParams({
+  profitToken: startToken,
+  minProfit: 1n,
+  deadline: 2n,
+  calls,
+});
+calls[0].data = "0xdeadbeef";
+assert.equal(
+  flashParams.routeHash,
+  routeHash,
+  "flash params route hash should remain stable even if the caller later mutates the original calls array",
+);
+assert.equal(
+  flashParams.calls[0].data,
+  "0x1234",
+  "flash params should snapshot calls instead of retaining a mutable caller-owned array",
+);
+
 assert.notEqual(
   computeRouteHash([...calls].reverse()),
   routeHash,
   "route hash must remain order-sensitive for calldata execution",
+);
+
+assert.throws(
+  () =>
+    computeRouteHash([
+      {
+        target: "0x0000000000000000000000000000000000000010",
+        value: -1n,
+        data: "0x1234",
+      },
+    ]),
+  /value must be >= 0/,
+  "route hashing should reject executor calls with negative values",
+);
+
+assert.throws(
+  () =>
+    computeRouteHash([
+      {
+        target: "0x0000000000000000000000000000000000000010",
+        value: 0n,
+        data: "0x123",
+      },
+    ]),
+  /even-length hex string/,
+  "route hashing should reject malformed calldata instead of hashing an invalid executor call shape",
 );
 
 const routeCache = new RouteCache(4);
@@ -124,6 +169,41 @@ assert.equal(
   routeCache.getByPools(new Set([edges[0].poolAddress.toLowerCase()])).length,
   1,
   "route cache lookups should be case-insensitive for changed pool addresses",
+);
+
+routeCache.update([
+  {
+    path: {
+      startToken,
+      edges: [...edges],
+    },
+    result: { profit: 500n },
+  },
+]);
+routeCache.update([
+  {
+    path: {
+      startToken,
+      edges: [...edges],
+    },
+    result: { profit: 10n },
+  },
+]);
+assert.equal(
+  routeCache.getAll()[0]?.result.profit,
+  10n,
+  "fresh route cache updates should replace stale snapshots for the same route even when profit drops",
+);
+
+const mixedCaseStateCache = new Map<string, object>([
+  [edges[0].poolAddress.toUpperCase(), {}],
+  [edges[1].poolAddress.toUpperCase(), {}],
+]);
+routeCache.prune(mixedCaseStateCache);
+assert.equal(
+  routeCache.size,
+  1,
+  "route cache pruning should match state cache pool addresses case-insensitively",
 );
 
 console.log("Route identity checks passed.");

@@ -26,6 +26,62 @@ export type ArbPathLike = {
   cumulativeFeesBps?: number;
 };
 
+function normalizeSerializedPath(serialised: SerializedPathLike | null | undefined) {
+  if (typeof serialised?.startToken !== "string") return null;
+  const startToken = serialised.startToken.trim().toLowerCase();
+  if (!startToken) return null;
+  if (!Array.isArray(serialised.poolAddresses)) return null;
+  if (!Array.isArray(serialised.tokenIns)) return null;
+  if (!Array.isArray(serialised.tokenOuts)) return null;
+  if (serialised.zeroForOnes != null && !Array.isArray(serialised.zeroForOnes)) return null;
+
+  const expectedHops = serialised.poolAddresses.length;
+  if (
+    serialised.tokenIns.length !== expectedHops ||
+    serialised.tokenOuts.length !== expectedHops ||
+    (serialised.zeroForOnes != null && serialised.zeroForOnes.length !== expectedHops) ||
+    expectedHops === 0
+  ) {
+    return null;
+  }
+
+  const poolAddresses: string[] = [];
+  const tokenIns: string[] = [];
+  const tokenOuts: string[] = [];
+  const zeroForOnes = serialised.zeroForOnes ?? [];
+
+  for (let i = 0; i < expectedHops; i++) {
+    const poolAddress = serialised.poolAddresses[i];
+    const tokenIn = serialised.tokenIns[i];
+    const tokenOut = serialised.tokenOuts[i];
+    const zeroForOne = zeroForOnes[i];
+    if (typeof poolAddress !== "string" || typeof tokenIn !== "string" || typeof tokenOut !== "string") {
+      return null;
+    }
+    const normalizedPool = poolAddress.trim().toLowerCase();
+    const normalizedTokenIn = tokenIn.trim().toLowerCase();
+    const normalizedTokenOut = tokenOut.trim().toLowerCase();
+    if (!normalizedPool || !normalizedTokenIn || !normalizedTokenOut) return null;
+    if (serialised.zeroForOnes != null && typeof zeroForOne !== "boolean") return null;
+    poolAddresses.push(normalizedPool);
+    tokenIns.push(normalizedTokenIn);
+    tokenOuts.push(normalizedTokenOut);
+  }
+
+  if (tokenIns[0] !== startToken) return null;
+  if (tokenOuts[tokenOuts.length - 1] !== startToken) return null;
+
+  return {
+    startToken,
+    poolAddresses,
+    tokenIns,
+    tokenOuts,
+    zeroForOnes: serialised.zeroForOnes == null ? null : zeroForOnes,
+    logWeight: serialised.logWeight,
+    cumulativeFeesBps: serialised.cumulativeFeesBps,
+  };
+}
+
 export function createTopologyCache(maxTotalPaths: number) {
   let cachedHubTopology: Record<string, any[]> | null = null;
   let cachedFullTopology: Record<string, any[]> | null = null;
@@ -63,16 +119,9 @@ export function createTopologyCache(maxTotalPaths: number) {
     const paths: ArbPathLike[] = [];
     const seen = new Set<string>();
 
-    for (const s of serialised) {
-      const expectedHops = s.poolAddresses.length;
-      if (
-        !Array.isArray(s.tokenIns) ||
-        !Array.isArray(s.tokenOuts) ||
-        s.tokenIns.length !== expectedHops ||
-        s.tokenOuts.length !== expectedHops
-      ) {
-        continue;
-      }
+    for (const raw of serialised) {
+      const s = normalizeSerializedPath(raw);
+      if (!s) continue;
 
       const key = routeIdentityFromSerializedPath(
         s.startToken,
@@ -92,7 +141,7 @@ export function createTopologyCache(maxTotalPaths: number) {
         const candidate =
           hub.getPoolEdge(pool, tokenIn, tokenOut) ||
           full.getPoolEdge(pool, tokenIn, tokenOut);
-        if (!candidate) {
+        if (!candidate || (s.zeroForOnes != null && candidate.zeroForOne !== s.zeroForOnes[i])) {
           ok = false;
           break;
         }

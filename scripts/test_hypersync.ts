@@ -2,8 +2,21 @@ import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { fetchAllLogsWithClient } from "../src/hypersync/paginate.ts";
-import { StateWatcher, WATCHER_TOPIC0, sortWatcherLogs, watcherCheckpointFromNextBlock } from "../src/state/watcher.ts";
-import { handleWatcherLogs } from "../src/state/watcher_state_ops.ts";
+import {
+  StateWatcher,
+  WATCHER_TOPIC0,
+  sortWatcherLogs,
+  watcherCheckpointFromNextBlock,
+  watcherLogger,
+  watcherProgressMeta,
+  watcherErrorBackoffMeta,
+  watcherReorgMeta,
+  classifyWatcherPollError,
+  watcherErrorBackoffMs,
+  watcherShouldHaltAfterIntegrityError,
+  watcherHaltMeta,
+} from "../src/state/watcher.ts";
+import { commitWatcherStatesBatch, handleWatcherLogs } from "../src/state/watcher_state_ops.ts";
 import { client } from "../src/hypersync/client.ts";
 
 const baseQuery = {
@@ -58,6 +71,23 @@ await assert.rejects(
     ),
   /stalled at 100/,
   "non-advancing nextBlock cursors should fail fast instead of looping forever",
+);
+
+await assert.rejects(
+  () =>
+    fetchAllLogsWithClient(
+      {
+        async get() {
+          return {
+            nextBlock: 100,
+            data: { logs: [] },
+          };
+        },
+      },
+      baseQuery,
+    ),
+  /stalled at 100 without archive height/,
+  "missing archive height should not let a stalled historical cursor look terminal",
 );
 
 await assert.rejects(
@@ -141,10 +171,145 @@ assert.equal(
 );
 
 assert.throws(
+  () => watcherCheckpointFromNextBlock(301, 300, null),
+  /stalled at 301 without archive height/,
+  "watcher should reject stalled cursors when HyperSync omits archive height",
+);
+
+assert.throws(
   () => watcherCheckpointFromNextBlock(301, 300, 350),
   /stalled at 301 before archive height 350/,
   "watcher should reject stalled cursors when HyperSync indicates more historical data is still available",
 );
+
+assert.deepEqual(
+  watcherProgressMeta(402, 400, 500, 0, { archiveHeights: [500, 503] }),
+  {
+    requestedFromBlock: 401,
+    nextBlock: 402,
+    archiveHeight: 500,
+    checkpointBlock: 401,
+    advancedBlocks: 1,
+    hadLogs: false,
+    caughtUp: false,
+    waitReason: "empty_poll",
+    constrainedBySlowestShardArchiveHeight: true,
+    shardArchiveHeights: [500, 503],
+  },
+  "watcher progress metadata should explain why a poll advanced slowly and why it will idle",
+);
+
+assert.deepEqual(
+  watcherErrorBackoffMeta(new Error("boom"), 3, 20_000, 777, "transient"),
+  {
+    error: "boom",
+    errorName: "Error",
+    errorCategory: "transient",
+    consecutivePollErrors: 3,
+    backoffMs: 20_000,
+    currentLastBlock: 777,
+  },
+  "watcher error backoff metadata should capture retry context for poll failures",
+);
+
+assert.equal(
+  classifyWatcherPollError(new Error("HyperSync nextBlock cursor stalled at 301 without archive height; cannot advance watcher safely.")),
+  "integrity",
+  "watcher should classify cursor-shape safety faults as integrity errors",
+);
+assert.equal(
+  classifyWatcherPollError(new Error("socket hang up")),
+  "transient",
+  "watcher should keep ordinary transport failures in the transient retry bucket",
+);
+assert.equal(
+  watcherErrorBackoffMs(new Error("socket hang up"), 1),
+  5_000,
+  "transient watcher failures should start with the base retry interval",
+);
+assert.equal(
+  watcherErrorBackoffMs(new Error("socket hang up"), 3),
+  20_000,
+  "transient watcher failures should back off exponentially across consecutive attempts",
+);
+assert.equal(
+  watcherErrorBackoffMs(new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views."), 3),
+  15_000,
+  "integrity watcher failures should use a slower fixed cooldown instead of exponential transport backoff",
+);
+assert.equal(
+  watcherShouldHaltAfterIntegrityError(2),
+  false,
+  "watcher should tolerate a bounded number of consecutive integrity failures before halting",
+);
+assert.equal(
+  watcherShouldHaltAfterIntegrityError(3),
+  true,
+  "watcher should fail closed once the integrity error threshold is reached",
+);
+assert.deepEqual(
+  watcherHaltMeta(new Error("fatal cursor invariant"), 3, 3, 400),
+  {
+    reason: "fatal cursor invariant",
+    errorName: "Error",
+    consecutiveIntegrityPollErrors: 3,
+    haltThreshold: 3,
+    currentLastBlock: 400,
+  },
+  "watcher halt metadata should preserve the shutdown reason and threshold context",
+);
+
+assert.deepEqual(
+  watcherReorgMeta(501, { poolsRemoved: 2, statesRemoved: 7 }, ["0xa", "0xb", "0xc"], 500),
+  {
+    reorgBlock: 501,
+    checkpointBlock: 500,
+    poolsRemoved: 2,
+    statesRemoved: 7,
+    cacheEntriesReloaded: 3,
+  },
+  "watcher reorg metadata should summarize rewind scope and cache reload footprint",
+);
+
+{
+  const cache = new Map();
+  const persisted: any[] = [];
+  const changed = commitWatcherStatesBatch(
+    cache,
+    (states: any[]) => persisted.push(...states),
+    [
+      {
+        addr: "0x1111111111111111111111111111111111111111",
+        rawLog: { blockNumber: 401 },
+        state: {
+          poolId: "0x1111111111111111111111111111111111111111",
+          protocol: "UNISWAP_V2",
+          token0: "0x2222222222222222222222222222222222222222",
+          token1: "0x3333333333333333333333333333333333333333",
+          tokens: [
+            "0x2222222222222222222222222222222222222222",
+            "0x3333333333333333333333333333333333333333",
+          ],
+          reserve0: 11n,
+          reserve1: 12n,
+          fee: 997n,
+          timestamp: 0,
+        },
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    changed,
+    ["0x1111111111111111111111111111111111111111"],
+    "watcher batch commit should accept placeholder states once it stamps a fresh commit timestamp",
+  );
+  assert.equal(persisted.length, 1, "watcher batch commit should persist valid state updates");
+  assert.ok(
+    Number(cache.get("0x1111111111111111111111111111111111111111")?.timestamp) > 0,
+    "watcher batch commit should replace placeholder timestamps before validation",
+  );
+}
 
 {
   let getPoolMetaCalls = 0;
@@ -243,6 +408,41 @@ assert.throws(
     setRollbackGuard: () => {},
     rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
   };
+  const watcher = new StateWatcher(registry as any, new Map() as any) as any;
+
+  watcher._lastBlock = 400;
+  watcher._watchedAddresses = [
+    "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    " 0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB ",
+    "not-an-address",
+    "",
+  ];
+
+  const queries = watcher._buildQueries();
+  assert.equal(queries.length, 1, "watcher should not create extra query shards from duplicate or invalid addresses");
+  assert.deepEqual(
+    queries[0].logs,
+    [
+      {
+        address: [
+          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ],
+        topics: [Object.values(WATCHER_TOPIC0)],
+      },
+    ],
+    "watcher query filters should lowercase, dedupe, and drop invalid watched addresses before sharding",
+  );
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
   const cache = new Map(
     Array.from({ length: 17_000 }, (_, i) => [
       `0x${String(i + 1).padStart(40, "0")}`,
@@ -281,6 +481,475 @@ assert.throws(
   } finally {
     client.get = originalGet;
     watcher._decoder = originalDecoder;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const cache = new Map(
+    Array.from({ length: 17_000 }, (_, i) => [
+      `0x${String(i + 1).padStart(40, "0")}`,
+      { poolId: i + 1 },
+    ]),
+  );
+
+  const watcher = new StateWatcher(registry as any, cache as any) as any;
+  const originalGet = client.get;
+  const originalDecoder = watcher._decoder;
+  let callCount = 0;
+
+  watcher._decoder = { decodeLogs: async () => [] };
+  client.get = async () => {
+    callCount++;
+    return {
+      rollbackGuard: callCount === 1
+        ? { first_block_number: 400, first_parent_hash: "0xabc" }
+        : { first_block_number: 400, first_parent_hash: "0xdef" },
+      archiveHeight: 500,
+      nextBlock: 402,
+      data: { logs: [] },
+    };
+  };
+
+  try {
+    watcher._lastBlock = 400;
+    watcher._running = true;
+    watcher._watchedAddresses = Array.from(cache.keys());
+    watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
+    await assert.rejects(
+      () => watcher._pollOnce(),
+      /mismatched rollback guards/,
+      "watcher should reject shard responses that disagree on rollback guard identity",
+    );
+  } finally {
+    client.get = originalGet;
+    watcher._decoder = originalDecoder;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const cache = new Map(
+    Array.from({ length: 17_000 }, (_, i) => [
+      `0x${String(i + 1).padStart(40, "0")}`,
+      { poolId: i + 1 },
+    ]),
+  );
+
+  const watcher = new StateWatcher(registry as any, cache as any) as any;
+  const originalGet = client.get;
+  const originalDecoder = watcher._decoder;
+  let callCount = 0;
+
+  watcher._decoder = { decodeLogs: async () => [] };
+  client.get = async () => {
+    callCount++;
+    return callCount === 1
+      ? {
+          rollbackGuard: { first_block_number: 400, first_parent_hash: "0xabc" },
+          archiveHeight: 500,
+          nextBlock: 402,
+          data: { logs: [] },
+        }
+      : {
+          rollbackGuard: { first_block_number: 400, first_parent_hash: "0xabc" },
+          archiveHeight: 500,
+          nextBlock: null,
+          data: { logs: [] },
+        };
+  };
+
+  try {
+    watcher._lastBlock = 400;
+    watcher._running = true;
+    watcher._watchedAddresses = Array.from(cache.keys());
+    watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
+    await assert.rejects(
+      () => watcher._pollOnce(),
+      /did not include a finite nextBlock cursor/,
+      "watcher should reject shard responses that omit the authoritative nextBlock cursor",
+    );
+  } finally {
+    client.get = originalGet;
+    watcher._decoder = originalDecoder;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const watcher = new StateWatcher(registry as any, new Map() as any) as any;
+  const originalError = watcherLogger.error;
+  const originalInfo = watcherLogger.info;
+  const errorCalls: any[] = [];
+  const infoCalls: any[] = [];
+  let pollCount = 0;
+
+  watcherLogger.error = (...args: any[]) => {
+    errorCalls.push(args);
+  };
+  watcherLogger.info = (...args: any[]) => {
+    infoCalls.push(args);
+  };
+  watcher._pollOnce = async () => {
+    pollCount++;
+    if (pollCount <= 2) {
+      throw new Error(`boom-${pollCount}`);
+    }
+    return {
+      rollbackGuard: null,
+      data: { logs: [] },
+      nextBlock: 402,
+      archiveHeight: 500,
+      shardSummary: { archiveHeights: [500] },
+    };
+  };
+  watcher._handleLogs = async () => new Set();
+  watcher._sleep = async () => {
+    if (pollCount >= 3) {
+      watcher._running = false;
+    }
+  };
+
+  try {
+    watcher._running = true;
+    watcher._lastBlock = 400;
+    await watcher._loop();
+    assert.deepEqual(
+      errorCalls.map((args) => args[0]),
+      [
+        {
+          error: "boom-1",
+          errorName: "Error",
+          errorCategory: "transient",
+          consecutivePollErrors: 1,
+          consecutiveIntegrityPollErrors: 0,
+          backoffMs: 5_000,
+          currentLastBlock: 400,
+        },
+        {
+          error: "boom-2",
+          errorName: "Error",
+          errorCategory: "transient",
+          consecutivePollErrors: 2,
+          consecutiveIntegrityPollErrors: 0,
+          backoffMs: 10_000,
+          currentLastBlock: 400,
+        },
+      ],
+      "watcher loop should log structured transient retry metadata with exponential backoff growth",
+    );
+    const recoveryCall = infoCalls.find((args) => args[1] === "Watcher poll recovered after errors");
+    assert.deepEqual(
+      recoveryCall?.[0],
+      { consecutivePollErrors: 2, consecutiveIntegrityPollErrors: 0, resumedFromBlock: 401 },
+      "watcher should log recovery after a successful poll following consecutive failures",
+    );
+  } finally {
+    watcherLogger.error = originalError;
+    watcherLogger.info = originalInfo;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const watcher = new StateWatcher(registry as any, new Map() as any) as any;
+  const originalError = watcherLogger.error;
+  const errorCalls: any[] = [];
+  const slept: number[] = [];
+  let pollCount = 0;
+
+  watcherLogger.error = (...args: any[]) => {
+    errorCalls.push(args);
+  };
+  watcher._pollOnce = async () => {
+    pollCount++;
+    if (pollCount === 1) {
+      throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
+    }
+    watcher._running = false;
+    return null;
+  };
+  watcher._sleep = async (ms: number) => {
+    slept.push(ms);
+  };
+
+  try {
+    watcher._running = true;
+    watcher._lastBlock = 400;
+    await watcher._loop();
+    assert.deepEqual(
+      errorCalls.map((args) => args[0]),
+      [
+        {
+          error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
+          errorName: "Error",
+          errorCategory: "integrity",
+          consecutivePollErrors: 1,
+          consecutiveIntegrityPollErrors: 1,
+          backoffMs: 15_000,
+          currentLastBlock: 400,
+        },
+      ],
+      "watcher loop should classify rollback-guard mismatches as integrity failures",
+    );
+    assert.deepEqual(
+      slept,
+      [15_000],
+      "integrity watcher failures should use the slower fixed cooldown",
+    );
+  } finally {
+    watcherLogger.error = originalError;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const watcher = new StateWatcher(registry as any, new Map() as any) as any;
+  const originalError = watcherLogger.error;
+  const errorCalls: any[] = [];
+  const slept: number[] = [];
+  let pollCount = 0;
+  let haltPayload: any = null;
+
+  watcherLogger.error = (...args: any[]) => {
+    errorCalls.push(args);
+  };
+  watcher._pollOnce = async () => {
+    pollCount++;
+    throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
+  };
+  watcher._sleep = async (ms: number) => {
+    slept.push(ms);
+  };
+  watcher.onHalt = (payload: any) => {
+    haltPayload = payload;
+  };
+
+  try {
+    watcher._running = true;
+    watcher._lastBlock = 400;
+    await watcher._loop();
+    assert.equal(watcher._running, false, "watcher should stop after repeated integrity failures");
+    assert.equal(watcher._closed, true, "watcher should mark itself closed when halting on integrity failures");
+    assert.deepEqual(
+      errorCalls.map((args) => args[0]),
+      [
+        {
+          error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
+          errorName: "Error",
+          errorCategory: "integrity",
+          consecutivePollErrors: 1,
+          consecutiveIntegrityPollErrors: 1,
+          backoffMs: 15_000,
+          currentLastBlock: 400,
+        },
+        {
+          error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
+          errorName: "Error",
+          errorCategory: "integrity",
+          consecutivePollErrors: 2,
+          consecutiveIntegrityPollErrors: 2,
+          backoffMs: 15_000,
+          currentLastBlock: 400,
+        },
+        {
+          error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
+          errorName: "Error",
+          errorCategory: "integrity",
+          consecutivePollErrors: 3,
+          consecutiveIntegrityPollErrors: 3,
+          backoffMs: 15_000,
+          currentLastBlock: 400,
+        },
+        {
+          reason: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
+          errorName: "Error",
+          consecutiveIntegrityPollErrors: 3,
+          haltThreshold: 3,
+          currentLastBlock: 400,
+        },
+      ],
+      "watcher should halt and emit a dedicated shutdown log once repeated integrity failures cross the threshold",
+    );
+    assert.deepEqual(
+      haltPayload,
+      {
+        reason: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
+        errorName: "Error",
+        consecutiveIntegrityPollErrors: 3,
+        haltThreshold: 3,
+        currentLastBlock: 400,
+      },
+      "watcher should publish halt metadata to supervisors when it fails closed",
+    );
+    assert.deepEqual(
+      watcher.haltMeta,
+      haltPayload,
+      "watcher should retain the final halt metadata for callers that wait on the loop",
+    );
+    assert.deepEqual(
+      slept,
+      [15_000, 15_000],
+      "watcher should only sleep between integrity failures until the halt threshold is reached",
+    );
+  } finally {
+    watcherLogger.error = originalError;
+  }
+}
+
+{
+  const checkpointWrites: number[] = [];
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: (_key: string, block: number) => {
+      checkpointWrites.push(block);
+    },
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const watcher = new StateWatcher(registry as any, new Map() as any) as any;
+  const originalInfo = watcherLogger.info;
+  const infoCalls: any[] = [];
+
+  watcherLogger.info = (...args: any[]) => {
+    infoCalls.push(args);
+  };
+  watcher._pollOnce = async () => ({
+    rollbackGuard: null,
+    data: { logs: [] },
+    nextBlock: 402,
+    archiveHeight: 500,
+    shardSummary: { archiveHeights: [500, 503] },
+  });
+  watcher._handleLogs = async () => new Set();
+  watcher._sleep = async () => {
+    watcher._running = false;
+  };
+
+  try {
+    watcher._running = true;
+    watcher._lastBlock = 400;
+    await watcher._loop();
+    assert.deepEqual(checkpointWrites, [401], "watcher loop should persist the derived checkpoint block");
+    const progressCall = infoCalls.find((args) => args[1] === "Watcher poll progress");
+    assert.ok(progressCall, "watcher loop should emit a structured poll-progress log when it advances");
+    assert.deepEqual(
+      progressCall[0],
+      {
+        requestedFromBlock: 401,
+        nextBlock: 402,
+        archiveHeight: 500,
+        checkpointBlock: 401,
+        advancedBlocks: 1,
+        hadLogs: false,
+        caughtUp: false,
+        waitReason: "empty_poll",
+        constrainedBySlowestShardArchiveHeight: true,
+        shardArchiveHeights: [500, 503],
+      },
+      "watcher progress logs should carry the same structured reason fields used for checkpoint observability",
+    );
+  } finally {
+    watcherLogger.info = originalInfo;
+  }
+}
+
+{
+  const checkpointWrites: number[] = [];
+  let rollbackGuardWritten: any = null;
+  const registry = {
+    getCheckpoint: () => null,
+    getRollbackGuard: () => ({ block_number: 501, block_hash: "0xold-parent" }),
+    setCheckpoint: (_key: string, block: number) => {
+      checkpointWrites.push(block);
+    },
+    setRollbackGuard: (guard: any) => {
+      rollbackGuardWritten = guard;
+    },
+    rollbackToBlock: () => ({ poolsRemoved: 2, statesRemoved: 7 }),
+  };
+  const watcher = new StateWatcher(registry as any, new Map() as any) as any;
+  const originalWarn = watcherLogger.warn;
+  const warnCalls: any[] = [];
+  let pollCount = 0;
+  let onReorgPayload: any = null;
+
+  watcherLogger.warn = (...args: any[]) => {
+    warnCalls.push(args);
+  };
+  watcher._pollOnce = async () => {
+    pollCount++;
+    if (pollCount === 1) {
+      return {
+        rollbackGuard: { first_block_number: 501, first_parent_hash: "0xnew-parent" },
+        data: { logs: [] },
+        nextBlock: 0,
+        archiveHeight: 0,
+        shardSummary: { archiveHeights: [0] },
+      };
+    }
+    watcher._running = false;
+    return null;
+  };
+  watcher._reloadCacheFromRegistry = () => ["0xa", "0xb", "0xc"];
+  watcher.onReorg = (payload: any) => {
+    onReorgPayload = payload;
+  };
+
+  try {
+    watcher._running = true;
+    watcher._lastBlock = 550;
+    await watcher._loop();
+    assert.deepEqual(checkpointWrites, [500], "watcher should checkpoint to the rewound block after a detected reorg");
+    assert.deepEqual(
+      rollbackGuardWritten,
+      { first_block_number: 501, first_parent_hash: "0xnew-parent" },
+      "watcher should persist the new rollback guard after handling a reorg",
+    );
+    const summaryCall = warnCalls.find((args) => args[1] === "Watcher reorg rollback summary");
+    assert.deepEqual(
+      summaryCall?.[0],
+      {
+        reorgBlock: 501,
+        checkpointBlock: 500,
+        poolsRemoved: 2,
+        statesRemoved: 7,
+        cacheEntriesReloaded: 3,
+      },
+      "watcher should log a compact structured rollback summary after reorg handling",
+    );
+    assert.deepEqual(
+      onReorgPayload,
+      { reorgBlock: 501, changedAddrs: ["0xa", "0xb", "0xc"] },
+      "watcher should pass the reorg payload through after cache reload",
+    );
+  } finally {
+    watcherLogger.warn = originalWarn;
   }
 }
 
@@ -356,6 +1025,56 @@ assert.throws(
   } finally {
     client.get = originalGet;
     watcher._decoder = originalDecoder;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const cache = new Map(
+    Array.from({ length: 17_000 }, (_, i) => [
+      `0x${String(i + 1).padStart(40, "0")}`,
+      { poolId: i + 1 },
+    ]),
+  );
+
+  const watcher = new StateWatcher(registry as any, cache as any) as any;
+  const originalGet = client.get;
+  const originalDecoder = watcher._decoder;
+  const originalWarn = watcherLogger.warn;
+  const warned: any[] = [];
+  let callCount = 0;
+
+  watcher._decoder = { decodeLogs: async () => [] };
+  watcherLogger.warn = (...args: any[]) => {
+    warned.push(args);
+  };
+  client.get = async () => {
+    callCount++;
+    return {
+      rollbackGuard: { first_block_number: 400, first_parent_hash: "0xabc" },
+      archiveHeight: callCount === 1 ? 503 : 500,
+      nextBlock: 402,
+      data: { logs: [] },
+    };
+  };
+
+  try {
+    watcher._lastBlock = 400;
+    watcher._running = true;
+    watcher._watchedAddresses = Array.from(cache.keys());
+    watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
+    const res = await watcher._pollOnce();
+    assert.equal(res.archiveHeight, 500, "watcher should still use the slowest shard archive height");
+    assert.equal(warned.length, 1, "watcher should surface archive-height drift across shards");
+  } finally {
+    client.get = originalGet;
+    watcher._decoder = originalDecoder;
+    watcherLogger.warn = originalWarn;
   }
 }
 

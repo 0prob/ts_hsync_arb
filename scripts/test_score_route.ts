@@ -123,6 +123,62 @@ assert.equal(
   "invalid token/MATIC rates should reject scoring instead of silently comparing incompatible units",
 );
 
+assert.equal(
+  estimateGasCostWei(Number.NaN, gasPriceWei),
+  null,
+  "gas estimation should fail closed on NaN gas values instead of throwing",
+);
+assert.equal(
+  estimateGasCostWei(100.5, gasPriceWei),
+  null,
+  "gas estimation should reject fractional gas values instead of truncating or throwing",
+);
+assert.equal(
+  estimateGasCostWei(100_000, -1n),
+  null,
+  "gas estimation should reject negative gas prices",
+);
+
+assert.equal(
+  scoreRoute(
+    path,
+    {
+      profitable: true,
+      amountIn: 100n,
+      amountOut: 120n,
+      profit: 30n,
+      totalGas: 100_000,
+    },
+    { gasPriceWei, tokenToMaticRate: 1n },
+  ),
+  null,
+  "route scoring should reject results whose profit does not match amountOut - amountIn",
+);
+assert.equal(
+  scoreRoute(
+    path,
+    {
+      profitable: true,
+      amountIn: 100n,
+      profit: 20n,
+      totalGas: Number.POSITIVE_INFINITY,
+    },
+    { gasPriceWei, tokenToMaticRate: 1n },
+  ),
+  null,
+  "route scoring should reject non-finite gas estimates instead of throwing",
+);
+assert.equal(
+  scoreRoute(path, result, { gasPriceWei: -1n }),
+  null,
+  "route scoring should reject negative gas prices",
+);
+assert.equal(
+  scoreRoute(path, result, { minNetProfit: -1n }),
+  null,
+  "route scoring should reject negative minimum profit thresholds",
+);
+
 const hugeScored = scoreRoute(
   path,
   {

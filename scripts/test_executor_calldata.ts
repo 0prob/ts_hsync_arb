@@ -109,6 +109,23 @@ const callbackTuple = [{
   assert.equal(exchange.functionName, "exchange");
 }
 
+assert.throws(
+  () =>
+    encodeCurveHop(
+      {
+        poolAddress: "0x00000000000000000000000000000000000000cc",
+        tokenIn: "0x0000000000000000000000000000000000000003",
+        tokenOut: "0x0000000000000000000000000000000000000004",
+        amountIn: 123n,
+        amountOut: 100n,
+        isCrypto: false,
+      },
+      "0x00000000000000000000000000000000000000bb",
+    ),
+  /tokenInIdx required/,
+  "Curve calldata encoding should reject hops without explicit token indexes",
+);
+
 {
   const executor = "0x00000000000000000000000000000000000000bb";
   const tokenIn = "0x0000000000000000000000000000000000000005";

@@ -27,6 +27,7 @@ const DEFAULT_DEADLINE_OFFSET_S = 120;
 const DEFAULT_SLIPPAGE_BPS = 50;
 const DEFAULT_MIN_PROFIT = 0n;
 const DEFAULT_GAS_MULTIPLIER = 1.25;
+const EXECUTOR_MAX_CALLS = 12;
 
 function assertValidRouteForExecution(route: any) {
   if (!route?.path || !route?.result) {
@@ -175,6 +176,9 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
 
   // Encode route into Call[]
   const calls = encodeRoute(route, executorAddress, { slippageBps, deadline });
+  if (calls.length > EXECUTOR_MAX_CALLS) {
+    throw new Error(`buildArbTx: route expands to ${calls.length} executor calls (max ${EXECUTOR_MAX_CALLS})`);
+  }
 
   // Build flash loan params (includes route hash)
   const flashParams = buildFlashParams({ profitToken, minProfit, deadline, calls });

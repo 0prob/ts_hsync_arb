@@ -22,6 +22,7 @@ import { simulateCurveSwap } from "../math/curve.ts";
 import { simulateBalancerSwap } from "../math/balancer.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
 import { routeIdentityFromEdges } from "./route_identity.ts";
+import { resolveSwapTokenIndexes } from "./swap_indices.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
@@ -47,8 +48,10 @@ function quoteBasedLogWeight(edge: any, simulateFn: any) {
   const balances = state?.balances;
   if (!balances || balances.length < 2) return null;
 
-  const inIdx = edge.tokenInIdx ?? (edge.zeroForOne ? 0 : 1);
-  const outIdx = edge.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0);
+  const indexes = resolveSwapTokenIndexes(edge, state);
+  if (!indexes) return null;
+  const inIdx = indexes.tokenInIdx;
+  const outIdx = indexes.tokenOutIdx;
   const balanceIn = balances[inIdx];
   const probeAmount = probeAmountFromBalance(balanceIn);
   if (probeAmount <= 0n) return null;
@@ -433,6 +436,56 @@ export function find4HopPathsBidirectional(graph: any, startToken: any, opts: an
 // Backward-compat alias (old name → new bidirectional impl)
 export const find4HopPaths = find4HopPathsBidirectional;
 
+function findNHopPaths(graph: any, startToken: any, exactHops: number, opts: any = {}) {
+  const { maxPaths = 2_000 } = opts;
+  if (!Number.isFinite(exactHops) || exactHops < 2) return [];
+
+  const paths: any[] = [];
+  const edges: any[] = [];
+  const usedPools = new Set<string>();
+  const visitedTokens = new Set<string>();
+
+  function dfs(currentToken: string, depth: number) {
+    if (paths.length >= maxPaths) return;
+
+    for (const edge of graph.getEdges(currentToken)) {
+      if (shouldPruneEdge(edge, opts)) continue;
+      if (usedPools.has(edge.poolAddress)) continue;
+
+      const nextToken = edge.tokenOut;
+      const isFinalHop = depth + 1 === exactHops;
+
+      if (isFinalHop) {
+        if (nextToken !== startToken) continue;
+      } else {
+        if (nextToken === startToken) continue;
+        if (visitedTokens.has(nextToken)) continue;
+      }
+
+      edges.push(edge);
+      usedPools.add(edge.poolAddress);
+
+      if (isFinalHop) {
+        annotatePath(
+          paths[paths.push({ startToken, edges: [...edges], hopCount: exactHops }) - 1]
+        );
+      } else {
+        visitedTokens.add(nextToken);
+        dfs(nextToken, depth + 1);
+        visitedTokens.delete(nextToken);
+      }
+
+      usedPools.delete(edge.poolAddress);
+      edges.pop();
+
+      if (paths.length >= maxPaths) return;
+    }
+  }
+
+  dfs(startToken, 0);
+  return paths;
+}
+
 // ─── Aggregated search ────────────────────────────────────────
 
 /**
@@ -458,6 +511,7 @@ export function findArbPaths(graph: any, startTokens: any, opts: any = {}) {
     include2Hop = true,
     include3Hop = true,
     include4Hop = false,
+    maxHops = 4,
     maxPathsPerToken     = 5_000,
     max4HopPathsPerToken = 2_000,
     minV2Reserve = 0n,
@@ -483,10 +537,22 @@ export function findArbPaths(graph: any, startTokens: any, opts: any = {}) {
     }
 
     if (include4Hop) {
-      allPaths.push(...find4HopPathsBidirectional(graph, token, {
+      const complexPaths = find4HopPathsBidirectional(graph, token, {
         ...pruneOpts,
         maxPaths: max4HopPathsPerToken,
-      }));
+      });
+      allPaths.push(...complexPaths);
+
+      let remainingComplexBudget = Math.max(0, max4HopPathsPerToken - complexPaths.length);
+      const boundedMaxHops = Math.max(4, Math.floor(maxHops));
+      for (let hopCount = 5; hopCount <= boundedMaxHops && remainingComplexBudget > 0; hopCount++) {
+        const nhopPaths = findNHopPaths(graph, token, hopCount, {
+          ...pruneOpts,
+          maxPaths: remainingComplexBudget,
+        });
+        allPaths.push(...nhopPaths);
+        remainingComplexBudget -= nhopPaths.length;
+      }
     }
   }
 

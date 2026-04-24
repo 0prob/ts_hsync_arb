@@ -21,6 +21,17 @@ const fresh = getPathFreshness(path, freshStateCache, {
 });
 assert.equal(fresh.ok, true, "recent aligned timestamps should be considered fresh");
 
+const mixedCaseFresh = getPathFreshness({
+  edges: [
+    { poolAddress: "0xPOOL1" },
+    { poolAddress: "0xPOOL2" },
+  ],
+}, freshStateCache, {
+  maxAgeMs: 1_000,
+  maxSkewMs: 500,
+});
+assert.equal(mixedCaseFresh.ok, true, "freshness checks should match pool addresses case-insensitively");
+
 const stale = getPathFreshness(path, new Map([
   ["0xpool1", { timestamp: now - 5_000 }],
   ["0xpool2", { timestamp: now - 5_000 }],

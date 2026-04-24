@@ -39,11 +39,15 @@ const pool = {
 const pools: any[] = [];
 
 const topologyService = createTopologyService({
+  routingCycleMode: "all",
+  routingMaxHops: 4,
   maxTotalPaths: 100,
   polygonHubTokens: new Set([HUB_TOKEN]),
   hub4Tokens: new Set([HUB_TOKEN]),
+  selective4HopTokenLimit: 0,
   workerCount: 0,
   workerPool: { _initialized: false },
+  isWorkerPoolInitialized: () => false,
   cycleRefreshIntervalMs: 60_000,
   routeCache,
   stateCache,
@@ -110,6 +114,51 @@ assert.equal(
   ], hubGraph, fullGraph).length,
   0,
   "topology hydration should drop malformed serialized paths with mismatched token arrays",
+);
+assert.equal(
+  topologyCache.hydratePaths([
+    {
+      startToken: null as any,
+      poolAddresses: [POOL_ADDRESS],
+      tokenIns: ["0xt0"],
+      tokenOuts: ["0xt0"],
+      zeroForOnes: [true],
+      hopCount: 1,
+      logWeight: 0,
+    },
+  ], hubGraph, fullGraph).length,
+  0,
+  "topology hydration should drop malformed serialized paths instead of throwing on non-string start tokens",
+);
+assert.equal(
+  topologyCache.hydratePaths([
+    {
+      startToken: "0xt0",
+      poolAddresses: POOL_ADDRESS as any,
+      tokenIns: ["0xt0"],
+      tokenOuts: ["0xt0"],
+      zeroForOnes: [true],
+      hopCount: 1,
+      logWeight: 0,
+    },
+  ], hubGraph, fullGraph).length,
+  0,
+  "topology hydration should drop malformed serialized paths instead of treating string poolAddresses as iterable hop arrays",
+);
+assert.equal(
+  topologyCache.hydratePaths([
+    {
+      startToken: "0xt0",
+      poolAddresses: [POOL_ADDRESS, POOL_ADDRESS],
+      tokenIns: ["0xt0", HUB_TOKEN],
+      tokenOuts: [HUB_TOKEN, "0xt0"],
+      zeroForOnes: [false, false],
+      hopCount: 2,
+      logWeight: 0,
+    },
+  ], hubGraph, fullGraph).length,
+  0,
+  "topology hydration should reject serialized paths whose zeroForOne directions no longer match the executable edge orientation",
 );
 
 console.log("Graph topology checks passed.");

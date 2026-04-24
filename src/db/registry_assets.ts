@@ -20,7 +20,7 @@ function normalizeTokenText(value: any) {
   return trimmed || null;
 }
 
-function normalizeTokenDecimals(decimals: any) {
+export function normalizeTokenDecimals(decimals: any) {
   const numeric = Number(decimals);
   if (!Number.isInteger(numeric) || numeric < 0 || numeric > 255) {
     throw new Error(`Invalid token decimals: ${decimals}`);

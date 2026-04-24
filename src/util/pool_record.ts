@@ -2,10 +2,14 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const tokenCache = new WeakMap<object, string[]>();
 const metadataCache = new WeakMap<object, Record<string, any>>();
+const MAX_JSON_UNWRAP_DEPTH = 3;
 
 export function parsePoolTokensValue(value: unknown): string[] {
   try {
-    const parsed = typeof value === "string" ? JSON.parse(value || "[]") : value;
+    let parsed = value;
+    for (let depth = 0; depth < MAX_JSON_UNWRAP_DEPTH && typeof parsed === "string"; depth++) {
+      parsed = JSON.parse(parsed || "[]");
+    }
     if (!Array.isArray(parsed)) return [];
     return parsed.map((token) =>
       typeof token === "string" ? token.toLowerCase() : String(token).toLowerCase()
@@ -17,8 +21,13 @@ export function parsePoolTokensValue(value: unknown): string[] {
 
 export function parsePoolMetadataValue(value: unknown): Record<string, any> {
   try {
-    const parsed = typeof value === "string" ? JSON.parse(value || "{}") : (value ?? {});
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : {};
+    let parsed = value ?? {};
+    for (let depth = 0; depth < MAX_JSON_UNWRAP_DEPTH && typeof parsed === "string"; depth++) {
+      parsed = JSON.parse(parsed || "{}");
+    }
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, any>)
+      : {};
   } catch {
     return {};
   }

@@ -74,4 +74,58 @@ assert.deepEqual(
   "pricing service should still produce deterministic decimal-based probes when the oracle is unavailable",
 );
 
+const malformedPricing = createPricingService({
+  getTokenMeta(tokenAddress: string) {
+    if (tokenAddress.toLowerCase() === TOKEN) {
+      return { decimals: 6.8, symbol: "USDC" };
+    }
+    return { decimals: Number.NaN, symbol: null };
+  },
+  getPriceOracle: () => ({
+    fromMatic: (_tokenAddress: string, maticWei: bigint) => {
+      if (maticWei === 5n * 10n ** 16n) return -1n;
+      return "bad-probe" as unknown as bigint;
+    },
+    getFreshRate: () => -5n as bigint,
+  }),
+  maxPriceAgeMs: 30_000,
+  minProbeAmount: 1_000n,
+  testAmountWei: 10n ** 18n,
+});
+
+assert.equal(
+  malformedPricing.getFreshTokenToMaticRate(TOKEN),
+  0n,
+  "pricing service should reject malformed oracle rates instead of leaking negative values",
+);
+assert.deepEqual(
+  malformedPricing.getProbeAmountsForToken(TOKEN),
+  [1_000n, 100_000n, 1_000_000n, 10_000_000n, 100_000_000n, 1_000_000_000n, 10n ** 18n],
+  "pricing service should ignore malformed oracle probes and truncate non-integer decimals safely",
+);
+assert.deepEqual(
+  malformedPricing.getProbeAmountsForToken(UNKNOWN),
+  [1_000n, 10n ** 17n, 10n ** 18n, 10n ** 19n, 10n ** 20n, 10n ** 21n],
+  "pricing service should fall back to sane 18-decimal probe sizing when token metadata is malformed",
+);
+
+const malformedProbeFloorPricing = createPricingService({
+  getTokenMeta() {
+    return { decimals: 0, symbol: "ZERO" };
+  },
+  getPriceOracle: () => ({
+    fromMatic: () => 0n,
+    getFreshRate: () => 1n,
+  }),
+  maxPriceAgeMs: 30_000,
+  minProbeAmount: 0n as bigint,
+  testAmountWei: -5n as bigint,
+});
+
+assert.deepEqual(
+  malformedProbeFloorPricing.getProbeAmountsForToken(TOKEN),
+  [1n, 10n, 100n, 1_000n],
+  "pricing service should clamp malformed probe floors to strictly positive probes instead of emitting 0 or negative runs",
+);
+
 console.log("Pricing service checks passed.");

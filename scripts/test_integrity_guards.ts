@@ -322,4 +322,44 @@ await assert.rejects(
   "buildArbTx should reject route metadata that disagrees with the execution edges",
 );
 
+await assert.rejects(
+  () =>
+    buildArbTx(
+      {
+        path: {
+          startToken: "0x0000000000000000000000000000000000000001",
+          edges: Array.from({ length: 7 }, (_, index) => ({
+            protocol: index % 2 === 0 ? "UNISWAP_V2" : "SUSHISWAP_V2",
+            poolAddress: `0x${String(index + 10).padStart(40, "0")}`,
+            tokenIn: `0x${String(index + 1).padStart(40, "0")}`,
+            tokenOut: `0x${String(index + 2).padStart(40, "0")}`,
+            zeroForOne: true,
+          })),
+        },
+        result: {
+          amountIn: 100n,
+          amountOut: 140n,
+          profit: 40n,
+          hopAmounts: [100n, 105n, 110n, 115n, 120n, 125n, 130n, 140n],
+          tokenPath: Array.from({ length: 8 }, (_, index) => `0x${String(index + 1).padStart(40, "0")}`),
+          poolPath: Array.from({ length: 7 }, (_, index) => `0x${String(index + 10).padStart(40, "0")}`),
+        },
+      },
+      {
+        executorAddress: "0x0000000000000000000000000000000000000001",
+        fromAddress: "0x0000000000000000000000000000000000000002",
+      },
+      {
+        gasParamsOverride: {
+          gasLimit: 1n,
+          maxFeePerGas: 1n,
+          maxPriorityFeePerGas: 1n,
+          estimatedCostWei: 1n,
+        },
+      },
+    ),
+  /route expands to 14 executor calls/,
+  "buildArbTx should reject long routes that exceed the executor call budget before submission",
+);
+
 console.log("Integrity guard checks passed.");
