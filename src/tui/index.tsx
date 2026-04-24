@@ -14,17 +14,27 @@ const WHITE = `${ESC}37m`;
 const SPINNER_FRAMES = ['-', '\\', '|', '/'];
 const MAX_OPPORTUNITIES = 5;
 const MAX_LOGS = 8;
+const MAX_STATE_LOGS = 20;
 const MIN_WIDTH = 72;
 const MAX_WIDTH = 120;
 const POLL_INTERVAL_MS = 250;
 const SPINNER_INTERVAL_MS = 500;
+
+type WritableLike = {
+  write: (...args: any[]) => boolean;
+};
+
+type OutputGuard = {
+  write: (stream: WritableLike, chunk: string | Buffer) => boolean;
+  restore: () => void;
+};
 
 function colorize(value: string, color: string) {
   return `${color}${value}${RESET}`;
 }
 
 function stripAnsi(value: string) {
-  return value.replace(/\u001b\[[0-9;]*m/g, '');
+  return value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '');
 }
 
 function truncate(value: string, width: number) {
@@ -70,6 +80,73 @@ function formatLogs(state: BotState, width: number) {
   }
 
   return logs.map((line) => colorize(truncate(line.replace(/\s+/g, ' ').trim(), width), summarizeLogLevel(line)));
+}
+
+function appendCapturedLog(state: BotState, label: string, line: string) {
+  const normalized = stripAnsi(line).replace(/\s+/g, ' ').trim();
+  if (!normalized) return;
+
+  const prefix = label === 'stderr' ? '[STDERR]' : '[STDOUT]';
+  const entry = `${prefix} ${normalized}`;
+  if (state.logs[0] === entry) return;
+
+  state.logs.unshift(entry);
+  if (state.logs.length > MAX_STATE_LOGS) state.logs.length = MAX_STATE_LOGS;
+}
+
+function installOutputGuard(state: BotState, streams: Array<{ label: string; stream: WritableLike }>): OutputGuard {
+  const originals = new Map<WritableLike, WritableLike['write']>();
+  const buffers = new Map<WritableLike, string>();
+  const labels = new Map<WritableLike, string>();
+  let bypassDepth = 0;
+
+  for (const { label, stream } of streams) {
+    if (originals.has(stream)) continue;
+
+    const originalWrite = stream.write.bind(stream) as WritableLike['write'];
+    originals.set(stream, originalWrite);
+    buffers.set(stream, '');
+    labels.set(stream, label);
+
+    stream.write = (chunk, encoding, cb) => {
+      if (bypassDepth > 0) return originalWrite(chunk, encoding as BufferEncoding, cb);
+
+      const callback = typeof encoding === 'function' ? encoding : cb;
+      const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
+      const combined = `${buffers.get(stream) ?? ''}${text}`;
+      const lines = combined.split(/\r?\n/);
+      buffers.set(stream, lines.pop() ?? '');
+
+      for (const line of lines) appendCapturedLog(state, labels.get(stream) ?? 'stdout', line);
+      if (callback) queueMicrotask(() => (callback as () => void)());
+      return true;
+    };
+  }
+
+  return {
+    write(stream: WritableLike, chunk: string | Buffer) {
+      const originalWrite = originals.get(stream);
+      if (!originalWrite) return stream.write(chunk);
+
+      bypassDepth += 1;
+      try {
+        return originalWrite(chunk);
+      } finally {
+        bypassDepth -= 1;
+      }
+    },
+    restore() {
+      for (const [stream, partial] of buffers) {
+        appendCapturedLog(state, labels.get(stream) ?? 'stdout', partial);
+      }
+      buffers.clear();
+
+      for (const [stream, originalWrite] of originals) {
+        stream.write = originalWrite;
+      }
+      originals.clear();
+    },
+  };
 }
 
 function section(title: string, width: number, color: string) {
@@ -150,6 +227,7 @@ export function startTui(state: BotState): () => void {
   let lastSignature = '';
   let lastSpinnerAt = 0;
   let alternateScreenActive = false;
+  let outputGuard: OutputGuard | null = null;
 
   const draw = (force = false) => {
     if (!stdout.isTTY || stopped) return;
@@ -169,7 +247,8 @@ export function startTui(state: BotState): () => void {
     const spinnerFrame = SPINNER_FRAMES[spinnerIndex];
 
     try {
-      stdout.write(renderFrame(state, columns, spinnerFrame));
+      const frame = renderFrame(state, columns, spinnerFrame);
+      outputGuard ? outputGuard.write(stdout, frame) : stdout.write(frame);
       lastSignature = signature;
     } catch {
       stop();
@@ -196,6 +275,8 @@ export function startTui(state: BotState): () => void {
       stdin.setRawMode(false);
       stdin.pause();
     }
+    outputGuard?.restore();
+    outputGuard = null;
     if (alternateScreenActive && stdout.isTTY) stdout.write(`${ESC}?1049l${ESC}?25h`);
   };
 
@@ -207,6 +288,10 @@ export function startTui(state: BotState): () => void {
   stdout.on('resize', onResize);
   stdout.write(`${ESC}?1049h${ESC}H`);
   alternateScreenActive = true;
+  outputGuard = installOutputGuard(state, [
+    { label: 'stdout', stream: stdout },
+    { label: 'stderr', stream: process.stderr },
+  ]);
 
   if (stdin.isTTY && typeof stdin.setRawMode === 'function') {
     stdin.setRawMode(true);
@@ -225,6 +310,7 @@ export function startTui(state: BotState): () => void {
 
 export const __tuiTest = {
   formatLogs,
+  installOutputGuard,
   renderFrame,
   signatureFor,
 };

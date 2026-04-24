@@ -3,17 +3,40 @@
  * src/protocols/curve_crypto_factory.js — Curve Crypto Factory definition
  */
 
+import { discoverCurveListedFactory } from "./curve_list_factory.ts";
+
+const FACTORY_ADDRESS = "0xE5De15A9C9bBedb4F5EC13B131E61245f2983A69";
+
+function valueToString(value: any) {
+  const unwrapped = value && typeof value === "object" && "val" in value ? value.val : value;
+  return unwrapped?.toString?.();
+}
+
 export default {
   name: "Curve Crypto Factory",
-  address: "0xE5De15A9C9bBedb4F5EC13B131E61245f2983A69",
+  address: FACTORY_ADDRESS,
   signature:
     "event CryptoPoolDeployed(address token, address[2] coins, uint256 A, uint256 gamma, uint256 mid_fee, uint256 out_fee, uint256 allowed_extra_profit, uint256 fee_gamma, uint256 adjustment_step, uint256 admin_fee, uint256 ma_half_time, uint256 initial_price, address deployer)",
+  async discover({ key, registry, chainHeight }: any) {
+    return discoverCurveListedFactory({
+      protocolKey: key,
+      protocolName: "Curve Crypto Factory",
+      factoryAddress: FACTORY_ADDRESS,
+      slotCount: 2,
+      registry,
+      checkpointBlock: chainHeight,
+      metadataForPool: () => ({
+        factory: FACTORY_ADDRESS,
+        variant: "crypto-factory",
+      }),
+    });
+  },
   decode(decoded: any, rawLog: any) {
     const coins = decoded.body[1]?.val || [];
     return {
       pool_address: rawLog?.address?.toString?.(),
       tokens: (Array.isArray(coins) ? coins : [coins]).map((c) =>
-        c?.toString()
+        valueToString(c)
       ),
       metadata: {
         token: decoded.body[0]?.val?.toString(),

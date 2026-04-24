@@ -69,6 +69,21 @@ type DiscoverCurveFactoryOptions = {
   metadataForPool?: (poolAddress: string, tokens: string[]) => Record<string, any>;
 };
 
+function metadataFactoryIndex(metadata: any) {
+  const index = Number(metadata?.factoryIndex);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function discoverStartIndex(existingPools: any[], poolCount: number) {
+  let maxIndexed = -1;
+  for (const pool of existingPools) {
+    const index = metadataFactoryIndex(pool?.metadata);
+    if (index != null && index > maxIndexed) maxIndexed = index;
+  }
+  if (maxIndexed < 0) return 0;
+  return Math.min(poolCount, maxIndexed + 1);
+}
+
 export async function discoverCurveListedFactory({
   protocolKey,
   protocolName,
@@ -79,8 +94,16 @@ export async function discoverCurveListedFactory({
   checkpointBlock = null,
   metadataForPool = () => ({}),
 }: DiscoverCurveFactoryOptions) {
-  const existing = new Set(
-    registry.getPoolAddressesForProtocol(protocolKey)
+  const existingPools = typeof registry.getPools === "function"
+    ? registry.getPools({ protocol: protocolKey })
+    : registry.getPoolAddressesForProtocol(protocolKey).map((address: string) => ({
+        pool_address: address,
+        tokens: [],
+        metadata: {},
+        status: "active",
+      }));
+  const existingByAddress = new Map<string, any>(
+    existingPools.map((pool: any) => [String(pool.pool_address ?? pool.address).toLowerCase(), pool])
   );
 
   const poolCount = Number(
@@ -96,14 +119,21 @@ export async function discoverCurveListedFactory({
     return { discovered: 0, checkpointBlock, rollbackGuard: null, hydrationPromise: null };
   }
 
-  console.log(`\n[${protocolName}] Enumerating ${poolCount} factory-listed pools...`);
+  const startIndex = discoverStartIndex(existingPools, poolCount);
+  const scanCount = Math.max(0, poolCount - startIndex);
+
+  console.log(
+    `\n[${protocolName}] Enumerating ${scanCount} new factory-listed pool slot(s)` +
+      (startIndex > 0 ? ` from index ${startIndex}` : ` across ${poolCount} pool slot(s)`) +
+      `...`
+  );
   discoveryLogger.info(
-    { protocol: protocolKey, poolCount, existingPools: existing.size },
+    { protocol: protocolKey, poolCount, existingPools: existingPools.length, startIndex, scanCount },
     "[discovery] Enumerating Curve factory-listed pools",
   );
 
-  const indexes = Array.from({ length: poolCount }, (_, i) => i);
-  const listedPools = await throttledMap(
+  const indexes = Array.from({ length: scanCount }, (_, i) => startIndex + i);
+  const listedPoolEntries = await throttledMap(
     indexes,
     async (index: number) => {
       try {
@@ -116,9 +146,32 @@ export async function discoverCurveListedFactory({
           })
         ).toLowerCase();
 
-        if (!poolAddress || poolAddress === ZERO || existing.has(poolAddress)) {
+        if (!poolAddress || poolAddress === ZERO) {
           return null;
         }
+
+        const existingPool = existingByAddress.get(poolAddress);
+        const existingFactoryIndex = metadataFactoryIndex(existingPool?.metadata);
+        if (existingPool && existingFactoryIndex !== index) {
+          return {
+            isNew: false,
+            pool: {
+              protocol: protocolKey,
+              block: existingPool.created_block ?? checkpointBlock ?? 0,
+              tx: existingPool.created_tx ?? "",
+              pool_address: poolAddress,
+              tokens: existingPool.tokens ?? [],
+              metadata: {
+                ...(existingPool.metadata ?? {}),
+                factory: factoryAddress,
+                factoryIndex: index,
+              },
+              status: existingPool.status ?? "active",
+              removed_block: existingPool.removed_block ?? null,
+            },
+          };
+        }
+        if (existingPool) return null;
 
         const rawTokens = await readContractWithRetry({
           address: factoryAddress,
@@ -134,13 +187,20 @@ export async function discoverCurveListedFactory({
         if (tokens.length < 2) return null;
 
         return {
-          protocol: protocolKey,
-          block: checkpointBlock ?? 0,
-          tx: "",
-          pool_address: poolAddress,
-          tokens,
-          metadata: metadataForPool(poolAddress, tokens),
-          status: "active",
+          isNew: true,
+          pool: {
+            protocol: protocolKey,
+            block: checkpointBlock ?? 0,
+            tx: "",
+            pool_address: poolAddress,
+            tokens,
+            metadata: {
+              ...metadataForPool(poolAddress, tokens),
+              factory: factoryAddress,
+              factoryIndex: index,
+            },
+            status: "active",
+          },
         };
       } catch (error: any) {
         // Some Curve factories expose sparse pool_list indexes after removals.
@@ -155,33 +215,38 @@ export async function discoverCurveListedFactory({
     ENRICH_CONCURRENCY
   );
 
-  const poolBatch = listedPools.filter(Boolean);
+  const listedPools = listedPoolEntries.filter(Boolean) as Array<{ isNew: boolean; pool: any }>;
+  const poolBatch = listedPools.map((entry) => entry.pool);
+  const newPools = listedPools.filter((entry) => entry.isNew);
   if (poolBatch.length > 0) {
     registry.batchUpsertPools(poolBatch);
   }
   if (checkpointBlock != null) registry.setCheckpoint(protocolKey, checkpointBlock);
 
-  console.log(`  Inserted/updated ${poolBatch.length} pools for ${protocolName}.`);
+  console.log(`  Inserted ${newPools.length} new pool(s), refreshed ${poolBatch.length - newPools.length} existing pool(s) for ${protocolName}.`);
   discoveryLogger.info(
     {
       protocol: protocolKey,
       enumeratedPools: poolCount,
-      insertedPools: poolBatch.length,
+      scanStartIndex: startIndex,
+      scannedSlots: scanCount,
+      insertedPools: newPools.length,
+      refreshedPools: poolBatch.length - newPools.length,
       checkpointBlock,
     },
     "[discovery] Curve factory scan complete",
   );
 
   const hydrationPromise =
-    poolBatch.length > 0
-      ? hydrateNewTokens(poolBatch, registry).catch((err) => {
+    newPools.length > 0
+      ? hydrateNewTokens(newPools.map((entry) => entry.pool), registry).catch((err) => {
           console.warn(`  [discover] Token hydration failed: ${err.message}`);
           return 0;
         })
       : null;
 
   return {
-    discovered: poolBatch.length,
+    discovered: newPools.length,
     checkpointBlock,
     rollbackGuard: null,
     hydrationPromise,

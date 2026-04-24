@@ -42,4 +42,30 @@ const formattedLogs = __tuiTest.formatLogs(state, 36);
 assert.equal(formattedLogs.length, 2);
 assert.match(formattedLogs[0], /\u001b\[/, "logs should keep severity color");
 
+const writes: string[] = [];
+const fakeStream = {
+  write(chunk: unknown) {
+    writes.push(String(chunk));
+    return true;
+  },
+};
+
+const guardedState: BotState = {
+  ...state,
+  logs: [],
+};
+const guard = __tuiTest.installOutputGuard(guardedState, [{ label: "stdout", stream: fakeStream }]);
+
+fakeStream.write("external line one\npartial");
+assert.equal(writes.length, 0, "guard should capture external stdout writes");
+assert.deepEqual(guardedState.logs, ["[STDOUT] external line one"]);
+
+guard.write(fakeStream, "tui frame");
+assert.deepEqual(writes, ["tui frame"], "guard should allow renderer writes through");
+
+guard.restore();
+assert.equal(fakeStream.write("after restore"), true);
+assert.deepEqual(writes, ["tui frame", "after restore"], "restore should put the original writer back");
+assert.equal(guardedState.logs[0], "[STDOUT] partial", "restore should flush partial captured output");
+
 console.log("TUI checks passed.");

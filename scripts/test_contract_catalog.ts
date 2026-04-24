@@ -72,6 +72,11 @@ assert.deepEqual(stablePlainDecoded.tokens, [
   "0x2222222222222222222222222222222222222222",
 ]);
 assert.equal(stablePlainDecoded.metadata.variant, "plain");
+assert.equal(
+  typeof CURVE_STABLE_FACTORY.discover,
+  "function",
+  "Curve StableSwap Factory should use pool-list enumeration for discovery coverage",
+);
 
 const stableMetaDecoded = CURVE_STABLE_FACTORY.decode(
   {
@@ -120,5 +125,10 @@ assert.deepEqual(cryptoDecoded.tokens, [
 ]);
 assert.equal(cryptoDecoded.metadata.token, "0x9999999999999999999999999999999999999999");
 assert.equal(cryptoDecoded.metadata.initial_price, "100");
+assert.equal(
+  typeof CURVE_CRYPTO_FACTORY.discover,
+  "function",
+  "Curve Crypto Factory should use pool-list enumeration for discovery coverage",
+);
 
 console.log("Contract catalog checks passed.");
