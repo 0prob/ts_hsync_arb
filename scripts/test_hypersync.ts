@@ -18,6 +18,7 @@ import {
 } from "../src/state/watcher.ts";
 import { commitWatcherStatesBatch, handleWatcherLogs } from "../src/state/watcher_state_ops.ts";
 import { client } from "../src/hypersync/client.ts";
+import { HYPERSYNC_MAX_BLOCKS_PER_REQUEST } from "../src/config/index.ts";
 
 const baseQuery = {
   fromBlock: 100,
@@ -234,8 +235,8 @@ assert.equal(
 );
 assert.equal(
   watcherErrorBackoffMs(new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views."), 3),
-  15_000,
-  "integrity watcher failures should use a slower fixed cooldown instead of exponential transport backoff",
+  20_000,
+  "rollback-guard skew should reuse transient exponential backoff instead of the integrity halt cooldown",
 );
 assert.equal(
   watcherShouldHaltAfterIntegrityError(2),
@@ -312,6 +313,98 @@ assert.deepEqual(
 }
 
 {
+  const existing = {
+    poolId: "0x1111111111111111111111111111111111111111",
+    protocol: "UNISWAP_V2",
+    token0: "0x2222222222222222222222222222222222222222",
+    token1: "0x3333333333333333333333333333333333333333",
+    tokens: [
+      "0x2222222222222222222222222222222222222222",
+      "0x3333333333333333333333333333333333333333",
+    ],
+    reserve0: 11n,
+    reserve1: 12n,
+    fee: 997n,
+    timestamp: 1,
+  };
+  const cache = new Map([["0x1111111111111111111111111111111111111111", existing]]);
+  commitWatcherStatesBatch(
+    cache,
+    () => {},
+    [
+      {
+        addr: "0x1111111111111111111111111111111111111111",
+        rawLog: { blockNumber: 402 },
+        state: {
+          ...existing,
+          reserve0: 21n,
+          reserve1: 22n,
+          timestamp: 0,
+        },
+      },
+    ],
+  );
+
+  assert.equal(
+    cache.get("0x1111111111111111111111111111111111111111"),
+    existing,
+    "watcher batch commit should preserve existing cache object identity for live state readers",
+  );
+  assert.equal(
+    existing.reserve0,
+    21n,
+    "watcher batch commit should merge new state into the existing cache entry after persistence",
+  );
+}
+
+{
+  const existing = {
+    poolId: "0x1111111111111111111111111111111111111111",
+    protocol: "UNISWAP_V2",
+    token0: "0x2222222222222222222222222222222222222222",
+    token1: "0x3333333333333333333333333333333333333333",
+    tokens: [
+      "0x2222222222222222222222222222222222222222",
+      "0x3333333333333333333333333333333333333333",
+    ],
+    reserve0: 11n,
+    reserve1: 12n,
+    fee: 997n,
+    timestamp: 1,
+  };
+  const cache = new Map([["0x1111111111111111111111111111111111111111", existing]]);
+
+  assert.throws(
+    () =>
+      commitWatcherStatesBatch(
+        cache,
+        () => {
+          throw new Error("persist failed");
+        },
+        [
+          {
+            addr: "0x1111111111111111111111111111111111111111",
+            rawLog: { blockNumber: 403 },
+            state: {
+              ...existing,
+              reserve0: 31n,
+              reserve1: 32n,
+              timestamp: 0,
+            },
+          },
+        ],
+      ),
+    /persist failed/,
+    "watcher batch commit should surface persistence failures",
+  );
+  assert.equal(
+    existing.reserve0,
+    11n,
+    "watcher batch commit should not mutate the live cache before persistence succeeds",
+  );
+}
+
+{
   let getPoolMetaCalls = 0;
   const registry = {
     getPoolMeta(address: string) {
@@ -375,6 +468,59 @@ assert.deepEqual(
   assert.equal(getPoolMetaCalls, 1, "watcher should resolve pool metadata once per address within a batch");
   assert.deepEqual([...changedAddrs], ["0xpool"]);
   assert.equal(cache.get("0xpool")?.reserve0, 21n, "watcher should still apply the latest in-batch state update");
+}
+
+{
+  const poolAddress = "0x1111111111111111111111111111111111111111";
+  const registry = {
+    getPoolMeta(addr: string) {
+      assert.equal(addr, poolAddress);
+      return {
+        protocol: "COMETHSWAP_V2",
+        metadata: { feeNumerator: 995 },
+      };
+    },
+  };
+  const cache = new Map([
+    [
+      poolAddress,
+      {
+        poolId: poolAddress,
+        protocol: "COMETHSWAP_V2",
+        tokens: [
+          "0x0000000000000000000000000000000000000001",
+          "0x0000000000000000000000000000000000000002",
+        ],
+        token0: "0x0000000000000000000000000000000000000001",
+        token1: "0x0000000000000000000000000000000000000002",
+        reserve0: 1n,
+        reserve1: 2n,
+        fee: 3_000n,
+        timestamp: Date.now(),
+      },
+    ],
+  ]);
+
+  await handleWatcherLogs({
+    logs: [{ address: poolAddress, topic0: WATCHER_TOPIC0.V2_SYNC, blockNumber: 402, transactionIndex: 0, logIndex: 1 }],
+    decoded: [{ body: [{ val: 31n }, { val: 32n }] }],
+    registry,
+    cache,
+    closed: () => false,
+    topic0: WATCHER_TOPIC0,
+    refreshBalancer: async () => {},
+    refreshCurve: async () => {},
+    enqueueEnrichment: () => Promise.resolve(),
+    commitStates(updates: any[]) {
+      for (const update of updates) {
+        cache.set(update.addr, update.state);
+      }
+      return updates.map((update) => update.addr);
+    },
+  });
+
+  assert.equal(cache.get(poolAddress)?.reserve0, 31n, "watcher should still apply V2 Sync reserves");
+  assert.equal(cache.get(poolAddress)?.fee, 995n, "watcher should repair stale invalid V2 fee from registry metadata");
 }
 
 {
@@ -454,10 +600,12 @@ assert.deepEqual(
   const originalGet = client.get;
   const originalDecoder = watcher._decoder;
   const seenFilterCounts: number[] = [];
+  const seenMaxNumBlocks: number[] = [];
 
   watcher._decoder = { decodeLogs: async () => [] };
   client.get = async (query: any) => {
     seenFilterCounts.push(Array.isArray(query.logs) ? query.logs.length : 0);
+    seenMaxNumBlocks.push(Number(query.maxNumBlocks));
     return {
       archiveHeight: 500,
       nextBlock: 401 + seenFilterCounts.length,
@@ -476,6 +624,11 @@ assert.deepEqual(
       [8, 8, 1],
       "watcher should split large watchlists across multiple HyperSync requests",
     );
+    assert.deepEqual(
+      seenMaxNumBlocks,
+      [HYPERSYNC_MAX_BLOCKS_PER_REQUEST, HYPERSYNC_MAX_BLOCKS_PER_REQUEST, HYPERSYNC_MAX_BLOCKS_PER_REQUEST],
+      "watcher should bound live catch-up polls with the configured maxNumBlocks limit",
+    );
     assert.equal(res.nextBlock, 402, "watcher should advance at the slowest shard cursor");
     assert.equal(res.archiveHeight, 500);
   } finally {
@@ -491,44 +644,51 @@ assert.deepEqual(
     setRollbackGuard: () => {},
     rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
   };
-  const cache = new Map(
-    Array.from({ length: 17_000 }, (_, i) => [
-      `0x${String(i + 1).padStart(40, "0")}`,
-      { poolId: i + 1 },
-    ]),
-  );
+  const watcher = new StateWatcher(registry as any, new Map() as any) as any;
+  const originalGetHeight = client.getHeight;
+  const slept: number[] = [];
+  const heightCalls: number[] = [];
+  let pollCount = 0;
 
-  const watcher = new StateWatcher(registry as any, cache as any) as any;
-  const originalGet = client.get;
-  const originalDecoder = watcher._decoder;
-  let callCount = 0;
-
-  watcher._decoder = { decodeLogs: async () => [] };
-  client.get = async () => {
-    callCount++;
-    return {
-      rollbackGuard: callCount === 1
-        ? { first_block_number: 400, first_parent_hash: "0xabc" }
-        : { first_block_number: 400, first_parent_hash: "0xdef" },
-      archiveHeight: 500,
-      nextBlock: 402,
-      data: { logs: [] },
-    };
+  client.getHeight = async () => {
+    heightCalls.push(heightCalls.length + 1);
+    return heightCalls.length === 1 ? 401 : 402;
+  };
+  watcher._pollOnce = async () => {
+    pollCount++;
+    if (pollCount === 1) {
+      return {
+        rollbackGuard: null,
+        data: { logs: [] },
+        nextBlock: 402,
+        archiveHeight: 401,
+        shardSummary: { archiveHeights: [401] },
+      };
+    }
+    watcher._running = false;
+    return null;
+  };
+  watcher._handleLogs = async () => new Set();
+  watcher._sleep = async (ms: number) => {
+    slept.push(ms);
   };
 
   try {
-    watcher._lastBlock = 400;
     watcher._running = true;
-    watcher._watchedAddresses = Array.from(cache.keys());
-    watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
-    await assert.rejects(
-      () => watcher._pollOnce(),
-      /mismatched rollback guards/,
-      "watcher should reject shard responses that disagree on rollback guard identity",
+    watcher._lastBlock = 400;
+    await watcher._loop();
+    assert.deepEqual(
+      heightCalls,
+      [1, 2],
+      "watcher should poll chain height while caught up instead of immediately issuing another tip query",
+    );
+    assert.deepEqual(
+      slept,
+      [1_000, 1_000],
+      "watcher should reuse the idle wait cadence while waiting for chain height to advance",
     );
   } finally {
-    client.get = originalGet;
-    watcher._decoder = originalDecoder;
+    client.getHeight = originalGetHeight;
   }
 }
 
@@ -556,6 +716,151 @@ assert.deepEqual(
     callCount++;
     return callCount === 1
       ? {
+          rollbackGuard: {
+            block_number: 401,
+            block_hash: "0xhead",
+            first_block_number: 400,
+            first_parent_hash: "0xparent",
+          },
+          archiveHeight: 500,
+          nextBlock: 402,
+          data: { logs: [] },
+        }
+      : {
+          rollbackGuard: {
+            first_block_number: 400,
+            first_parent_hash: "0xparent",
+          },
+          archiveHeight: 500,
+          nextBlock: 402,
+          data: { logs: [] },
+        };
+  };
+
+  try {
+    watcher._lastBlock = 400;
+    watcher._running = true;
+    watcher._watchedAddresses = Array.from(cache.keys());
+    watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
+    const result = await watcher._pollOnce();
+    assert.deepEqual(
+      result?.rollbackGuard,
+      {
+        block_number: 401,
+        block_hash: "0xhead",
+        first_block_number: 400,
+        first_parent_hash: "0xparent",
+        hash: "0xhead",
+      },
+      "watcher should accept shard guards that agree on the same first-block boundary even when only some shards include head-hash fields",
+    );
+  } finally {
+    client.get = originalGet;
+    watcher._decoder = originalDecoder;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const cache = new Map(
+    Array.from({ length: 17_000 }, (_, i) => [
+      `0x${String(i + 1).padStart(40, "0")}`,
+      { poolId: i + 1 },
+    ]),
+  );
+
+  const watcher = new StateWatcher(registry as any, cache as any) as any;
+  const originalGet = client.get;
+  const originalDecoder = watcher._decoder;
+  const originalWarn = watcherLogger.warn;
+  let callCount = 0;
+  const warnCalls: any[] = [];
+
+  watcher._decoder = { decodeLogs: async () => [] };
+  watcher._lastBlock = 400;
+  watcher._running = true;
+  watcher._watchedAddresses = Array.from(cache.keys());
+  watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
+  const requestCount = watcher._buildQueries().length;
+  watcherLogger.warn = (...args: any[]) => {
+    warnCalls.push(args);
+  };
+  client.get = async () => {
+    callCount++;
+    const attempt = Math.ceil(callCount / requestCount);
+    const shardIndex = ((callCount - 1) % requestCount) + 1;
+    return attempt === 1
+      ? {
+          rollbackGuard: shardIndex === 1
+            ? { first_block_number: 400, first_parent_hash: "0xabc" }
+            : { first_block_number: 400, first_parent_hash: "0xdef" },
+          archiveHeight: 500,
+          nextBlock: 402,
+          data: { logs: [] },
+        }
+      : {
+          rollbackGuard: { first_block_number: 400, first_parent_hash: "0xabc" },
+          archiveHeight: 500,
+          nextBlock: 402,
+          data: { logs: [] },
+        };
+  };
+
+  try {
+    const result = await watcher._pollOnce();
+    assert.equal(
+      callCount,
+      requestCount * 2,
+      "watcher should retry shard fetches inside a poll when rollback guards disagree at the tip",
+    );
+    assert.deepEqual(
+      result?.rollbackGuard,
+      { first_block_number: 400, first_parent_hash: "0xabc" },
+      "watcher should return the retried shard guard once a consistent view is available",
+    );
+    assert.equal(warnCalls.length, 0, "watcher should recover shard skew without logging unrelated warnings");
+  } finally {
+    client.get = originalGet;
+    watcher._decoder = originalDecoder;
+    watcherLogger.warn = originalWarn;
+  }
+}
+
+{
+  const registry = {
+    getCheckpoint: () => null,
+    setCheckpoint: () => {},
+    setRollbackGuard: () => {},
+    rollbackToBlock: () => ({ poolsRemoved: 0, statesRemoved: 0 }),
+  };
+  const cache = new Map(
+    Array.from({ length: 17_000 }, (_, i) => [
+      `0x${String(i + 1).padStart(40, "0")}`,
+      { poolId: i + 1 },
+    ]),
+  );
+
+  const watcher = new StateWatcher(registry as any, cache as any) as any;
+  const originalGet = client.get;
+  const originalDecoder = watcher._decoder;
+  let callCount = 0;
+
+  watcher._decoder = { decodeLogs: async () => [] };
+  watcher._lastBlock = 400;
+  watcher._running = true;
+  watcher._watchedAddresses = Array.from(cache.keys());
+  watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
+  const requestCount = watcher._buildQueries().length;
+  client.get = async () => {
+    callCount++;
+    const shardIndex = ((callCount - 1) % requestCount) + 1;
+    return shardIndex === 1
+      ? {
           rollbackGuard: { first_block_number: 400, first_parent_hash: "0xabc" },
           archiveHeight: 500,
           nextBlock: 402,
@@ -570,15 +875,12 @@ assert.deepEqual(
   };
 
   try {
-    watcher._lastBlock = 400;
-    watcher._running = true;
-    watcher._watchedAddresses = Array.from(cache.keys());
-    watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
     await assert.rejects(
       () => watcher._pollOnce(),
       /did not include a finite nextBlock cursor/,
       "watcher should reject shard responses that omit the authoritative nextBlock cursor",
     );
+    assert.equal(callCount, requestCount, "watcher should not retry non-rollback-guard shard merge failures");
   } finally {
     client.get = originalGet;
     watcher._decoder = originalDecoder;
@@ -703,19 +1005,19 @@ assert.deepEqual(
         {
           error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
           errorName: "Error",
-          errorCategory: "integrity",
+          errorCategory: "transient",
           consecutivePollErrors: 1,
-          consecutiveIntegrityPollErrors: 1,
-          backoffMs: 15_000,
+          consecutiveIntegrityPollErrors: 0,
+          backoffMs: 5_000,
           currentLastBlock: 400,
         },
       ],
-      "watcher loop should classify rollback-guard mismatches as integrity failures",
+      "watcher loop should classify rollback-guard mismatches as retryable shard skew",
     );
     assert.deepEqual(
       slept,
-      [15_000],
-      "integrity watcher failures should use the slower fixed cooldown",
+      [5_000],
+      "rollback-guard skew should use the transient retry cooldown",
     );
   } finally {
     watcherLogger.error = originalError;
@@ -734,88 +1036,66 @@ assert.deepEqual(
   const errorCalls: any[] = [];
   const slept: number[] = [];
   let pollCount = 0;
-  let haltPayload: any = null;
 
   watcherLogger.error = (...args: any[]) => {
     errorCalls.push(args);
   };
   watcher._pollOnce = async () => {
     pollCount++;
-    throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
+    if (pollCount <= 3) {
+      throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
+    }
+    watcher._running = false;
+    return null;
   };
   watcher._sleep = async (ms: number) => {
     slept.push(ms);
-  };
-  watcher.onHalt = (payload: any) => {
-    haltPayload = payload;
   };
 
   try {
     watcher._running = true;
     watcher._lastBlock = 400;
     await watcher._loop();
-    assert.equal(watcher._running, false, "watcher should stop after repeated integrity failures");
-    assert.equal(watcher._closed, true, "watcher should mark itself closed when halting on integrity failures");
+    assert.equal(watcher._running, false, "watcher should keep retrying rollback-guard skew until a later poll can complete");
+    assert.equal(watcher._closed, false, "retryable rollback-guard skew should not mark the watcher closed");
     assert.deepEqual(
       errorCalls.map((args) => args[0]),
       [
         {
           error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
           errorName: "Error",
-          errorCategory: "integrity",
+          errorCategory: "transient",
           consecutivePollErrors: 1,
-          consecutiveIntegrityPollErrors: 1,
-          backoffMs: 15_000,
+          consecutiveIntegrityPollErrors: 0,
+          backoffMs: 5_000,
           currentLastBlock: 400,
         },
         {
           error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
           errorName: "Error",
-          errorCategory: "integrity",
+          errorCategory: "transient",
           consecutivePollErrors: 2,
-          consecutiveIntegrityPollErrors: 2,
-          backoffMs: 15_000,
+          consecutiveIntegrityPollErrors: 0,
+          backoffMs: 10_000,
           currentLastBlock: 400,
         },
         {
           error: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
           errorName: "Error",
-          errorCategory: "integrity",
+          errorCategory: "transient",
           consecutivePollErrors: 3,
-          consecutiveIntegrityPollErrors: 3,
-          backoffMs: 15_000,
-          currentLastBlock: 400,
-        },
-        {
-          reason: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
-          errorName: "Error",
-          consecutiveIntegrityPollErrors: 3,
-          haltThreshold: 3,
+          consecutiveIntegrityPollErrors: 0,
+          backoffMs: 20_000,
           currentLastBlock: 400,
         },
       ],
-      "watcher should halt and emit a dedicated shutdown log once repeated integrity failures cross the threshold",
+      "watcher should keep logging retryable rollback-guard skew without emitting a halt event",
     );
-    assert.deepEqual(
-      haltPayload,
-      {
-        reason: "Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.",
-        errorName: "Error",
-        consecutiveIntegrityPollErrors: 3,
-        haltThreshold: 3,
-        currentLastBlock: 400,
-      },
-      "watcher should publish halt metadata to supervisors when it fails closed",
-    );
-    assert.deepEqual(
-      watcher.haltMeta,
-      haltPayload,
-      "watcher should retain the final halt metadata for callers that wait on the loop",
-    );
+    assert.equal(watcher.haltMeta, null, "retryable rollback-guard skew should not retain halt metadata");
     assert.deepEqual(
       slept,
-      [15_000, 15_000],
-      "watcher should only sleep between integrity failures until the halt threshold is reached",
+      [5_000, 10_000, 20_000],
+      "retryable rollback-guard skew should follow transient exponential backoff across repeated attempts",
     );
   } finally {
     watcherLogger.error = originalError;

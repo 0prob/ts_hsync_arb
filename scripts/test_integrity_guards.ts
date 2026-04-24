@@ -4,6 +4,7 @@ import { normalizePoolState, validatePoolState } from "../src/state/normalizer.t
 import { computeProfit } from "../src/profit/compute.ts";
 import { buildArbTx } from "../src/execution/build_tx.ts";
 import { getResultHopCount } from "../src/routing/path_hops.ts";
+import { metadataWithTokenDecimals } from "../src/state/poll_curve.ts";
 
 const ONE = 10n ** 18n;
 
@@ -97,6 +98,117 @@ assert.equal(
   "validator should reject Curve states whose token and balance arrays diverge",
 );
 
+const mixedDecimalCurve = normalizePoolState(
+  "0x1111111111111111111111111111111111111111",
+  "CURVE_MAIN",
+  [
+    "0x2222222222222222222222222222222222222222",
+    "0x3333333333333333333333333333333333333333",
+  ],
+  {
+    balances: [1_000_000n, 10n ** 18n],
+    A: 10_000n,
+    fee: 4_000_000n,
+    fetchedAt: Date.now(),
+  },
+  {
+    tokenDecimals: [6, 18],
+  },
+);
+assert(mixedDecimalCurve, "Curve mixed-decimal state should normalize when token decimals are known");
+assert.deepEqual(
+  mixedDecimalCurve?.rates,
+  [10n ** 30n, 10n ** 18n],
+  "Curve default rates should scale raw mixed-decimal balances into a common 18-decimal precision domain",
+);
+assert.deepEqual(
+  mixedDecimalCurve?.tokenDecimals,
+  [6, 18],
+  "Curve canonical state should retain the token decimals used to derive default rates",
+);
+
+const curveMetadata = metadataWithTokenDecimals(
+  {
+    metadata: { source: "registry" },
+  },
+  [
+    "0x2222222222222222222222222222222222222222",
+    "0x3333333333333333333333333333333333333333",
+  ],
+  new Map([
+    ["0x2222222222222222222222222222222222222222", 6],
+    ["0x3333333333333333333333333333333333333333", 18],
+  ]),
+);
+assert.deepEqual(
+  curveMetadata,
+  {
+    source: "registry",
+    tokenDecimals: [6, 18],
+    tokenDecimalsByAddress: {
+      "0x2222222222222222222222222222222222222222": 6,
+      "0x3333333333333333333333333333333333333333": 18,
+    },
+  },
+  "Curve RPC refresh should carry registry token decimals into normalization metadata",
+);
+
+const mixedDecimalV2 = normalizePoolState(
+  "0x1111111111111111111111111111111111111111",
+  "COMETHSWAP_V2",
+  [
+    "0x2222222222222222222222222222222222222222",
+    "0x3333333333333333333333333333333333333333",
+  ],
+  {
+    reserve0: 1_000_000n,
+    reserve1: 10n ** 18n,
+    blockTimestampLast: 123,
+    fetchedAt: Date.now(),
+  },
+  {
+    feeNumerator: 995,
+    tokenDecimals: [6, 18],
+  },
+);
+assert(mixedDecimalV2, "V2 variants should normalize with registry token decimals");
+assert.deepEqual(mixedDecimalV2?.tokenDecimals, [6, 18], "V2 canonical state should retain token decimals");
+assert.equal(mixedDecimalV2?.fee, 995n, "V2 canonical state should retain variant-specific fee numerator");
+assert.equal(mixedDecimalV2?.feeDenominator, 1000n, "V2 canonical state should retain fee denominator metadata");
+assert.equal(mixedDecimalV2?.blockTimestampLast, 123, "V2 canonical state should retain pair reserve timestamp");
+
+const algebraV3 = normalizePoolState(
+  "0x1111111111111111111111111111111111111111",
+  "KYBERSWAP_ELASTIC",
+  [
+    "0x2222222222222222222222222222222222222222",
+    "0x3333333333333333333333333333333333333333",
+  ],
+  {
+    sqrtPriceX96: 1n,
+    tick: 0,
+    liquidity: 10n,
+    fee: 500,
+    tickSpacing: 10,
+    ticks: new Map(),
+    fetchedAt: Date.now(),
+    initialized: true,
+    isAlgebra: true,
+    isKyberElastic: true,
+    hydrationMode: "nearby",
+  },
+  {
+    tokenDecimals: [18, 6],
+    isAlgebra: true,
+    isKyberElastic: true,
+  },
+);
+assert(algebraV3, "Algebra-family V3 variants should normalize through the V3 path");
+assert.deepEqual(algebraV3?.tokenDecimals, [18, 6], "V3 canonical state should retain token decimals");
+assert.equal(algebraV3?.isAlgebra, true, "V3 canonical state should retain Algebra-family metadata");
+assert.equal(algebraV3?.isKyberElastic, true, "Kyber canonical state should retain variant metadata");
+assert.equal(algebraV3?.hydrationMode, "nearby", "V3 canonical state should retain tick hydration metadata");
+
 const normalizedBalancer = normalizePoolState(
   "0x1111111111111111111111111111111111111111",
   "BALANCER_V2",
@@ -108,10 +220,30 @@ const normalizedBalancer = normalizePoolState(
   {
     balances: [1000n, 2000n, 3000n],
     swapFee: 3_000_000_000_000_000n,
+    poolId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    lastChangeBlock: 456,
     fetchedAt: Date.now(),
-  }
+  },
+  {
+    tokenDecimals: [18, 6, 8],
+    poolType: "weighted",
+    specialization: "2",
+  },
 );
 assert(normalizedBalancer, "normalizer should build fallback Balancer weights when chain weights are unavailable");
+assert.deepEqual(
+  normalizedBalancer?.tokenDecimals,
+  [18, 6, 8],
+  "Balancer canonical state should retain registry token decimals",
+);
+assert.equal(
+  normalizedBalancer?.balancerPoolId,
+  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "Balancer canonical state should retain the Vault poolId used for getPoolTokens",
+);
+assert.equal(normalizedBalancer?.lastChangeBlock, 456, "Balancer canonical state should retain Vault lastChangeBlock");
+assert.equal(normalizedBalancer?.poolType, "weighted", "Balancer canonical state should retain pool type metadata");
+assert.equal(normalizedBalancer?.specialization, "2", "Balancer canonical state should retain Vault specialization metadata");
 assert.equal(
   normalizedBalancer?.weights?.reduce((sum: bigint, weight: bigint) => sum + weight, 0n),
   ONE,

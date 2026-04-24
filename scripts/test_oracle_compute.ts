@@ -141,6 +141,25 @@ assert.equal(
   "ROI should reflect net profit after gas when the route can be priced in start-token units",
 );
 
+const fractionalGasAssessment = computeProfit(
+  {
+    amountIn: 1_000_000n,
+    amountOut: 1_100_000n,
+    profit: 100_000n,
+    totalGas: 100_000.5,
+  },
+  {
+    gasPriceWei: 30n * 10n ** 9n,
+    tokenToMaticRate: 10n ** 12n,
+  },
+);
+assert.equal(
+  fractionalGasAssessment.shouldExecute,
+  false,
+  "computeProfit should reject malformed gas estimates instead of throwing during arb assessment",
+);
+assert.equal(fractionalGasAssessment.rejectReason, "invalid totalGas");
+
 assert(
   Number.isFinite(roiMicroUnits(10n ** 400n, 1n)),
   "ROI conversion should remain finite for very large bigint inputs",

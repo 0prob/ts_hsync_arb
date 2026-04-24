@@ -22,9 +22,6 @@ import { getResultHopCount } from "../routing/path_hops.ts";
 
 // ─── Constants ────────────────────────────────────────────────
 
-/** 1 MATIC in wei */
-const WEI = 10n ** 18n;
-
 /** Default gas price: 50 gwei (conservative for Polygon) */
 const DEFAULT_GAS_PRICE_WEI = 50n * 10n ** 9n;
 
@@ -107,6 +104,9 @@ function invalidAssessment(routeResult: Partial<RouteResultLike>, reason: string
  * @returns {bigint}            Gas cost in wei
  */
 export function gasCostWei(gasUnits: number, gasPriceWei: bigint = DEFAULT_GAS_PRICE_WEI) {
+  if (!Number.isSafeInteger(gasUnits) || gasUnits < 0) {
+    throw new Error("gasUnits must be a finite non-negative safe integer");
+  }
   return BigInt(gasUnits) * gasPriceWei;
 }
 
@@ -210,7 +210,7 @@ export function computeProfit(routeResult: RouteResultLike, options: ProfitOptio
   if (amountIn <= 0n) return invalidAssessment(routeResult, "amountIn <= 0");
   if (amountOut < 0n) return invalidAssessment(routeResult, "amountOut < 0");
   if (grossProfit !== amountOut - amountIn) return invalidAssessment(routeResult, "profit mismatch");
-  if (!Number.isFinite(totalGas) || totalGas < 0) return invalidAssessment(routeResult, "invalid totalGas");
+  if (!Number.isSafeInteger(totalGas) || totalGas < 0) return invalidAssessment(routeResult, "invalid totalGas");
   if (gasPriceWei < 0n) return invalidAssessment(routeResult, "gasPriceWei < 0");
   if (slippageBps < 0n || slippageBps > BPS_DENOM) return invalidAssessment(routeResult, "invalid slippageBps");
   if (revertRiskBps < 0n || revertRiskBps > BPS_DENOM) return invalidAssessment(routeResult, "invalid revertRiskBps");

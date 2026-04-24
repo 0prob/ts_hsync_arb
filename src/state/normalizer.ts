@@ -79,6 +79,33 @@ const BALANCER_PROTOCOLS = new Set([
 
 const ONE = 10n ** 18n;
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const DEFAULT_V2_FEE_NUMERATOR = 997n;
+const DEFAULT_V2_FEE_DENOMINATOR = 1000n;
+
+function normalizeTokenDecimalsList(tokens: any[], meta: any = {}) {
+  const byAddress = meta?.tokenDecimalsByAddress ?? meta?.decimalsByAddress ?? null;
+  const list = Array.isArray(meta?.tokenDecimals)
+    ? meta.tokenDecimals
+    : Array.isArray(meta?.decimals)
+      ? meta.decimals
+      : null;
+
+  return tokens.map((token, index) => {
+    const address = typeof token === "string" ? token.toLowerCase() : "";
+    const raw = byAddress && typeof byAddress === "object"
+      ? byAddress[address] ?? byAddress[token]
+      : list?.[index];
+    const decimals = Number(raw);
+    return Number.isInteger(decimals) && decimals >= 0 && decimals <= 255 ? decimals : null;
+  });
+}
+
+function defaultRatesForDecimals(decimals: Array<number | null>) {
+  if (!Array.isArray(decimals) || decimals.some((value) => value == null)) return null;
+  const maxDecimals = Math.max(...decimals.map((value) => value ?? 18), 18);
+  if (maxDecimals > 59) return null;
+  return decimals.map((value) => 10n ** BigInt(18 + maxDecimals - (value ?? 18)));
+}
 
 function splitEvenWeights(count: number) {
   if (!Number.isInteger(count) || count <= 0) return [];
@@ -88,6 +115,18 @@ function splitEvenWeights(count: number) {
   const allocated = base * BigInt(count);
   weights[count - 1] += ONE - allocated;
   return weights;
+}
+
+export function resolveV2FeeNumerator(meta: any = {}, fallback: bigint = DEFAULT_V2_FEE_NUMERATOR) {
+  const rawFee = meta?.feeNumerator ?? meta?.fee;
+  if (rawFee == null) return fallback;
+
+  try {
+    const fee = BigInt(rawFee);
+    return fee > 0n && fee < DEFAULT_V2_FEE_DENOMINATOR ? fee : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 // ─── Normalizers ──────────────────────────────────────────────
@@ -105,17 +144,23 @@ function splitEvenWeights(count: number) {
 export function normalizeV2State(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   // V2 fee: default 997/1000 (0.3%). SushiSwap also 0.3%.
   // Some forks differ — use registry metadata if available.
-  const feeNumerator = meta?.feeNumerator != null ? BigInt(meta.feeNumerator) : 997n;
+  const feeNumerator = resolveV2FeeNumerator(meta);
+  const normalizedTokens = Array.isArray(tokens) ? tokens.map((t: any) => String(t).toLowerCase()) : [];
+  const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
 
   return {
     poolId: poolAddress.toLowerCase(),
     protocol,
-    token0: (tokens[0] || "").toLowerCase(),
-    token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t: any) => t.toLowerCase()),
+    token0: (normalizedTokens[0] || "").toLowerCase(),
+    token1: (normalizedTokens[1] || "").toLowerCase(),
+    tokens: normalizedTokens,
+    tokenDecimals,
     fee: feeNumerator,        // 997 = 0.3% fee (out of 1000)
+    feeDenominator: DEFAULT_V2_FEE_DENOMINATOR,
+    feeSource: meta?.feeNumerator != null || meta?.fee != null ? "metadata" : "default",
     reserve0: rawState.reserve0,
     reserve1: rawState.reserve1,
+    blockTimestampLast: rawState.blockTimestampLast,
     timestamp: rawState.fetchedAt || Date.now(),
   };
 }
@@ -131,17 +176,26 @@ export function normalizeV2State(poolAddress: any, protocol: any, tokens: any, r
  * @returns {Object}  Canonical pool state
  */
 export function normalizeV3State(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
+  const normalizedTokens = Array.isArray(tokens) ? tokens.map((t: any) => String(t).toLowerCase()) : [];
+  const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
+  const isAlgebra = rawState.isAlgebra === true || meta?.isAlgebra === true || protocol === "QUICKSWAP_V3";
+  const fee = BigInt(rawState.fee || meta?.fee || 3000);
   return {
     poolId: poolAddress.toLowerCase(),
     protocol,
-    token0: (tokens[0] || "").toLowerCase(),
-    token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t: any) => t.toLowerCase()),
-    fee: BigInt(rawState.fee || meta?.fee || 3000),
+    token0: (normalizedTokens[0] || "").toLowerCase(),
+    token1: (normalizedTokens[1] || "").toLowerCase(),
+    tokens: normalizedTokens,
+    tokenDecimals,
+    fee,
+    feeSource: rawState.fee != null ? "rpc" : meta?.fee != null ? "metadata" : "default",
     sqrtPriceX96: rawState.sqrtPriceX96,
     tick: rawState.tick,
     liquidity: rawState.liquidity,
     tickSpacing: rawState.tickSpacing,
+    isAlgebra,
+    isKyberElastic: rawState.isKyberElastic === true || meta?.isKyberElastic === true || protocol === "KYBERSWAP_ELASTIC",
+    hydrationMode: rawState.hydrationMode ?? meta?.hydrationMode,
     ticks: rawState.ticks || new Map(),
     tickVersion: rawState.tickVersion ?? 0,
     initialized: rawState.initialized !== false,
@@ -161,7 +215,9 @@ export function normalizeV3State(poolAddress: any, protocol: any, tokens: any, r
  */
 export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   const n = tokens.length;
-  const rates = rawState.rates || defaultRates(n);
+  const tokenDecimals = normalizeTokenDecimalsList(tokens, meta);
+  const decimalRates = defaultRatesForDecimals(tokenDecimals);
+  const rates = rawState.rates || decimalRates || defaultRates(n);
   const A = rawState.A || BigInt(meta?.A || 100) * 100n; // A in A_PRECISION units
 
   return {
@@ -173,6 +229,7 @@ export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any
     fee: rawState.fee || BigInt(meta?.fee || 4_000_000n),  // default 0.04% in 1e10
     balances: rawState.balances || [],
     rates,
+    tokenDecimals,
     A,
     virtualPrice: rawState.virtualPrice || 0n,
     timestamp: rawState.fetchedAt || Date.now(),
@@ -190,7 +247,8 @@ export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any
  * @returns {Object}  Canonical pool state
  */
 export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
-  const n = tokens.length;
+  const normalizedTokens = Array.isArray(tokens) ? tokens.map((t: any) => String(t).toLowerCase()) : [];
+  const n = normalizedTokens.length;
   const toBigInt = (value: any, fallback = 0n): bigint => {
     if (typeof value === "bigint") return value;
     if (value == null) return fallback;
@@ -211,17 +269,24 @@ export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: 
   const balances = Array.isArray(rawState.balances)
     ? rawState.balances.map((value: any) => toBigInt(value))
     : [];
+  const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
 
   return {
     poolId: poolAddress.toLowerCase(),
+    balancerPoolId: rawState.poolId ?? meta?.poolId ?? meta?.pool_id ?? null,
     protocol,
-    token0: (tokens[0] || "").toLowerCase(),
-    token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t: any) => t.toLowerCase()),
+    token0: (normalizedTokens[0] || "").toLowerCase(),
+    token1: (normalizedTokens[1] || "").toLowerCase(),
+    tokens: normalizedTokens,
+    tokenDecimals,
     fee: swapFee,
     balances,
     weights,
     swapFee,
+    swapFeeSource: rawState.swapFee != null ? "rpc" : meta?.swapFee != null ? "metadata" : "default",
+    poolType: meta?.poolType ?? meta?.pool_type ?? null,
+    specialization: rawState.specialization ?? meta?.specialization ?? null,
+    lastChangeBlock: rawState.lastChangeBlock != null ? Number(rawState.lastChangeBlock) : null,
     timestamp: rawState.fetchedAt || Date.now(),
   };
 }

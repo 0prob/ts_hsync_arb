@@ -10,7 +10,6 @@ import {
 } from "./assessment.ts";
 import { getResultHopCount } from "../routing/path_hops.ts";
 
-const MIN_PROBE_AMOUNT = 1_000n;
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
 type FeeSnapshot = {

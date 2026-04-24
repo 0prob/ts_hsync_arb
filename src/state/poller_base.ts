@@ -13,12 +13,16 @@ export abstract class TimedPoller {
   protected _timer: ReturnType<typeof setTimeout> | null;
   protected _running: boolean;
   protected _passCount: number;
+  protected _loopPromise: Promise<void> | null;
+  protected _loopToken: number;
 
   constructor(options: PollerBaseOptions = {}) {
     this._verbose = options.verbose ?? false;
     this._timer = null;
     this._running = false;
     this._passCount = 0;
+    this._loopPromise = null;
+    this._loopToken = 0;
   }
 
   protected _completePass(label: string, startedAt: number, updated: number, failed: number) {
@@ -59,30 +63,50 @@ export abstract class TimedPoller {
   }
 
   protected _startLoop(label: string, intervalMs: number, poll: () => Promise<unknown>) {
-    if (this._running) return;
+    if (this._running) return this._loopPromise;
     this._running = true;
+    const loopToken = ++this._loopToken;
 
     const loop = async () => {
-      if (!this._running) return;
       try {
-        await poll();
-      } catch (err: any) {
-        console.error(`[${label}] Poll error: ${err.message}`);
-      }
-      if (this._running) {
-        this._timer = setTimeout(loop, intervalMs);
+        while (this._running && this._loopToken === loopToken) {
+          try {
+            await poll();
+          } catch (err: any) {
+            console.error(`[${label}] Poll error: ${err?.message ?? err}`);
+          }
+          if (!this._running || this._loopToken !== loopToken) break;
+          await new Promise<void>((resolve) => {
+            this._timer = setTimeout(() => {
+              this._timer = null;
+              resolve();
+            }, intervalMs);
+          });
+        }
+      } finally {
+        if (this._loopToken === loopToken) {
+          this._running = false;
+        }
+        if (this._loopPromise === loopPromise) {
+          this._loopPromise = null;
+        }
       }
     };
 
-    loop();
+    const loopPromise = loop();
+    this._loopPromise = loopPromise;
+    return loopPromise;
   }
 
-  stop() {
+  async stop() {
+    const activeLoop = this._loopPromise;
     this._running = false;
+    this._loopToken++;
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
     }
+    await activeLoop?.catch(() => {});
   }
 
   get isRunning() {

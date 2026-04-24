@@ -146,6 +146,98 @@ function makeCandidate(id: string) {
 }
 
 {
+  let quarantinedReason = "";
+  let buildAttempts = 0;
+
+  const coordinator = createExecutionCoordinator({
+    liveMode: true,
+    privateKey: PRIVATE_KEY,
+    executorAddress: ADDRESS,
+    rpcUrl: "http://localhost:8545",
+    getNonceManager: () => null,
+    maxExecutionBatch: 1,
+    executionRouteQuarantineMs: 60_000,
+    minProfitWei: 1n,
+    log: () => {},
+    fmtPath: () => "path",
+    getRouteFreshness: () => ({ ok: true }),
+    getCurrentFeeSnapshot: async () => null,
+    getFreshTokenToMaticRate: () => 0n,
+    deriveOnChainMinProfit: () => 1n,
+    buildArbTx: async () => {
+      buildAttempts++;
+      return {
+        to: ADDRESS,
+        data: "0x1234",
+        gasLimit: 1n,
+        maxFeePerGas: 1n,
+        maxPriorityFeePerGas: 1n,
+      };
+    },
+    sendTx: async () => ({ submitted: true, confirmed: false, txHash: "0x1" }),
+    sendTxBundle: async () => ({ submitted: true, confirmed: false, txHashes: ["0x1"] }),
+    hasPendingExecution: () => false,
+    scalePriorityFeeByProfitMargin: () => null,
+    onPreparedCandidateError: (_candidate: any, reason: string) => {
+      quarantinedReason = reason;
+    },
+  });
+
+  const result = await coordinator.executeBatchIfIdle([makeCandidate("5")], "test");
+
+  assert.equal(result.submitted, false, "routes with stale price data should not reach submission");
+  assert.equal(
+    quarantinedReason,
+    "stale_or_missing_token_matic_rate",
+    "stale price data should quarantine the route instead of retrying it indefinitely",
+  );
+  assert.equal(buildAttempts, 0, "stale price data should be rejected before transaction building");
+}
+
+{
+  let quarantinedReason = "";
+
+  const coordinator = createExecutionCoordinator({
+    liveMode: true,
+    privateKey: PRIVATE_KEY,
+    executorAddress: ADDRESS,
+    rpcUrl: "http://localhost:8545",
+    getNonceManager: () => null,
+    maxExecutionBatch: 1,
+    executionRouteQuarantineMs: 60_000,
+    minProfitWei: 1_000n,
+    log: () => {},
+    fmtPath: () => "path",
+    getRouteFreshness: () => ({ ok: true }),
+    getCurrentFeeSnapshot: async () => ({ maxFee: 1n }),
+    getFreshTokenToMaticRate: () => 1n,
+    deriveOnChainMinProfit: () => 1_000n,
+    buildArbTx: async () => ({
+      to: ADDRESS,
+      data: "0x1234",
+      gasLimit: 100_000n,
+      maxFeePerGas: 1_000_000_000_000n,
+      maxPriorityFeePerGas: 1n,
+    }),
+    sendTx: async () => ({ submitted: true, confirmed: false, txHash: "0x1" }),
+    sendTxBundle: async () => ({ submitted: true, confirmed: false, txHashes: ["0x1"] }),
+    hasPendingExecution: () => false,
+    scalePriorityFeeByProfitMargin: () => null,
+    onPreparedCandidateError: (_candidate: any, reason: string) => {
+      quarantinedReason = reason;
+    },
+  });
+
+  const result = await coordinator.executeBatchIfIdle([makeCandidate("6")], "test");
+
+  assert.equal(result.submitted, false, "post-build unprofitable routes should not reach submission");
+  assert.ok(
+    quarantinedReason.length > 0,
+    "post-build profitability failures should quarantine the route for a cooldown period",
+  );
+}
+
+{
   let inFlight = 0;
   let maxConcurrent = 0;
 

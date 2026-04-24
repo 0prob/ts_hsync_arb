@@ -67,10 +67,6 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
         tokenToMaticRate,
         { minProfitWei: deps.minProfitWei },
       );
-      if (!quickAssessment.shouldExecute) {
-        quickRejected++;
-        continue;
-      }
 
       const freshness = deps.getRouteFreshness(path);
       if (!freshness.ok) {
@@ -82,15 +78,21 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
         continue;
       }
 
-      optimizedRoutes++;
-      const optimized = deps.optimizeInputAmount(
-        path,
-        deps.stateCache,
-        getAssessmentOptimizationOptions(path, prev, gasPriceWei, tokenToMaticRate, {
-          minProfitWei: deps.minProfitWei,
-        }),
-      ) || quickResult;
-      if (!optimized?.profitable) continue;
+      let optimized = quickResult;
+      if (quickAssessment.shouldExecute || quickResult.profit > 0n) {
+        optimizedRoutes++;
+        optimized = deps.optimizeInputAmount(
+          path,
+          deps.stateCache,
+          getAssessmentOptimizationOptions(path, prev, gasPriceWei, tokenToMaticRate, {
+            minProfitWei: deps.minProfitWei,
+          }),
+        ) || quickResult;
+      }
+      if (!optimized?.profitable) {
+        if (!quickAssessment.shouldExecute) quickRejected++;
+        continue;
+      }
 
       const assessment = assessRouteResult(
         path,
@@ -99,7 +101,11 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
         tokenToMaticRate,
         { minProfitWei: deps.minProfitWei },
       );
-      if (assessment.shouldExecute) profitable.push({ path, result: optimized, assessment });
+      if (assessment.shouldExecute) {
+        profitable.push({ path, result: optimized, assessment });
+      } else if (!quickAssessment.shouldExecute) {
+        quickRejected++;
+      }
     }
 
     deps.log("[runner] Fast revalidation summary", "debug", {

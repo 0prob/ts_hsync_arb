@@ -69,7 +69,7 @@ function normalizeStateUpdateBatch(stateList: any[]) {
   return [...latestByAddress.values()];
 }
 
-export function upsertPool(db: any, stmt: any, invalidatePoolMetaCache: any, metadata: any) {
+export function upsertPool(stmt: any, invalidatePoolMetaCache: any, metadata: any) {
   const normalized = normalizePoolUpsertRecord(metadata);
 
   const upsertPoolStmt = stmt("upsertPool", `

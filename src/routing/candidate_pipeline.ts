@@ -49,7 +49,7 @@ export async function evaluateCandidatePipeline<TAssessment, TCandidate extends 
     getTokenToMaticRate: options.getTokenToMaticRate,
   });
   const bestQuickProfit = shortlisted[0]?.result?.profit ?? 0n;
-  const profitable: Array<{ path: TCandidate["path"]; result: TCandidate["result"]; assessment: TAssessment & { shouldExecute: boolean } }> = [];
+  const profitable: Array<TCandidate & { assessment: TAssessment & { shouldExecute: boolean } }> = [];
   let optimizedCandidates = 0;
 
   for (let i = 0; i < shortlisted.length; i++) {
@@ -58,14 +58,24 @@ export async function evaluateCandidatePipeline<TAssessment, TCandidate extends 
     if (tokenToMaticRate <= 0n) continue;
 
     let evaluatedResult = quickResult;
+    let optimized = false;
     if (shouldOptimizeCandidate(shortlisted[i], i, shortlisted.length, bestQuickProfit)) {
       optimizedCandidates++;
+      optimized = true;
       evaluatedResult = await options.optimizePath(path, quickResult, tokenToMaticRate) ?? quickResult;
     }
 
-    const assessment = options.assessRoute(path, evaluatedResult, tokenToMaticRate);
+    let assessment = options.assessRoute(path, evaluatedResult, tokenToMaticRate);
+    if (!assessment.shouldExecute && !optimized && quickResult.profit > 0n) {
+      const secondChanceResult = await options.optimizePath(path, quickResult, tokenToMaticRate);
+      if (secondChanceResult) {
+        optimizedCandidates++;
+        evaluatedResult = secondChanceResult;
+        assessment = options.assessRoute(path, evaluatedResult, tokenToMaticRate);
+      }
+    }
     if (assessment.shouldExecute) {
-      profitable.push({ path, result: evaluatedResult, assessment });
+      profitable.push({ ...shortlisted[i], result: evaluatedResult, assessment });
     }
   }
 

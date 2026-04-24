@@ -39,6 +39,27 @@ let receiptPollTimer: ReturnType<typeof setInterval> | null = null;
 let receiptPollInFlight = false;
 const sendTxLogger: any = logger.child({ component: "send_tx" });
 
+export function classifySubmissionError(error: unknown) {
+  const message = String((error as { shortMessage?: string; message?: string } | null | undefined)?.shortMessage
+    ?? (error as { message?: string } | null | undefined)?.message
+    ?? error
+    ?? "").toLowerCase();
+
+  if (message.includes("nonce too low") || message.includes("nonce too high") || message.includes("already known")) {
+    return "nonce";
+  }
+  if (message.includes("insufficient funds")) {
+    return "funds";
+  }
+  if (message.includes("execution reverted")) {
+    return "revert";
+  }
+  if (message.includes("intrinsic gas too low") || message.includes("gas required exceeds allowance")) {
+    return "gas";
+  }
+  return "transient";
+}
+
 function stopReceiptPollerIfIdle() {
   if (pendingReceiptPolls.size === 0 && receiptPollTimer) {
     clearInterval(receiptPollTimer);
@@ -326,13 +347,10 @@ export async function sendTx(builtTx: any, config: any, options: any = {}) {
     } catch (err: any) {
       submitError = err.shortMessage || err.message || String(err);
       sendTxLogger.warn({ error: submitError, attempt: attempt + 1 }, "Submission attempt failed");
+      const errorCategory = classifySubmissionError(err);
 
-      if (
-        submitError.includes("nonce too low") ||
-        submitError.includes("insufficient funds") ||
-        submitError.includes("execution reverted")
-      ) {
-        if (nonceManager && submitError.includes("nonce too low")) {
+      if (errorCategory !== "transient") {
+        if (nonceManager && errorCategory === "nonce") {
           nonceManager.resync(fromAddress);
         }
         break;
@@ -554,7 +572,7 @@ export async function sendTxBundle(builtTxs: any[], config: any, options: any = 
       for (let i = 0; i < reservedNonces.length; i++) {
         nonceManager.revert(fromAddress);
       }
-      if ((err?.message ?? "").includes("nonce too low")) {
+      if (classifySubmissionError(err) === "nonce") {
         nonceManager.resync(fromAddress);
       }
     }

@@ -19,15 +19,13 @@ import { FREE_RPC_URLS } from "../config/index.ts";
 
 // ─── Metrics ───────────────────────────────────────────────────
 // Imported lazily to avoid circular dependency (metrics → logger → nothing)
-import type { Counter, Histogram } from "prom-client";
+import type { Counter } from "prom-client";
 let _rpcSwitches: Counter | null = null;
-let _rpcLatency: Histogram | null = null;
 async function lazyMetrics() {
   if (_rpcSwitches) return;
   try {
     const m = await import("./metrics.ts");
     _rpcSwitches = m.rpcSwitches ?? null;
-    _rpcLatency = m.rpcLatencyMs ?? null;
   } catch {
     // metrics module may not expose these gauges yet; safe to skip
   }
@@ -151,8 +149,7 @@ class RpcEndpoint {
         this.markSuccess();
       }
     } catch {
-      this.latencyMs = Infinity;
-      this.consecutiveErrors++;
+      this.markError();
     }
   }
 }
@@ -491,9 +488,22 @@ export function isRetryableError(error: unknown): boolean {
   if (isRateLimitError(error)) return true;
   if (isEndpointCapabilityError(error)) return true;
   const msg = String((error as { message?: string })?.message ?? error ?? "");
+  const lower = msg.toLowerCase();
   if (/\b5\d{2}\b/.test(msg)) return true;
   // viem HttpRequestError: endpoint returned a non-JSON or malformed response
   if (msg.includes("HTTP request failed")) return true;
+  if (
+    lower.includes("fetch failed") ||
+    lower.includes("socket hang up") ||
+    lower.includes("econnreset") ||
+    lower.includes("etimedout") ||
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("temporary failure") ||
+    lower.includes("network error")
+  ) {
+    return true;
+  }
   return false;
 }
 

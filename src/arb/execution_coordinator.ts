@@ -1,6 +1,5 @@
 import {
   assessRouteResult,
-  compareAssessmentProfit,
   profitMarginBps,
   type ArbPathLike,
   type ExecutableCandidate,
@@ -107,6 +106,27 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
     return { failures, until };
   }
 
+  function quarantinePreparedCandidate(candidate: ExecutableCandidate, reason: string, source: string, meta: Record<string, unknown> = {}) {
+    const quarantine = quarantineExecutionRoute(candidate.path, reason);
+    const payload = {
+      event: "execute_quarantine_add",
+      route: deps.fmtPath(candidate.path),
+      hopCount: candidate.path.hopCount,
+      failures: quarantine.failures,
+      quarantineMs: Math.max(0, quarantine.until - Date.now()),
+      reason,
+      source,
+      ...meta,
+    };
+    deps.log(`[runner] Quarantining route after execution preparation failure: ${reason}`, "warn", payload);
+    deps.onPreparedCandidateError?.(candidate, reason, {
+      reason,
+      failures: quarantine.failures,
+      until: quarantine.until,
+      quarantinedAt: Date.now(),
+    });
+  }
+
   function clearExecutionRouteQuarantine(reason: string) {
     if (executionRouteQuarantine.size === 0) return;
     executionRouteQuarantine.clear();
@@ -156,17 +176,9 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
     const freshness = deps.getRouteFreshness(best.path);
     if (!freshness.ok) {
       const quarantineReason = freshness.reason ?? "route freshness check failed";
-      const quarantine = quarantineExecutionRoute(best.path, quarantineReason);
-      deps.log("[runner] Quarantining stale route during execution preparation", "warn", {
-        event: "execute_quarantine_add",
-        route: deps.fmtPath(best.path),
-        hopCount: best.path.hopCount,
-        failures: quarantine.failures,
-        quarantineMs: Math.max(0, quarantine.until - Date.now()),
-        reason: quarantineReason,
+      quarantinePreparedCandidate(best, quarantineReason, "prepare_execution_freshness", {
         ageMs: freshness.ageMs,
         skewMs: freshness.skewMs,
-        source: "prepare_execution",
       });
       return null;
     }
@@ -176,9 +188,15 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
       ? deps.scalePriorityFeeByProfitMargin(feeSnapshot, profitMarginBps(best))
       : null;
 
+    const tokenToMaticRate = deps.getFreshTokenToMaticRate(best.path.startToken);
+    if (tokenToMaticRate <= 0n) {
+      quarantinePreparedCandidate(best, "stale_or_missing_token_matic_rate", "prepare_execution_price");
+      return null;
+    }
+
     const onChainMinProfit = deps.deriveOnChainMinProfit(
       best.assessment,
-      deps.getFreshTokenToMaticRate(best.path.startToken),
+      tokenToMaticRate,
     );
 
     const builtTx = await deps.buildArbTx(
@@ -193,15 +211,6 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
       },
     );
 
-    const tokenToMaticRate = deps.getFreshTokenToMaticRate(best.path.startToken);
-    if (tokenToMaticRate <= 0n) {
-      deps.log("[SKIP] Post-build price check failed: stale or missing token/MATIC rate", "warn", {
-        event: "execute_skip",
-        reason: "stale_or_missing_token_matic_rate",
-      });
-      return null;
-    }
-
     const postBuildAssessment = assessRouteResult(
       best.path,
       { ...best.result, totalGas: gasLimitToSafeNumber(builtTx.gasLimit) },
@@ -211,17 +220,14 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
     );
 
     if (!postBuildAssessment.shouldExecute) {
-      deps.log(
-        `[SKIP] Post-build profit check failed: ${postBuildAssessment.rejectReason}`,
-        "info",
-        () => ({
-          event: "execute_skip",
-          reason: "post_build_profit_check_failed",
-          rejectReason: postBuildAssessment.rejectReason,
-          hopCount: best.path.hopCount,
+      quarantinePreparedCandidate(
+        best,
+        postBuildAssessment.rejectReason ?? "post_build_profit_check_failed",
+        "prepare_execution_post_build_profit",
+        {
           preNetProfitAfterGas: best.assessment.netProfitAfterGas?.toString?.(),
           postNetProfitAfterGas: postBuildAssessment.netProfitAfterGas?.toString?.(),
-        }),
+        },
       );
       return null;
     }
@@ -271,13 +277,7 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
           return await prepareExecutionCandidate(candidate, account);
         } catch (err: any) {
           const reason = err?.shortMessage ?? err?.message ?? "execution preparation failed";
-          const quarantine = quarantineExecutionRoute(candidate.path, reason);
-          deps.onPreparedCandidateError?.(candidate, reason, {
-            reason,
-            failures: quarantine.failures,
-            until: quarantine.until,
-            quarantinedAt: Date.now(),
-          });
+          quarantinePreparedCandidate(candidate, reason, "prepare_execution_exception");
           return null;
         }
       });

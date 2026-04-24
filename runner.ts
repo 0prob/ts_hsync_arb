@@ -58,9 +58,7 @@ import {
   startMetricsServer,
   stopMetricsServer,
 } from "./src/utils/metrics.ts";
-import type { BotState } from "./src/tui/types.ts";
 import { getPoolMetadata, getPoolTokens } from "./src/util/pool_record.ts";
-import { takeTopNBy } from "./src/util/bounded_priority.ts";
 import {
   minProfitInTokenUnits,
   type ArbPathLike,
@@ -69,7 +67,7 @@ import {
   type RouteResultLike,
 } from "./src/arb/assessment.ts";
 import { createOpportunityEngine } from "./src/arb/opportunity_engine.ts";
-import { createWarmupManager } from "./src/bootstrap/warmup.ts";
+import { createWarmupManager, isSupportedWarmupProtocol } from "./src/bootstrap/warmup.ts";
 import { createDiscoveryCoordinator } from "./src/bootstrap/discovery.ts";
 import { parseRunnerArgs } from "./src/bootstrap/cli.ts";
 import { configureWatcherCallbacks, createArbScheduler, createShutdownHandler } from "./src/bootstrap/lifecycle.ts";
@@ -77,6 +75,15 @@ import { createRuntimeContext } from "./src/runtime/runtime_context.ts";
 import { createTopologyService } from "./src/runtime/topology_service.ts";
 import { createPricingService } from "./src/runtime/pricing_service.ts";
 import { createBackgroundTaskTracker } from "./src/runtime/background_tasks.ts";
+import { createDiscoveryRefreshCoordinator } from "./src/runtime/discovery_refresh.ts";
+import { createQuietPoolSweepCoordinator } from "./src/runtime/quiet_pool_sweep.ts";
+import { createTopologyRefreshCoordinator } from "./src/runtime/topology_refresh.ts";
+import { createWatcherBatchCoordinator } from "./src/runtime/watcher_batch.ts";
+import { createReorgRecoveryCoordinator } from "./src/runtime/reorg_recovery.ts";
+import { createWatcherHaltCoordinator } from "./src/runtime/watcher_halt.ts";
+import { createStartupCoordinator } from "./src/runtime/startup.ts";
+import { createBootModeCoordinator } from "./src/runtime/boot_mode.ts";
+import { createPassRunner } from "./src/runtime/pass_runner.ts";
 import { createRegistryRepositories } from "./src/db/repositories.ts";
 import {
   DB_PATH,
@@ -145,8 +152,6 @@ const ARB_BURST_POOL_THRESHOLD = 10;
 const MAX_EXECUTION_BATCH = 3;
 const EXECUTION_ROUTE_QUARANTINE_MS = 120_000;
 
-// Minimum ms between arb scans — coalesces rapid HyperSync batches.
-const ARB_DEBOUNCE_MS = BASE_ARB_DEBOUNCE_MS;
 // Fallback scan interval if no HyperSync events arrive (e.g. quiet market).
 const HEARTBEAT_INTERVAL_MS = Math.max(POLL_INTERVAL_SEC * 1000, 30_000);
 
@@ -173,7 +178,8 @@ const runtime = createRuntimeContext({
 const { stateCache, routeCache, botState } = runtime;
 
 let _arbActivityWindow: Array<{ ts: number; changedPools: number }> = [];
-let lastQuietPoolSweepAt = 0;
+const QUIET_POOL_RETRY_BASE_MS = 2 * 60_000;
+const QUIET_POOL_RETRY_MAX_MS = 30 * 60_000;
 
 // ─── TUI Setup ─────────────────────────────────────────────────
 
@@ -182,6 +188,7 @@ const rootLogger: PinoLogger = logger;
 let repositories: ReturnType<typeof createRegistryRepositories> | null = null;
 let topologyService: ReturnType<typeof createTopologyService> | null = null;
 let opportunityEngine: ReturnType<typeof createOpportunityEngine> | null = null;
+let passRunner: ReturnType<typeof createPassRunner> | null = null;
 
 function summarizeLogForTui(msg: string, payload: LogMeta | undefined) {
   const event = typeof payload?.event === "string" ? payload.event : null;
@@ -265,54 +272,6 @@ function getAdaptiveDebounceMs() {
   return changedPools > ARB_BURST_POOL_THRESHOLD ? FAST_ARB_DEBOUNCE_MS : BASE_ARB_DEBOUNCE_MS;
 }
 
-function compareDeferredHydrationPriority(a: PoolRecord, b: PoolRecord) {
-  const aTokens = getPoolTokens(a);
-  const bTokens = getPoolTokens(b);
-  const aHubMatches = aTokens.filter((token) => POLYGON_HUB_TOKENS.has(token)).length;
-  const bHubMatches = bTokens.filter((token) => POLYGON_HUB_TOKENS.has(token)).length;
-  if (aHubMatches !== bHubMatches) return bHubMatches - aHubMatches;
-
-  const aIsV3 = /V3|ELASTIC/.test(a.protocol);
-  const bIsV3 = /V3|ELASTIC/.test(b.protocol);
-  if (aIsV3 !== bIsV3) return aIsV3 ? 1 : -1;
-
-  return a.pool_address.localeCompare(b.pool_address);
-}
-
-function selectPendingQuietPools(activePools: PoolRecord[]) {
-  const pending: PoolRecord[] = [];
-  for (const pool of activePools) {
-    const addr = pool.pool_address.toLowerCase();
-    if (validatePoolState(stateCache.get(addr)).valid) continue;
-    pending.push(pool);
-  }
-  return takeTopNBy(pending, QUIET_POOL_SWEEP_BATCH_SIZE, compareDeferredHydrationPriority);
-}
-
-function seedNewPoolsIntoStateCache(pools: PoolRecord[]) {
-  const newPools: PoolRecord[] = [];
-  for (const pool of pools) {
-    const poolAddress = pool.pool_address.toLowerCase();
-    if (stateCache.has(poolAddress)) continue;
-
-    let poolTokens;
-    try {
-      poolTokens = typeof pool.tokens === "string" ? JSON.parse(pool.tokens) : pool.tokens;
-    } catch {
-      poolTokens = [];
-    }
-
-    stateCache.set(poolAddress, {
-      poolId: poolAddress,
-      protocol: pool.protocol,
-      tokens: Array.isArray(poolTokens) ? poolTokens.map((token) => token.toLowerCase()) : [],
-      timestamp: 0,
-    });
-    newPools.push(pool);
-  }
-  return newPools;
-}
-
 function deriveOnChainMinProfit(assessment: AssessmentLike | null | undefined, tokenToMaticRate: bigint) {
   const minProfitTokens = minProfitInTokenUnits(tokenToMaticRate, MIN_PROFIT_WEI);
   const modeledNet = assessment && assessment.netProfitAfterGas > 0n
@@ -349,26 +308,6 @@ function fmtPath(path: ArbPathLike) {
   return `${tokens.map((token) => pricingService.fmtSym(token)).join('→')}  [${prots.join('/')}]`;
 }
 
-function partitionChangedPools(changedPools: Set<string>) {
-  const valid = new Set<string>();
-  const invalid = new Set<string>();
-
-  for (const addr of changedPools) {
-    const state = stateCache.get(addr);
-    const verdict = validatePoolState(state);
-    if (verdict.valid) {
-      valid.add(addr);
-    } else {
-      invalid.add(addr);
-      rootLogger.debug(
-        `[runner] Pool ${addr} is currently unroutable: ${verdict.reason ?? "invalid state"}`
-      );
-    }
-  }
-
-  return { valid, invalid };
-}
-
 const warmupManager = createWarmupManager({
   getRegistry: () => registry,
   stateCache,
@@ -380,7 +319,10 @@ const warmupManager = createWarmupManager({
   fetchMultipleV2States,
   fetchMultipleV3States: fetchMultipleV3States as any,
   fetchAndNormalizeBalancerPool,
-  fetchAndNormalizeCurvePool,
+  fetchAndNormalizeCurvePool: (pool: PoolRecord) =>
+    fetchAndNormalizeCurvePool(pool, {
+      tokenDecimals: registry?.getTokenDecimals(getPoolTokens(pool)) ?? null,
+    }),
   throttledMap,
   polygonHubTokens: POLYGON_HUB_TOKENS,
   hub4Tokens: HUB_4_TOKENS,
@@ -404,12 +346,93 @@ const maybeRunDiscovery = discoveryCoordinator.maybeRunDiscovery;
 const backgroundTaskTracker = createBackgroundTaskTracker();
 const trackBackgroundTask = backgroundTaskTracker.track;
 const waitForBackgroundTasks = backgroundTaskTracker.waitForIdle;
+const quietPoolSweepCoordinator = createQuietPoolSweepCoordinator({
+  getRegistryPools: () => registry?.getActivePoolsMeta() ?? [],
+  stateCache,
+  log,
+  isHydratablePool: (pool: PoolRecord) => isSupportedWarmupProtocol(pool.protocol),
+  validatePoolState,
+  fetchAndCacheStates: _fetchAndCacheStates,
+  admitPools: (poolAddresses: Set<string>) => topologyService?.admitPools(poolAddresses) ?? 0,
+  refreshCycles,
+  quietPoolSweepBatchSize: QUIET_POOL_SWEEP_BATCH_SIZE,
+  quietPoolSweepIntervalMs: QUIET_POOL_SWEEP_INTERVAL_MS,
+  quietPoolRetryBaseMs: QUIET_POOL_RETRY_BASE_MS,
+  quietPoolRetryMaxMs: QUIET_POOL_RETRY_MAX_MS,
+  v3NearWordRadius: V3_NEARBY_WORD_RADIUS,
+  polygonHubTokens: POLYGON_HUB_TOKENS,
+});
+const discoveryRefreshCoordinator = createDiscoveryRefreshCoordinator({
+  isRunning: () => runtime.isRunning(),
+  log,
+  getRepositories: () => repositories,
+  stateCache,
+  getWatcher: () => runtime.getWatcher(),
+  isHydratablePool: (pool: PoolRecord) => isSupportedWarmupProtocol(pool.protocol),
+  claimDeferredHydration: (pools: PoolRecord[]) => quietPoolSweepCoordinator.claimDeferredHydration(pools),
+  releaseDeferredHydration: (pools: PoolRecord[]) => quietPoolSweepCoordinator.releaseDeferredHydration(pools),
+  fetchAndCacheStates: _fetchAndCacheStates,
+  validatePoolState,
+  clearDeferredHydrationRetry: (address: string) => quietPoolSweepCoordinator.clearDeferredHydrationRetry(address),
+  recordDeferredHydrationFailure: (address: string, reason: string) => quietPoolSweepCoordinator.recordDeferredHydrationFailure(address, reason),
+  topology: {
+    invalidate: (reason?: string) => topologyService?.invalidate(reason),
+  },
+  refreshCycles,
+  v3NearWordRadius: V3_NEARBY_WORD_RADIUS,
+});
+const watcherBatchCoordinator = createWatcherBatchCoordinator({
+  stateCache,
+  log,
+  validatePoolState,
+  debugInvalidPool: (addr: string, reason?: string) => {
+    rootLogger.debug(`[runner] Pool ${addr} is currently unroutable: ${reason ?? "invalid state"}`);
+  },
+  removePoolsFromTopology: (poolAddresses: Set<string>) => topologyService?.removePools(poolAddresses) ?? 0,
+  removeRoutesByPools: (poolAddresses: Set<string>) => routeCache.removeByPools(poolAddresses),
+  admitPools: (poolAddresses: Set<string>) => topologyService?.admitPools(poolAddresses) ?? 0,
+  updatePriceOracle: (changedPools?: Iterable<string>) => runtime.getPriceOracle()?.update(changedPools),
+  revalidateCachedRoutes: async (changedPools: Set<string>) => {
+    await opportunityEngine?.revalidateCachedRoutes(changedPools);
+  },
+});
+const reorgRecoveryCoordinator = createReorgRecoveryCoordinator({
+  log,
+  clearRouteCache: () => routeCache.clear(),
+  clearTopologyCycles: () => topologyService?.setCachedCycles([]),
+  resetTopology: () => topologyService?.resetGraphs(),
+  refreshPriceOracle: () => runtime.getPriceOracle()?.update(),
+});
 
 const { scheduleArb, cancelScheduledArb, waitForIdle: waitForArbIdle } = createArbScheduler({
   isRunning: () => runtime.isRunning(),
   recordArbActivity,
   getAdaptiveDebounceMs,
   runPass: () => runPass(),
+});
+const watcherHaltCoordinator = createWatcherHaltCoordinator({
+  log,
+  setRunning: (running: boolean) => runtime.setRunning(running),
+  setBotStatus: (status) => {
+    botState.status = status;
+  },
+  cancelScheduledArb,
+  stopHeartbeat,
+  recordWatcherHalt,
+});
+const startupCoordinator = createStartupCoordinator({
+  log,
+  createRegistry: () => new RegistryService(DB_PATH),
+  createRepositories: (nextRegistry: RegistryService) => createRegistryRepositories(nextRegistry),
+  createPriceOracle: (nextRegistry: RegistryService) => new PriceOracle(stateCache, nextRegistry),
+  createNonceManager: () => new NonceManager(),
+  setPriceOracle: (oracle: PriceOracle) => runtime.setPriceOracle(oracle),
+  setNonceManager: (nonceManager: NonceManager) => runtime.setNonceManager(nonceManager),
+  runInitialDiscovery: () => discoveryCoordinator.runInitialDiscovery(),
+  seedStateCache,
+  warmupStateCache,
+  refreshCycles,
+  getCachedCycleCount: () => topologyService?.getCachedCycles().length ?? 0,
 });
 
 let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -447,66 +470,20 @@ topologyService = createTopologyService({
   log,
 });
 
+const topologyRefreshCoordinator = createTopologyRefreshCoordinator({
+  getPriceOracle: () => runtime.getPriceOracle(),
+  getTopologyService: () => topologyService,
+  clearExecutionRouteQuarantine: (reason: string) => opportunityEngine?.clearExecutionRouteQuarantine(reason),
+  maxPriceAgeMs: MAX_PRICE_AGE_MS,
+  minLiquidityWmatic: 7_143n * 10n ** 18n,
+  selective4HopPathBudget: SELECTIVE_4HOP_PATH_BUDGET,
+  selective4HopMaxPathsPerToken: SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
+});
 async function refreshCycles(force = false) {
-  const oracle = runtime.getPriceOracle();
-  if (oracle && !oracle.isFresh(MAX_PRICE_AGE_MS)) {
-    oracle.update();
-  }
-  const getRateWei = oracle
-    ? ((currentOracle: PriceOracle) => (addr: string) => currentOracle.getFreshRate(addr, MAX_PRICE_AGE_MS))(oracle)
-    : null;
-
-  return topologyService?.refreshCycles({
-    force,
-    minLiquidityWmatic: 7_143n * 10n ** 18n,
-    selective4HopPathBudget: SELECTIVE_4HOP_PATH_BUDGET,
-    selective4HopMaxPathsPerToken: SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
-    getRateWei,
-    clearExecutionRouteQuarantine: (reason) => opportunityEngine?.clearExecutionRouteQuarantine(reason),
-  });
+  return topologyRefreshCoordinator.refreshCycles(force);
 }
 
-async function maybeHydrateQuietPools() {
-  const now = Date.now();
-  if (now - lastQuietPoolSweepAt < QUIET_POOL_SWEEP_INTERVAL_MS) return;
-  lastQuietPoolSweepAt = now;
-
-  const activePools = registry?.getActivePoolsMeta() ?? [];
-  const pending = selectPendingQuietPools(activePools);
-
-  if (pending.length === 0) return;
-
-  log(`[runner] Quiet-pool sweep: hydrating ${pending.length} deferred pool(s).`, "info", {
-    event: "quiet_pool_sweep_start",
-    pendingPools: pending.length,
-    batchSize: QUIET_POOL_SWEEP_BATCH_SIZE,
-  });
-
-  const warmupStats = await _fetchAndCacheStates(pending, {
-    v3HydrationMode: "nearby",
-    v3NearWordRadius: V3_NEARBY_WORD_RADIUS,
-  });
-  const hydratedAddrs = new Set<string>();
-  for (const pool of pending) {
-    const addr = pool.pool_address.toLowerCase();
-    if (validatePoolState(stateCache.get(addr)).valid) {
-      hydratedAddrs.add(addr);
-    }
-  }
-  const admitted = topologyService?.admitPools(hydratedAddrs) ?? 0;
-
-  log(`[runner] Quiet-pool sweep complete: ${hydratedAddrs.size}/${pending.length} routable.`, "info", {
-    event: "quiet_pool_sweep_complete",
-    pendingPools: pending.length,
-    routablePools: hydratedAddrs.size,
-    admittedPools: admitted,
-    warmupStats,
-  });
-
-  if (admitted > 0) {
-    await refreshCycles(true);
-  }
-}
+const maybeHydrateQuietPools = quietPoolSweepCoordinator.maybeHydrateQuietPools;
 
 opportunityEngine = createOpportunityEngine({
   execution: {
@@ -592,114 +569,41 @@ opportunityEngine = createOpportunityEngine({
       optimizeInputAmount(path, cache, options) as unknown as RouteResultLike | null,
   },
 });
+passRunner = createPassRunner({
+  getStateCacheSize: () => stateCache.size,
+  getCachedCycleCount: () => topologyService?.getCachedCycles().length ?? 0,
+  incrementPassCount: () => runtime.incrementPassCount(),
+  getConsecutiveErrors: () => runtime.getConsecutiveErrors(),
+  incrementConsecutiveErrors: () => runtime.incrementConsecutiveErrors(),
+  resetConsecutiveErrors: () => runtime.resetConsecutiveErrors(),
+  setBotState: ({ passCount, consecutiveErrors, opportunities }) => {
+    botState.passCount = passCount;
+    botState.consecutiveErrors = consecutiveErrors;
+    botState.opportunities = opportunities;
+  },
+  log,
+  trackBackgroundTask: (task) => {
+    trackBackgroundTask(task as Promise<void>);
+  },
+  maybeRunDiscovery,
+  reconcileDiscoveryResult: (result) => discoveryRefreshCoordinator.reconcileDiscoveryResult(result as { totalDiscovered?: number } | null | undefined),
+  refreshCycles,
+  maybeHydrateQuietPools,
+  refreshPriceOracleIfStale: () => topologyRefreshCoordinator.refreshPriceOracleIfStale(),
+  searchOpportunities: () => opportunityEngine!.search() as Promise<CandidateEntry[]>,
+  executeBatchIfIdle: (candidates, reason) => opportunityEngine!.executeBatchIfIdle(candidates as any, reason),
+  formatProfit: (profit, startToken) => pricingService.fmtProfit(profit, startToken),
+  roiForCandidate: (candidate) => roiForCandidate(candidate as CandidateEntry),
+  formatDuration,
+  sleep: runnerSleep,
+  maxConsecutiveErrors: MAX_CONSECUTIVE_ERRORS,
+  maxExecutionBatch: MAX_EXECUTION_BATCH,
+});
 
 // ─── Arb pass ──────────────────────────────────────────────────
 
 async function runPass() {
-  const t0 = Date.now();
-  const passCount = runtime.incrementPassCount();
-  const cachedCycles = topologyService?.getCachedCycles() ?? [];
-  log(`Pass #${passCount} — state: ${stateCache.size} pools, paths: ${cachedCycles.length}`, "info", {
-    event: "pass_start",
-    pass: passCount,
-    stateSize: stateCache.size,
-    cachedPaths: cachedCycles.length,
-  });
-
-  try {
-    // Background discovery (non-blocking, self-throttled)
-    trackBackgroundTask((async () => {
-      const result = await maybeRunDiscovery();
-      if (!runtime.isRunning() || !result?.totalDiscovered) return;
-
-      repositories?.pools.invalidateMetaCache();
-      // Seed stateCache for new pools and extend the HyperSync stream filter
-      const allPools = repositories?.pools.getActiveMeta() ?? [];
-      const newPools = seedNewPoolsIntoStateCache(allPools);
-      if (newPools.length > 0) {
-        await runtime.getWatcher()?.addPools(
-          newPools.map((p: PoolRecord) => p.pool_address.toLowerCase())
-        );
-        if (!runtime.isRunning()) return;
-        // Fetch live state for newly discovered pools before rebuilding topology
-        await _fetchAndCacheStates(newPools, {
-          v3HydrationMode: "nearby",
-          v3NearWordRadius: V3_NEARBY_WORD_RADIUS,
-        });
-        if (!runtime.isRunning()) return;
-      }
-      // Rebuild cycle topology with the new pool set
-      topologyService?.invalidate("background_discovery");
-      await refreshCycles(true);
-    })().catch((err: any) => {
-      log(`Background discovery error: ${err?.message ?? err}`, "warn", {
-        event: "discovery_bg_error",
-        err,
-      });
-    }));
-
-    // Refresh cycles if not yet built
-    await refreshCycles();
-    trackBackgroundTask(maybeHydrateQuietPools().catch((err: any) => {
-      log(`Quiet-pool sweep error: ${err?.message ?? err}`, "warn", {
-        event: "quiet_pool_sweep_error",
-        err,
-      });
-    }));
-
-    // Update price oracle from live state only when stale; watcher batches do incremental refreshes.
-    const priceOracle = runtime.getPriceOracle();
-    if (priceOracle && !priceOracle.isFresh(MAX_PRICE_AGE_MS)) {
-      priceOracle.update();
-    }
-
-    const opportunities = await opportunityEngine!.search();
-    botState.passCount         = passCount;
-    botState.consecutiveErrors = runtime.getConsecutiveErrors();
-    botState.opportunities     = opportunities.slice(0, 5).map((o: CandidateEntry) => ({
-      Route:  o.path.edges.map(e => e.protocol).join(' -> '),
-      Profit: pricingService.fmtProfit(o.result.profit, o.path.startToken),
-      ROI:    `${(roiForCandidate(o) / 10000).toFixed(2)}%`,
-    }));
-    log(`Pass #${passCount}: ${opportunities.length} profitable route(s)`, "info", {
-      event: "pass_opportunities",
-      pass: passCount,
-      opportunities: opportunities.length,
-      stateSize: stateCache.size,
-      cachedPaths: (topologyService?.getCachedCycles() ?? []).length,
-      lastPass: formatDuration(Date.now() - t0),
-    });
-
-    if (opportunities.length > 0) {
-      log("Executing top opportunity set...", "info", {
-        event: "pass_execute_best",
-        pass: passCount,
-        opportunities: Math.min(opportunities.length, MAX_EXECUTION_BATCH),
-      });
-      await opportunityEngine!.executeBatchIfIdle(opportunities.slice(0, MAX_EXECUTION_BATCH), "run_pass");
-    }
-
-    log(`Pass #${passCount} complete in ${formatDuration(Date.now() - t0)}`, "info", {
-      event: "pass_complete",
-      pass: passCount,
-      durationMs: Date.now() - t0,
-      opportunities: opportunities.length,
-    });
-    runtime.resetConsecutiveErrors();
-  } catch (err: any) {
-    log(`Pass #${passCount} failed: ${err.message}`, "error", {
-      event: "pass_failed",
-      pass: passCount,
-      consecutiveErrors: runtime.getConsecutiveErrors() + 1,
-      err,
-    });
-    const consecutiveErrors = runtime.incrementConsecutiveErrors();
-    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-      log(`${MAX_CONSECUTIVE_ERRORS} consecutive errors — backing off 30s`, "warn");
-      await runnerSleep(30_000);
-      runtime.resetConsecutiveErrors();
-    }
-  }
+  return passRunner!.runPass();
 }
 
 // ─── Debounced arb trigger ────────────────────────────────────
@@ -723,27 +627,75 @@ const shutdown = createShutdownHandler({
   waitForBackgroundTasks,
   exit: (code) => process.exit(code),
 });
-
-// ─── Main ──────────────────────────────────────────────────────
-
-async function main() {
-  botState.status = 'running';
-
-  if (TUI_MODE) {
+const bootModeCoordinator = createBootModeCoordinator({
+  botState,
+  setBotStatus: (status) => {
+    botState.status = status;
+  },
+  setStopTui: (next) => {
+    stopTui = next;
+  },
+  startTui: async (nextBotState) => {
     const { startTui } = await import("./src/tui/index.tsx");
-    stopTui = startTui(botState);
-  } else {
+    return startTui(nextBotState);
+  },
+  startMetricsServer: () => {
     startMetricsServer(9090);
+  },
+  printBanner: () => {
     console.log("╔══════════════════════════════════════════════╗");
     console.log("║   Polygon Arbitrage Bot — Event-Driven       ║");
     console.log(`║   Workers: ${String(WORKER_COUNT).padEnd(3)}  Paths: ${String(MAX_TOTAL_PATHS).padEnd(7)}          ║`);
     console.log("╚══════════════════════════════════════════════╝");
-  }
+  },
+  loopMode: LOOP_MODE,
+  discoveryOnly: DISCOVERY_ONLY,
+  envioApiToken: ENVIO_API_TOKEN,
+  runPass,
+  shutdown,
+  createWatcher: () => new StateWatcher(registry, stateCache),
+  setWatcher: (watcher) => {
+    runtime.setWatcher(watcher);
+  },
+  configureWatcher: (watcher) => {
+    configureWatcherCallbacks({
+      watcher,
+      log,
+      onPoolsChanged: async ({ changedPools }) => {
+        await watcherBatchCoordinator.handlePoolsChanged(changedPools);
+      },
+      onReorgDetected: ({ reorgBlock, changedPools }) => {
+        reorgRecoveryCoordinator.handleReorgDetected(reorgBlock, changedPools);
+      },
+      onHaltDetected: ({ payload }) => {
+        watcherHaltCoordinator.handleHaltDetected(payload);
+      },
+      scheduleArb,
+    });
+  },
+  log,
+  fastArbDebounceMs: FAST_ARB_DEBOUNCE_MS,
+  baseArbDebounceMs: BASE_ARB_DEBOUNCE_MS,
+  heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+  formatDuration,
+  setWatcherHealthy,
+  startHeartbeat: () => {
+    heartbeat = setInterval(scheduleArb, HEARTBEAT_INTERVAL_MS);
+  },
+  scheduleArb: () => {
+    scheduleArb();
+  },
+  stopHeartbeat,
+});
 
-  registry     = new RegistryService(DB_PATH);
-  repositories = createRegistryRepositories(registry);
-  runtime.setPriceOracle(new PriceOracle(stateCache, registry));
-  runtime.setNonceManager(new NonceManager());
+// ─── Main ──────────────────────────────────────────────────────
+
+async function main() {
+  await bootModeCoordinator.startOperatorSurface(TUI_MODE);
+
+  const initializedRuntime = startupCoordinator.initializeRuntime();
+  registry = initializedRuntime.registry;
+  repositories = initializedRuntime.repositories;
 
   process.on("SIGINT",  shutdown);
   process.on("SIGTERM", shutdown);
@@ -754,152 +706,8 @@ async function main() {
     log(`Worker pool: ${WORKER_COUNT} threads (threshold: ${EVAL_WORKER_THRESHOLD} paths)`);
   }
 
-  // Discover pools at startup (blocking — ensures registry is populated)
-  await discoveryCoordinator.runInitialDiscovery();
-
-  // Seed stateCache from the registry's persisted state
-  seedStateCache();
-
-  // Fetch live on-chain state for hub pools before the first cycle build.
-  // Non-hub pools are fetched in the background and admitted incrementally.
-  await warmupStateCache();
-
-  // Initial cycle enumeration
-  await refreshCycles(true);
-
-  // Post-warmup sanity check: if no paths were found the hub-pair state is
-  // entirely missing (RPC failures or empty DB).  The watcher replay will
-  // still populate state incrementally, but warn so the operator knows.
-  if ((topologyService?.getCachedCycles() ?? []).length === 0) {
-    log(
-      "Post-warmup: 0 arbitrage paths enumerated. " +
-      "Hub-pair pools may be unavailable or RPC failed. " +
-      "Watcher replay will populate state incrementally.",
-      "warn",
-      { event: "warmup_no_paths" }
-    );
-  }
-
-  // ── Single-shot mode ─────────────────────────────────────────
-  if (!LOOP_MODE) {
-    if (!DISCOVERY_ONLY) await runPass();
-    await shutdown();
-    return;
-  }
-
-  // ── Event-driven loop (--loop) ────────────────────────────────
-  //
-  // The StateWatcher fires watcher.onBatch() after each HyperSync batch.
-  // scheduleArb() debounces those callbacks into arb scans.
-  // A heartbeat timer ensures scans happen even during quiet market periods.
-
-  if (!ENVIO_API_TOKEN) {
-    throw new Error("ENVIO_API_TOKEN is required for --loop watcher mode");
-  }
-
-  const watcher = new StateWatcher(registry, stateCache);
-  runtime.setWatcher(watcher);
-
-  configureWatcherCallbacks({
-    watcher,
-    log,
-    onPoolsChanged: async ({ changedPools }) => {
-      const { valid: validChangedAddrs, invalid: invalidChangedAddrs } = partitionChangedPools(changedPools);
-      if (validChangedAddrs.size === 0 && invalidChangedAddrs.size === 0) {
-        log("[runner] No usable pool changes in watcher batch", "debug", {
-          event: "watcher_batch_skip",
-          changedPools: changedPools.size,
-        });
-        return;
-      }
-
-      if (invalidChangedAddrs.size > 0) {
-        const removedEdges = topologyService?.removePools(invalidChangedAddrs) ?? 0;
-        const removedRoutes = routeCache.removeByPools(invalidChangedAddrs);
-        log(
-          `[runner] ${invalidChangedAddrs.size} pool(s) became unroutable; ${removedEdges / 2} removed from topology.`,
-          "info",
-          {
-            event: "watcher_batch_remove_unroutable",
-            changedPools: changedPools.size,
-            invalidPools: invalidChangedAddrs.size,
-            removedPools: removedEdges / 2,
-            removedRoutes,
-          },
-        );
-      }
-
-      if (validChangedAddrs.size > 0) {
-        log(`[watcher] ${validChangedAddrs.size}/${changedPools.size} pool state(s) updated`, "info", {
-          event: "watcher_batch_valid",
-          changedPools: changedPools.size,
-          validPools: validChangedAddrs.size,
-        });
-        const admitted = topologyService?.admitPools(validChangedAddrs) ?? 0;
-        if (admitted > 0) {
-          log(`[runner] Admitted ${admitted} newly routable pool(s); refreshing cycles soon.`, "info", {
-            event: "watcher_batch_admit",
-            changedPools: changedPools.size,
-            validPools: validChangedAddrs.size,
-            admittedPools: admitted,
-          });
-        }
-        runtime.getPriceOracle()?.update(validChangedAddrs);
-        await opportunityEngine?.revalidateCachedRoutes(validChangedAddrs);
-      }
-    },
-    onReorgDetected: ({ reorgBlock, changedPools }) => {
-      log(`[runner] Reorg rollback to block ${reorgBlock}; clearing cached routes and topology`, "warn", {
-        event: "watcher_reorg",
-        reorgBlock,
-        changedPools: changedPools.size,
-      });
-      routeCache.clear();
-      topologyService?.setCachedCycles([]);
-      topologyService?.resetGraphs();
-      runtime.getPriceOracle()?.update();
-      if (changedPools.size > 0) {
-        log(`[runner] Reorg cache reload touched ${changedPools.size} active pool(s)`, "debug", {
-          event: "watcher_reorg_reload",
-          changedPools: changedPools.size,
-        });
-      }
-    },
-    onHaltDetected: ({ payload }) => {
-      runtime.setRunning(false);
-      botState.status = 'error';
-      cancelScheduledArb();
-      stopHeartbeat();
-      recordWatcherHalt(payload);
-      log("[runner] Watcher halted; arb loop disabled until restart", "error", {
-        event: "watcher_halt",
-        ...payload,
-      });
-    },
-    scheduleArb,
-  });
-
-  log(`Starting HyperSync stream (debounce: ${FAST_ARB_DEBOUNCE_MS}-${BASE_ARB_DEBOUNCE_MS}ms adaptive, heartbeat: ${formatDuration(HEARTBEAT_INTERVAL_MS)})...`, "info", {
-    event: "watcher_start",
-    debounceMs: BASE_ARB_DEBOUNCE_MS,
-    fastDebounceMs: FAST_ARB_DEBOUNCE_MS,
-    heartbeatMs: HEARTBEAT_INTERVAL_MS,
-  });
-      await watcher.start(undefined);
-  setWatcherHealthy();
-
-  // Heartbeat: guarantee a scan even if the market is quiet
-  heartbeat = setInterval(scheduleArb, HEARTBEAT_INTERVAL_MS);
-
-  // Run one pass immediately so we don't wait for the first event
-  scheduleArb();
-
-  // Block until watcher stops (stop() resolves _loopPromise)
-  await watcher.wait();
-  if (watcher.haltMeta) {
-    throw new Error(`Watcher halted: ${String(watcher.haltMeta.reason ?? "unknown reason")}`);
-  }
-  stopHeartbeat();
+  await startupCoordinator.bootstrapRouting();
+  await bootModeCoordinator.runAfterBootstrap();
 }
 
 main().catch((err: any) => {

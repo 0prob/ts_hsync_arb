@@ -323,7 +323,6 @@ export class RegistryService {
 
   upsertPool(metadata: Record<string, unknown>) {
     return upsertPoolRecord(
-      this.db,
       this._stmtFn,
       this._invalidatePoolMetaCacheFn,
       metadata
@@ -415,6 +414,28 @@ export class RegistryService {
 
   rollbackToBlock(block: number) {
     const result = rollbackRegistryToBlock(this.db, block);
+    this._invalidatePoolMetaCache();
+    return result;
+  }
+
+  commitWatcherProgress(checkpointKey: string, checkpointBlock: number, rollbackGuard: Record<string, unknown> | null = null) {
+    this.db.transaction(() => {
+      setCheckpointRecord(this.db, checkpointKey, checkpointBlock, null);
+      if (rollbackGuard) {
+        setRollbackGuardRecord(this.db, rollbackGuard);
+      }
+    })();
+  }
+
+  rollbackWatcherState(checkpointKey: string, reorgBlock: number, rollbackGuard: Record<string, unknown> | null = null) {
+    const result = this.db.transaction(() => {
+      const rollbackResult = rollbackRegistryToBlock(this.db, reorgBlock);
+      setCheckpointRecord(this.db, checkpointKey, Math.max(0, reorgBlock - 1), null);
+      if (rollbackGuard) {
+        setRollbackGuardRecord(this.db, rollbackGuard);
+      }
+      return rollbackResult;
+    })();
     this._invalidatePoolMetaCache();
     return result;
   }

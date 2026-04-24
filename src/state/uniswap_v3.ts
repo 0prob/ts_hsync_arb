@@ -167,10 +167,14 @@ type V3PoolState = PoolCoreState & {
   ticks: Map<number, TickLiquidity>;
   fetchedAt: number;
   initialized: boolean;
+  isAlgebra: boolean;
+  isKyberElastic: boolean;
+  hydrationMode: V3HydrationMode;
 };
 
 type V3PoolMeta = {
   isAlgebra?: boolean;
+  isKyberElastic?: boolean;
 };
 
 type V3HydrationMode = "full" | "nearby" | "none";
@@ -493,12 +497,14 @@ export async function fetchV3PoolState(
   poolAddress: string,
   {
     isAlgebra = false,
+    isKyberElastic = false,
     hydrationMode = "full",
     nearWordRadius = 2,
   }: V3PoolMeta & V3FetchOptions = {}
 ): Promise<V3PoolState> {
   // Step 1: Core state (dispatches to Algebra or Uniswap V3 interface)
-  const core = await fetchPoolCore(poolAddress, { isAlgebra });
+  const useAlgebraInterface = isAlgebra || isKyberElastic;
+  const core = await fetchPoolCore(poolAddress, { isAlgebra: useAlgebraInterface });
 
   // Skip pools that are uninitialized (sqrtPriceX96 == 0)
   if (core.sqrtPriceX96 === 0n) {
@@ -509,6 +515,9 @@ export async function fetchV3PoolState(
       ticks: new Map(),
       fetchedAt: Date.now(),
       initialized: false,
+      isAlgebra: useAlgebraInterface,
+      isKyberElastic,
+      hydrationMode,
     };
   }
 
@@ -537,6 +546,9 @@ export async function fetchV3PoolState(
     ticks,
     fetchedAt: Date.now(),
     initialized: true,
+    isAlgebra: useAlgebraInterface,
+    isKyberElastic,
+    hydrationMode,
   };
 }
 
@@ -554,7 +566,7 @@ export async function fetchMultipleV3States(
   poolAddresses: string[],
   concurrency = 2,
   poolMeta: Map<string, V3PoolMeta> = new Map(),
-  onProgress: ((completed: number, total: number, addr: string) => void) | null = null,
+  onProgress: ((completed: number, total: number, addr: string, state: any | null) => void) | null = null,
   fetchOptions: V3FetchOptions = {},
 ): Promise<V3StateMap> {
   const states: V3StateMap = new Map();
@@ -565,13 +577,16 @@ export async function fetchMultipleV3States(
   const results = await throttledMap(
     poolAddresses,
     async (addr: string) => {
+      let fetchedState: any = null;
       try {
         const meta = poolMeta.get(addr.toLowerCase()) || {};
         const state = await fetchV3PoolState(addr, {
           isAlgebra: meta.isAlgebra || false,
+          isKyberElastic: meta.isKyberElastic || false,
           hydrationMode: fetchOptions.hydrationMode,
           nearWordRadius: fetchOptions.nearWordRadius,
         });
+        fetchedState = state;
         return { addr, state, error: null };
       } catch (error: any) {
         if (isNoDataReadContractError(error)) {
@@ -583,7 +598,7 @@ export async function fetchMultipleV3States(
         completed++;
         if (onProgress) {
           try {
-            onProgress(completed, total, addr);
+            onProgress(completed, total, addr, fetchedState);
           } catch {
             // progress callbacks must never break state fetches
           }

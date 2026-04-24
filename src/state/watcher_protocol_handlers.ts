@@ -10,8 +10,8 @@ export function createWatcherProtocolHandlers({
   updateV3LiquidityState,
 }: any): Map<any, any> {
   return new Map([
-    [topic0.V2_SYNC, ({ state, decoded }: any) => {
-      updateV2State(state, decoded);
+    [topic0.V2_SYNC, ({ state, decoded, pool }: any) => {
+      updateV2State(state, decoded, pool);
       return true;
     }],
     [topic0.V3_SWAP, ({ state, decoded }: any) => {

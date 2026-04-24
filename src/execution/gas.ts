@@ -28,6 +28,7 @@ export const executionClient = createPublicClient({
 });
 
 const gasEstimateCache = new Map<string, bigint>();
+const GAS_ORACLE_MAX_AGE_MS = 15_000;
 
 // ─── Gas Oracle ───────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ class GasOracle {
   updatedAt: number;
   tokenPrices: Map<string, bigint>;
   private _interval: ReturnType<typeof setInterval> | null;
+  private _updatePromise: Promise<void> | null;
 
   constructor() {
     this.baseFee = 30n * 10n ** 9n;
@@ -49,6 +51,7 @@ class GasOracle {
     this.updatedAt = 0;
     this.tokenPrices = new Map();
     this._interval = null;
+    this._updatePromise = null;
   }
 
   /**
@@ -77,48 +80,60 @@ class GasOracle {
    *     priority fee the same way Ethereum does, but validators still accept it).
    */
   async update() {
-    try {
-      const block = await executeWithRpcRetry((c: any) =>
-        c.getBlock({ blockTag: "latest" })
-      );
-      this.baseFee = block.baseFeePerGas ?? 30n * 10n ** 9n;
+    if (this._updatePromise) {
+      return this._updatePromise;
+    }
 
-      // ── Priority fee via eth_feeHistory ──────────────────────
+    this._updatePromise = (async () => {
       try {
-        const feeHistory = await executeWithRpcRetry((c: any) =>
-          c.getFeeHistory({
-            blockCount: 10,
-            rewardPercentiles: [25, 50, 75],
-            blockTag: "latest",
-          })
+        const block = await executeWithRpcRetry((c: any) =>
+          c.getBlock({ blockTag: "latest" })
         );
+        this.baseFee = block.baseFeePerGas ?? 30n * 10n ** 9n;
 
-        // Extract p50 (index 1) priority fee rewards from the last 10 blocks
-        const rewards = feeHistory?.reward ?? [];
-        const p50s = rewards
-          .map((r: any) => (r && r[1] != null ? BigInt(r[1]) : null))
-          .filter((r: any) => r !== null && r > 0n);
+        // ── Priority fee via eth_feeHistory ──────────────────────
+        try {
+          const feeHistory = await executeWithRpcRetry((c: any) =>
+            c.getFeeHistory({
+              blockCount: 10,
+              rewardPercentiles: [25, 50, 75],
+              blockTag: "latest",
+            })
+          );
 
-        if (p50s.length > 0) {
-          const sorted = [...p50s].sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
-          const medianPriority = sorted[Math.floor(sorted.length / 2)];
-          // Clamp: never below 1 gwei, never above 500 gwei (avoids outliers)
-          const floor = 1n * 10n ** 9n;
-          const ceil  = 500n * 10n ** 9n;
-          this.priorityFee = medianPriority < floor ? floor
-                           : medianPriority > ceil  ? ceil
-                           : medianPriority;
+          // Extract p50 (index 1) priority fee rewards from the last 10 blocks
+          const rewards = feeHistory?.reward ?? [];
+          const p50s = rewards
+            .map((r: any) => (r && r[1] != null ? BigInt(r[1]) : null))
+            .filter((r: any) => r !== null && r > 0n);
+
+          if (p50s.length > 0) {
+            const sorted = [...p50s].sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
+            const medianPriority = sorted[Math.floor(sorted.length / 2)];
+            // Clamp: never below 1 gwei, never above 500 gwei (avoids outliers)
+            const floor = 1n * 10n ** 9n;
+            const ceil  = 500n * 10n ** 9n;
+            this.priorityFee = medianPriority < floor ? floor
+                             : medianPriority > ceil  ? ceil
+                             : medianPriority;
+          }
+          // If no valid rewards returned, keep the previous priorityFee
+        } catch {
+          // eth_feeHistory not supported on this endpoint (e.g. some public RPCs).
+          // Retain existing priorityFee (already conservative at 30 gwei default).
         }
-        // If no valid rewards returned, keep the previous priorityFee
-      } catch {
-        // eth_feeHistory not supported on this endpoint (e.g. some public RPCs).
-        // Retain existing priorityFee (already conservative at 30 gwei default).
-      }
 
-      this.maxFee = this.baseFee * 2n + this.priorityFee;
-      this.updatedAt = Date.now();
-    } catch (err: any) {
-      console.warn(`[gas_oracle] Update failed: ${err.message}`);
+        this.maxFee = this.baseFee * 2n + this.priorityFee;
+        this.updatedAt = Date.now();
+      } catch (err: any) {
+        console.warn(`[gas_oracle] Update failed: ${err.message}`);
+      }
+    })();
+
+    try {
+      await this._updatePromise;
+    } finally {
+      this._updatePromise = null;
     }
   }
 
@@ -163,7 +178,7 @@ export async function fetchGasPrice() {
  * Uses the background oracle for zero-latency access.
  */
 export async function fetchEIP1559Fees() {
-  return oracle.getFees();
+  return ensureFreshGasOracle();
 }
 
 // ─── Gas estimation ───────────────────────────────────────────
@@ -181,6 +196,39 @@ export async function estimateGas(tx: any, fromAddress: any) {
 
 export function clearGasEstimateCache() {
   gasEstimateCache.clear();
+}
+
+export function isGasOracleStale(updatedAt: number, options: any = {}) {
+  const now = Number(options.now ?? Date.now());
+  const maxAgeMs = Number(options.maxAgeMs ?? GAS_ORACLE_MAX_AGE_MS);
+  if (!Number.isFinite(updatedAt) || updatedAt <= 0) return true;
+  if (!Number.isFinite(now) || !Number.isFinite(maxAgeMs) || maxAgeMs < 0) return true;
+  return now - updatedAt > maxAgeMs;
+}
+
+export async function ensureFreshGasOracle(options: any = {}) {
+  const {
+    maxAgeMs = GAS_ORACLE_MAX_AGE_MS,
+    allowStaleOnFailure = true,
+  } = options;
+
+  const before = oracle.getFees();
+  if (!isGasOracleStale(before.updatedAt, { maxAgeMs })) {
+    return before;
+  }
+
+  await oracle.update();
+
+  const after = oracle.getFees();
+  if (!isGasOracleStale(after.updatedAt, { maxAgeMs })) {
+    return after;
+  }
+
+  if (allowStaleOnFailure && after.updatedAt > 0) {
+    return after;
+  }
+
+  throw new Error("Gas oracle has no fresh fee snapshot available.");
 }
 
 export function gasEstimateCacheKey(tx: any, fromAddress: any) {
@@ -240,6 +288,9 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
     priorityFeeOverride,
     gasEstimateCacheKey,
     forceRefreshEstimate = false,
+    requireFreshFees = true,
+    gasOracleMaxAgeMs = GAS_ORACLE_MAX_AGE_MS,
+    allowStaleFeesOnRefreshFailure = true,
   } = options;
 
   // Only perform eth_estimateGas on the hot path when the route shape is not
@@ -254,7 +305,12 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
       gasEstimateCache.set(gasEstimateCacheKey, gasEstimate as bigint);
     }
   }
-  const fees = oracle.getFees();
+  const fees = requireFreshFees
+    ? await ensureFreshGasOracle({
+        maxAgeMs: gasOracleMaxAgeMs,
+        allowStaleOnFailure: allowStaleFeesOnRefreshFailure,
+      })
+    : oracle.getFees();
 
   const maxFeePerGas = maxFeeOverride ?? fees.maxFee;
   const maxPriorityFeePerGas = priorityFeeOverride ?? fees.priorityFee;
@@ -271,7 +327,7 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
 }
 
 export async function quickGasCheck(estimatedGasUnits = 400_000) {
-  const fees = oracle.getFees();
+  const fees = await ensureFreshGasOracle();
   const estimatedCostWei = fees.maxFee * BigInt(estimatedGasUnits);
   return { gasPrice: fees.maxFee, estimatedCostWei };
 }

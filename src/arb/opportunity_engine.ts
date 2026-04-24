@@ -1,7 +1,7 @@
 import { createArbSearcher, toRouteResultLike } from "./search.ts";
 import { createExecutionCoordinator } from "./execution_coordinator.ts";
 import { createRouteRevalidator } from "./route_revalidation.ts";
-import type { ExecutableCandidate, ArbPathLike, RouteResultLike } from "./assessment.ts";
+import type { ExecutableCandidate, ArbPathLike } from "./assessment.ts";
 
 type OpportunityEngineDeps = {
   search: Omit<Parameters<typeof createArbSearcher>[0], "filterQuarantinedCandidates">;

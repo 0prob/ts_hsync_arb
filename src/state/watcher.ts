@@ -11,7 +11,7 @@
  *   handles `rollbackGuard` explicitly.
  */
 
-import { client, LogField, BlockField, Decoder, JoinMode } from "../hypersync/client.ts";
+import { client, LogField, Decoder, JoinMode } from "../hypersync/client.ts";
 import {
   buildHyperSyncLogQuery,
   DEFAULT_HYPERSYNC_BLOCK_FIELDS,
@@ -20,6 +20,7 @@ import { topic0ForSignature } from "../hypersync/topics.ts";
 import { detectReorg } from "../reorg/detect.ts";
 import { fetchAndNormalizeBalancerPool } from "./poll_balancer.ts";
 import { fetchAndNormalizeCurvePool } from "./poll_curve.ts";
+import { parsePoolTokens } from "./pool_record.ts";
 import {
   commitWatcherState,
   commitWatcherStatesBatch,
@@ -31,6 +32,7 @@ import {
 } from "./watcher_state_ops.ts";
 import {
   HYPERSYNC_BATCH_SIZE,
+  HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
   HYPERSYNC_MAX_ADDRESS_FILTER,
   HYPERSYNC_MAX_FILTERS_PER_REQUEST,
 } from "../config/index.ts";
@@ -42,6 +44,7 @@ const WATCHER_TRANSIENT_ERROR_SLEEP_MS = 5_000;
 const WATCHER_INTEGRITY_ERROR_SLEEP_MS = 15_000;
 const WATCHER_TRANSIENT_ERROR_SLEEP_MAX_MS = 30_000;
 const WATCHER_MAX_CONSECUTIVE_INTEGRITY_ERRORS = 3;
+const WATCHER_SHARD_GUARD_RETRY_ATTEMPTS = 3;
 
 const V2_SYNC = "event Sync(uint112 reserve0, uint112 reserve1)";
 const V3_SWAP = "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)";
@@ -88,12 +91,67 @@ const LOG_FIELDS = [
 export const watcherLogger: any = logger.child({ component: "watcher" });
 
 function compareRollbackGuards(a: any, b: any) {
-  return (
-    Number(a?.block_number ?? a?.blockNumber ?? a?.first_block_number) ===
-      Number(b?.block_number ?? b?.blockNumber ?? b?.first_block_number) &&
-    String(a?.block_hash ?? a?.blockHash ?? a?.first_parent_hash ?? "") ===
-      String(b?.block_hash ?? b?.blockHash ?? b?.first_parent_hash ?? "")
-  );
+  const aHeadBlock = Number(a?.block_number ?? a?.blockNumber);
+  const bHeadBlock = Number(b?.block_number ?? b?.blockNumber);
+  const aHeadHash = String(a?.block_hash ?? a?.blockHash ?? a?.hash ?? "");
+  const bHeadHash = String(b?.block_hash ?? b?.blockHash ?? b?.hash ?? "");
+  if (
+    Number.isFinite(aHeadBlock) &&
+    Number.isFinite(bHeadBlock) &&
+    aHeadHash &&
+    bHeadHash &&
+    (aHeadBlock !== bHeadBlock || aHeadHash !== bHeadHash)
+  ) {
+    return false;
+  }
+
+  const aFirstBlock = Number(a?.first_block_number ?? a?.firstBlockNumber);
+  const bFirstBlock = Number(b?.first_block_number ?? b?.firstBlockNumber);
+  const aFirstParent = String(a?.first_parent_hash ?? a?.firstParentHash ?? "");
+  const bFirstParent = String(b?.first_parent_hash ?? b?.firstParentHash ?? "");
+  if (
+    Number.isFinite(aFirstBlock) &&
+    Number.isFinite(bFirstBlock) &&
+    aFirstParent &&
+    bFirstParent &&
+    (aFirstBlock !== bFirstBlock || aFirstParent !== bFirstParent)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function isRollbackGuardMismatchError(error: unknown) {
+  const message = String((error as { message?: string } | null | undefined)?.message ?? error ?? "").toLowerCase();
+  return message.includes("mismatched rollback guards") || message.includes("inconsistent chain views");
+}
+
+function mergeRollbackGuards(base: any, next: any) {
+  if (!base) return next;
+  if (!next) return base;
+  const merged = { ...base, ...next } as Record<string, unknown>;
+  const headBlock = next?.block_number ?? next?.blockNumber ?? base?.block_number ?? base?.blockNumber;
+  const headHash = next?.block_hash ?? next?.blockHash ?? next?.hash ?? base?.block_hash ?? base?.blockHash ?? base?.hash;
+  const firstBlock =
+    next?.first_block_number ?? next?.firstBlockNumber ?? base?.first_block_number ?? base?.firstBlockNumber;
+  const firstParent =
+    next?.first_parent_hash ?? next?.firstParentHash ?? base?.first_parent_hash ?? base?.firstParentHash;
+
+  if (headBlock != null) merged.block_number = headBlock;
+  if (headHash != null) {
+    merged.block_hash = headHash;
+    merged.hash = headHash;
+  }
+  if (firstBlock != null) merged.first_block_number = firstBlock;
+  if (firstParent != null) merged.first_parent_hash = firstParent;
+
+  delete merged.blockNumber;
+  delete merged.blockHash;
+  delete merged.firstBlockNumber;
+  delete merged.firstParentHash;
+
+  return merged;
 }
 
 function numericLogField(value: any) {
@@ -282,12 +340,16 @@ export function watcherErrorBackoffMeta(
 export function classifyWatcherPollError(error: unknown) {
   const message = String((error as { message?: string } | null | undefined)?.message ?? error ?? "").toLowerCase();
   if (
+    message.includes("mismatched rollback guards") ||
+    message.includes("inconsistent chain views")
+  ) {
+    return "transient";
+  }
+  if (
     message.includes("did not include a finite nextblock cursor") ||
     message.includes("stalled at") ||
     message.includes("regressed from requested block") ||
-    message.includes("mismatched rollback guards") ||
-    message.includes("incomplete shard metadata") ||
-    message.includes("inconsistent chain views")
+    message.includes("incomplete shard metadata")
   ) {
     return "integrity";
   }
@@ -393,10 +455,17 @@ export class StateWatcher {
     this.onHalt = null;
   }
 
+  _resetRunState() {
+    this._consecutivePollErrors = 0;
+    this._consecutiveIntegrityPollErrors = 0;
+    this._haltMeta = null;
+  }
+
   async start(fromBlock: any) {
     if (this._running) return;
     this._running = true;
     this._closed = false;
+    this._resetRunState();
 
     if (fromBlock != null) {
       this._lastBlock = Math.max(0, Number(fromBlock));
@@ -427,7 +496,7 @@ export class StateWatcher {
       }
     }
 
-    this._watchedAddresses = Array.from(this._cache.keys());
+    this._watchedAddresses = normalizeWatchedAddresses(Array.from(this._cache.keys()));
     this._watchedAddressSet = new Set(this._watchedAddresses);
     this._loopPromise = this._loop();
   }
@@ -439,12 +508,19 @@ export class StateWatcher {
   async addPools(newAddresses: any) {
     if (this._closed || !newAddresses || newAddresses.length === 0) return;
 
+    const normalized = normalizeWatchedAddresses(Array.isArray(newAddresses) ? newAddresses : []);
     const added = [];
-    for (const address of newAddresses) {
-      const addr = address.toLowerCase();
+    for (const addr of normalized) {
       if (this._watchedAddressSet.has(addr)) continue;
       this._watchedAddressSet.add(addr);
       added.push(addr);
+    }
+    const rejectedCount = Array.isArray(newAddresses) ? Math.max(0, newAddresses.length - normalized.length) : 0;
+    if (rejectedCount > 0) {
+      watcherLogger.warn(
+        { rejectedCount },
+        "Rejected invalid watcher pool addresses while updating filter",
+      );
     }
     if (added.length === 0) return;
 
@@ -458,6 +534,7 @@ export class StateWatcher {
     this._lastBlock = resumeBlock;
     this._running = true;
     this._closed = false;
+    this._resetRunState();
     this._loopPromise = this._loop();
   }
 
@@ -503,6 +580,9 @@ export class StateWatcher {
         fromBlock: this._lastBlock + 1,
         logs,
         maxNumLogs: HYPERSYNC_BATCH_SIZE,
+        // Bound catch-up scans so resumed live polling stays within HyperSync's
+        // documented request-time budget after downtime.
+        maxNumBlocks: HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
         joinMode: JoinMode.JoinNothing,
         logFields: LOG_FIELDS,
         blockFields: DEFAULT_HYPERSYNC_BLOCK_FIELDS,
@@ -512,60 +592,77 @@ export class StateWatcher {
 
   async _pollOnce() {
     const queries = this._buildQueries();
-    const logs = [];
-    let rollbackGuard = null;
-    let nextBlock = Number.POSITIVE_INFINITY;
-    let archiveHeight = Number.POSITIVE_INFINITY;
-    const shardArchiveHeights = new Set<number>();
 
-    const responses = await Promise.all(queries.map((query) => client.get(query)));
-    if (!this._running) {
-      return null;
-    }
+    for (let attempt = 0; attempt < WATCHER_SHARD_GUARD_RETRY_ATTEMPTS; attempt++) {
+      const logs = [];
+      let rollbackGuard = null;
+      let nextBlock = Number.POSITIVE_INFINITY;
+      let archiveHeight = Number.POSITIVE_INFINITY;
+      const shardArchiveHeights = new Set<number>();
 
-    for (const res of responses) {
-      if (res.rollbackGuard) {
-        if (!rollbackGuard) {
-          rollbackGuard = res.rollbackGuard;
-        } else if (!compareRollbackGuards(rollbackGuard, res.rollbackGuard)) {
-          throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
+      try {
+        const responses = await Promise.all(queries.map((query) => client.get(query)));
+        if (!this._running) {
+          return null;
+        }
+
+        for (const res of responses) {
+          if (res.rollbackGuard) {
+            if (!rollbackGuard) {
+              rollbackGuard = res.rollbackGuard;
+            } else if (!compareRollbackGuards(rollbackGuard, res.rollbackGuard)) {
+              throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
+            } else {
+              rollbackGuard = mergeRollbackGuards(rollbackGuard, res.rollbackGuard);
+            }
+          }
+
+          if (Array.isArray(res.data?.logs) && res.data.logs.length > 0) {
+            logs.push(...res.data.logs);
+          }
+
+          const rawShardNextBlock = res.nextBlock;
+          const shardNextBlock = Number(rawShardNextBlock);
+          if (rawShardNextBlock == null || !Number.isFinite(shardNextBlock)) {
+            throw new Error("Watcher shard response did not include a finite nextBlock cursor; cannot merge incomplete shard metadata.");
+          }
+          nextBlock = Math.min(nextBlock, shardNextBlock);
+
+          const shardArchiveHeight = Number(res.archiveHeight);
+          if (Number.isFinite(shardArchiveHeight)) {
+            archiveHeight = Math.min(archiveHeight, shardArchiveHeight);
+            shardArchiveHeights.add(shardArchiveHeight);
+          }
+        }
+
+        if (shardArchiveHeights.size > 1) {
+          watcherLogger.warn(
+            { archiveHeights: [...shardArchiveHeights].sort((a, b) => a - b) },
+            "Watcher shard responses returned inconsistent archive heights; using the slowest shard height",
+          );
+        }
+
+        return {
+          rollbackGuard,
+          data: { logs: dedupeWatcherLogs(sortWatcherLogs(logs)) },
+          nextBlock: Number.isFinite(nextBlock) ? nextBlock : null,
+          archiveHeight: Number.isFinite(archiveHeight) ? archiveHeight : null,
+          shardSummary: {
+            archiveHeights: [...shardArchiveHeights].sort((a, b) => a - b),
+          },
+        };
+      } catch (error) {
+        if (
+          !isRollbackGuardMismatchError(error) ||
+          attempt + 1 >= WATCHER_SHARD_GUARD_RETRY_ATTEMPTS ||
+          !this._running
+        ) {
+          throw error;
         }
       }
-
-      if (Array.isArray(res.data?.logs) && res.data.logs.length > 0) {
-        logs.push(...res.data.logs);
-      }
-
-      const rawShardNextBlock = res.nextBlock;
-      const shardNextBlock = Number(rawShardNextBlock);
-      if (rawShardNextBlock == null || !Number.isFinite(shardNextBlock)) {
-        throw new Error("Watcher shard response did not include a finite nextBlock cursor; cannot merge incomplete shard metadata.");
-      }
-      nextBlock = Math.min(nextBlock, shardNextBlock);
-
-      const shardArchiveHeight = Number(res.archiveHeight);
-      if (Number.isFinite(shardArchiveHeight)) {
-        archiveHeight = Math.min(archiveHeight, shardArchiveHeight);
-        shardArchiveHeights.add(shardArchiveHeight);
-      }
     }
 
-    if (shardArchiveHeights.size > 1) {
-      watcherLogger.warn(
-        { archiveHeights: [...shardArchiveHeights].sort((a, b) => a - b) },
-        "Watcher shard responses returned inconsistent archive heights; using the slowest shard height",
-      );
-    }
-
-    return {
-      rollbackGuard,
-      data: { logs: dedupeWatcherLogs(sortWatcherLogs(logs)) },
-      nextBlock: Number.isFinite(nextBlock) ? nextBlock : null,
-      archiveHeight: Number.isFinite(archiveHeight) ? archiveHeight : null,
-      shardSummary: {
-        archiveHeights: [...shardArchiveHeights].sort((a, b) => a - b),
-      },
-    };
+    throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
   }
 
   _wakeSleep() {
@@ -593,6 +690,35 @@ export class StateWatcher {
         currentResolve?.();
       }, ms);
     });
+  }
+
+  async _waitForHeightAdvance(targetNextBlock: any, knownArchiveHeight: any) {
+    const numericTargetNextBlock = Number(targetNextBlock);
+    let currentHeight = Number(knownArchiveHeight);
+
+    if (
+      !Number.isFinite(numericTargetNextBlock) ||
+      !Number.isFinite(currentHeight) ||
+      currentHeight >= numericTargetNextBlock
+    ) {
+      await this._sleep(WATCHER_IDLE_SLEEP_MS);
+      return;
+    }
+
+    while (this._running && currentHeight < numericTargetNextBlock) {
+      await this._sleep(WATCHER_IDLE_SLEEP_MS);
+      if (!this._running) break;
+
+      try {
+        const nextHeight = Number(await client.getHeight());
+        if (!Number.isFinite(nextHeight)) {
+          break;
+        }
+        currentHeight = nextHeight;
+      } catch {
+        break;
+      }
+    }
   }
 
   async _loop() {
@@ -633,16 +759,21 @@ export class StateWatcher {
           if (reorgBlock !== false) {
             watcherLogger.warn({ reorgBlock }, "Reorg detected; rolling back registry state");
             this._advanceEnrichmentEpoch();
-            const rb = this._registry.rollbackToBlock(reorgBlock);
             const checkpointBlock = Math.max(0, reorgBlock - 1);
+            const rb = this._registry.rollbackWatcherState
+              ? this._registry.rollbackWatcherState(this._checkpointKey, reorgBlock, res.rollbackGuard)
+              : (() => {
+                  const rollbackResult = this._registry.rollbackToBlock(reorgBlock);
+                  this._registry.setCheckpoint(this._checkpointKey, checkpointBlock);
+                  this._registry.setRollbackGuard(res.rollbackGuard);
+                  return rollbackResult;
+                })();
             this._lastBlock = checkpointBlock;
             const changedAddrs = this._reloadCacheFromRegistry();
             watcherLogger.warn(
               watcherReorgMeta(reorgBlock, rb, changedAddrs, checkpointBlock),
               "Watcher reorg rollback summary"
             );
-            this._registry.setCheckpoint(this._checkpointKey, this._lastBlock);
-            this._registry.setRollbackGuard(res.rollbackGuard);
             if (this.onReorg) {
               this.onReorg({
                 reorgBlock,
@@ -672,7 +803,14 @@ export class StateWatcher {
         const checkpointBlock = progress.checkpointBlock;
         if (checkpointBlock > this._lastBlock) {
           this._lastBlock = checkpointBlock;
-          this._registry.setCheckpoint(this._checkpointKey, this._lastBlock);
+          if (this._registry.commitWatcherProgress) {
+            this._registry.commitWatcherProgress(this._checkpointKey, this._lastBlock, res.rollbackGuard ?? null);
+          } else {
+            this._registry.setCheckpoint(this._checkpointKey, this._lastBlock);
+            if (res.rollbackGuard) {
+              this._registry.setRollbackGuard(res.rollbackGuard);
+            }
+          }
         }
 
         if (this.onBatch && changedAddrs.size > 0) {
@@ -688,7 +826,11 @@ export class StateWatcher {
         }
 
         if (logs.length === 0 || progress.caughtUp) {
-          await this._sleep(WATCHER_IDLE_SLEEP_MS);
+          if (progress.caughtUp) {
+            await this._waitForHeightAdvance(progress.nextBlock, progress.archiveHeight);
+          } else {
+            await this._sleep(WATCHER_IDLE_SLEEP_MS);
+          }
         }
       } catch (err: any) {
         if (!this._running) break;
@@ -781,14 +923,18 @@ export class StateWatcher {
   }
 
   async _refreshBalancer(addr: any, pool: any, expectedEpoch = this._enrichmentEpoch) {
-    const { normalized } = await fetchAndNormalizeBalancerPool(pool);
+    const tokens = parsePoolTokens(pool?.tokens);
+    const tokenDecimals = this._registry?.getTokenDecimals?.(tokens) ?? null;
+    const { normalized } = await fetchAndNormalizeBalancerPool(pool, { tokenDecimals });
     if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
     const state = this._mergeState(addr, normalized);
     this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);
   }
 
   async _refreshCurve(addr: any, pool: any, expectedEpoch = this._enrichmentEpoch) {
-    const { normalized } = await fetchAndNormalizeCurvePool(pool);
+    const tokens = parsePoolTokens(pool?.tokens);
+    const tokenDecimals = this._registry?.getTokenDecimals?.(tokens) ?? null;
+    const { normalized } = await fetchAndNormalizeCurvePool(pool, { tokenDecimals });
     if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
     const state = this._mergeState(addr, normalized);
     this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);
@@ -817,7 +963,9 @@ export class StateWatcher {
   }
 
   _reloadCacheFromRegistry() {
-    const nextAddrs: any[] = reloadWatcherCache(this._registry, this._cache, this._pendingEnrichment) as unknown as any[];
+    const nextAddrs = normalizeWatchedAddresses(
+      reloadWatcherCache(this._registry, this._cache, this._pendingEnrichment) as unknown as any[],
+    );
     this._watchedAddresses = [...nextAddrs];
     this._watchedAddressSet = new Set(this._watchedAddresses);
     return nextAddrs;

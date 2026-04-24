@@ -190,7 +190,7 @@ export function encodeV2Hop(hop: any, recipient: any) {
  * @param {Object} [options]
  * @returns {Array<{target: string, value: bigint, data: string}>}  1 Call struct
  */
-export function encodeV3Hop(hop: any, recipient: any, options: any = {}) {
+export function encodeV3Hop(hop: any, recipient: any) {
   const pool = getAddress(hop.poolAddress);
   const { token0, token1 } = poolTokensFromHop(hop);
 
@@ -383,7 +383,7 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
     if (DIRECT_SWAP_PROTOCOLS.has(proto)) {
       calls.push(...encodeV2Hop(hop, executor));
     } else if (V3_SWAP_PROTOCOLS.has(proto)) {
-      calls.push(...encodeV3Hop(hop, executor, options));
+      calls.push(...encodeV3Hop(hop, executor));
     } else if (CURVE_STABLE_PROTOCOLS.has(proto) || CURVE_CRYPTO_PROTOCOLS.has(proto)) {
       calls.push(...encodeCurveHop(hop, executor, options));
     } else if (BALANCER_PROTOCOLS.has(proto)) {

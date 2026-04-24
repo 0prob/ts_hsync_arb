@@ -38,9 +38,6 @@ const ONE = 10n ** 18n;
 // Maximum number of iterations for power approximation
 const MAX_POW_ITERATIONS = 255;
 
-// Error tolerance for power series convergence
-const POW_PRECISION = 10n ** 10n; // 1e-8
-
 function toBigInt(value: any, fallback = 0n): bigint {
   if (typeof value === "bigint") return value;
   if (value == null) return fallback;

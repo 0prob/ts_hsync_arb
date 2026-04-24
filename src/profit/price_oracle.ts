@@ -28,8 +28,6 @@
 import { logger } from "../utils/logger.ts";
 import { getPoolTokens } from "../util/pool_record.ts";
 
-/** 1 MATIC in wei (used for V3 sqrtPriceX96 math only) */
-const WEI = 10n ** 18n;
 const RATE_SCALE = 10n ** 18n;
 
 /** Q96 / Q192 constants for Uniswap V3 price decoding */

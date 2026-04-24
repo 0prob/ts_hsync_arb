@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "type": "module",
   "main": "runner.ts",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=22.9.0"
   },

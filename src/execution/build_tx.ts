@@ -16,7 +16,6 @@
  */
 
 import { encodeRoute, encodeExecuteArb, buildFlashParams } from "./calldata.ts";
-import { BALANCER_VAULT } from "./addresses.ts";
 import { gasEstimateCacheKey, recommendGasParams } from "./gas.ts";
 import { routeExecutionCacheKey } from "../routing/route_identity.ts";
 import { getPathHopCount } from "../routing/path_hops.ts";

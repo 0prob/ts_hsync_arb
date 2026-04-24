@@ -16,6 +16,8 @@ const MAX_OPPORTUNITIES = 5;
 const MAX_LOGS = 8;
 const MIN_WIDTH = 72;
 const MAX_WIDTH = 120;
+const POLL_INTERVAL_MS = 250;
+const SPINNER_INTERVAL_MS = 500;
 
 function colorize(value: string, color: string) {
   return `${color}${value}${RESET}`;
@@ -122,9 +124,9 @@ function renderFrame(state: BotState, columns: number, spinnerFrame: string): st
   return `${ESC}?25l${ESC}H${ESC}2J${lines.join('\n')}`;
 }
 
-function signatureFor(state: BotState, spinnerFrame: string) {
+function signatureFor(state: BotState, columns: number) {
   return JSON.stringify({
-    spinnerFrame,
+    columns: Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, columns || MIN_WIDTH)),
     status: state.status,
     passCount: state.passCount,
     consecutiveErrors: state.consecutiveErrors,
@@ -137,7 +139,7 @@ function signatureFor(state: BotState, spinnerFrame: string) {
 
 /**
  * Start a simple ANSI TUI. Polls the shared botState object every 250 ms and
- * redraws stdout; the hot path never calls into this module.
+ * redraws stdout only when the rendered state, spinner, or terminal size changes.
  */
 export function startTui(state: BotState): () => void {
   const stdin = process.stdin;
@@ -146,18 +148,28 @@ export function startTui(state: BotState): () => void {
   let stopped = false;
   let spinnerIndex = 0;
   let lastSignature = '';
+  let lastSpinnerAt = 0;
   let alternateScreenActive = false;
 
-  const draw = () => {
+  const draw = (force = false) => {
     if (!stdout.isTTY || stopped) return;
 
-    spinnerIndex = (spinnerIndex + 1) % SPINNER_FRAMES.length;
+    const now = Date.now();
+    const columns = stdout.columns ?? MIN_WIDTH;
+    const signature = signatureFor(state, columns);
+    const stateChanged = signature !== lastSignature;
+    const spinnerDue = state.status === 'running' && now - lastSpinnerAt >= SPINNER_INTERVAL_MS;
+    if (!force && !stateChanged && !spinnerDue) return;
+
+    if (spinnerDue || force) {
+      spinnerIndex = (spinnerIndex + 1) % SPINNER_FRAMES.length;
+      lastSpinnerAt = now;
+    }
+
     const spinnerFrame = SPINNER_FRAMES[spinnerIndex];
-    const signature = signatureFor(state, spinnerFrame);
-    if (signature === lastSignature) return;
 
     try {
-      stdout.write(renderFrame(state, stdout.columns ?? MIN_WIDTH, spinnerFrame));
+      stdout.write(renderFrame(state, columns, spinnerFrame));
       lastSignature = signature;
     } catch {
       stop();
@@ -166,17 +178,20 @@ export function startTui(state: BotState): () => void {
 
   const onData = (chunk: Buffer | string) => {
     const input = String(chunk);
-    if (input === '\u0003' || input.toLowerCase() === 'q') {
+    if (input.includes('\u0003') || input.toLowerCase() === 'q') {
       stop();
       process.kill(process.pid, 'SIGINT');
     }
   };
+
+  const onResize = () => draw(true);
 
   const stop = () => {
     if (stopped) return;
     stopped = true;
     if (timer) clearInterval(timer);
     stdin.off('data', onData);
+    stdout.off('resize', onResize);
     if (stdin.isTTY) {
       stdin.setRawMode(false);
       stdin.pause();
@@ -189,6 +204,7 @@ export function startTui(state: BotState): () => void {
   }
 
   stdout.on('error', stop);
+  stdout.on('resize', onResize);
   stdout.write(`${ESC}?1049h${ESC}H`);
   alternateScreenActive = true;
 
@@ -197,11 +213,18 @@ export function startTui(state: BotState): () => void {
   }
   stdin.resume();
   stdin.on('data', onData);
-  draw();
-  timer = setInterval(draw, 125);
+  draw(true);
+  timer = setInterval(() => draw(false), POLL_INTERVAL_MS);
+  timer.unref?.();
 
   return () => {
     stop();
     stdout.off('error', stop);
   };
 }
+
+export const __tuiTest = {
+  formatLogs,
+  renderFrame,
+  signatureFor,
+};

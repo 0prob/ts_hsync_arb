@@ -285,6 +285,79 @@ function cleanup(dir: string) {
       "rollback should clear the removal block when a reverted soft removal is reactivated",
     );
 
+    registry.commitWatcherProgress("HYPERSYNC_WATCHER", 60, {
+      block_number: 60,
+      block_hash: "0xwatcher-head-60",
+      first_block_number: 60,
+      first_parent_hash: "0xwatcher-parent-59",
+    });
+    assert.equal(
+      registry.getCheckpoint("HYPERSYNC_WATCHER")?.last_block,
+      60,
+      "commitWatcherProgress should update the watcher checkpoint atomically",
+    );
+    assert.equal(
+      registry.getRollbackGuard()?.block_hash,
+      "0xwatcher-head-60",
+      "commitWatcherProgress should persist the rollback guard alongside the checkpoint",
+    );
+
+    registry.batchRemovePools([
+      {
+        address: "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+        removed_block: 61,
+      },
+    ]);
+    registry.batchUpdateStates([
+      {
+        pool_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        block: 61,
+        data: {
+          poolId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          protocol: "UNISWAP_V2",
+          tokens: [
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+          ],
+          reserve0: 1234n,
+          reserve1: 5678n,
+          timestamp: Date.now(),
+        },
+      },
+    ]);
+
+    const watcherRollback = registry.rollbackWatcherState("HYPERSYNC_WATCHER", 61, {
+      block_number: 60,
+      block_hash: "0xwatcher-head-60-recovered",
+      first_block_number: 61,
+      first_parent_hash: "0xwatcher-parent-60-recovered",
+    });
+    assert.equal(
+      watcherRollback.statesRemoved,
+      1,
+      "rollbackWatcherState should remove watcher-persisted state within the reverted block range",
+    );
+    assert.equal(
+      watcherRollback.poolsReactivated,
+      1,
+      "rollbackWatcherState should reactivate pools whose removal happened in the reverted block range",
+    );
+    assert.equal(
+      registry.getCheckpoint("HYPERSYNC_WATCHER")?.last_block,
+      60,
+      "rollbackWatcherState should rewind the watcher checkpoint inside the same transaction",
+    );
+    assert.equal(
+      registry.getRollbackGuard()?.block_hash,
+      "0xwatcher-head-60-recovered",
+      "rollbackWatcherState should publish the replacement rollback guard after rewinding state",
+    );
+    assert.equal(
+      registry.getPoolMeta("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")?.status,
+      "active",
+      "rollbackWatcherState should restore pools removed in the reverted block range",
+    );
+
     registry.close();
   } finally {
     cleanup(dir);

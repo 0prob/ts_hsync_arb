@@ -5,8 +5,9 @@
 
 import { mergeStateIntoCache, reloadCacheFromRegistry } from "./cache_utils.ts";
 import { createWatcherProtocolHandlers } from "./watcher_protocol_handlers.ts";
-import { validatePoolState } from "./normalizer.ts";
+import { resolveV2FeeNumerator, validatePoolState } from "./normalizer.ts";
 import { logger } from "../utils/logger.ts";
+import { parsePoolMetadataValue } from "../util/pool_record.ts";
 
 const watcherStateLogger: any = logger.child({ component: "watcher_state_ops" });
 
@@ -102,9 +103,18 @@ export async function handleWatcherLogs({
   return changedAddrs;
 }
 
-export function updateV2State(state: any, decoded: any) {
+export function updateV2State(state: any, decoded: any, pool: any = null) {
   state.reserve0 = BigInt(decoded.body[0].val);
   state.reserve1 = BigInt(decoded.body[1].val);
+  const metadata = parsePoolMetadataValue(pool?.metadata);
+  const currentFee = typeof state.fee === "bigint" ? state.fee : null;
+  if (currentFee == null || currentFee <= 0n || currentFee >= 1000n) {
+    state.fee = resolveV2FeeNumerator(metadata);
+    state.feeDenominator = 1000n;
+    state.feeSource = metadata?.feeNumerator != null || metadata?.fee != null
+      ? "metadata"
+      : "default";
+  }
 }
 
 export function updateV3SwapState(state: any, decoded: any) {
@@ -190,15 +200,15 @@ export function mergeWatcherState(cache: any, addr: any, nextState: any) {
 export function commitWatcherState(cache: any, persistState: any, addr: any, state: any, rawLog: any) {
   state.timestamp = Date.now();
   validateWatcherStateOrThrow(state);
-  cache.set(addr, state);
   persistState(addr, state, rawLog);
+  mergeStateIntoCache(cache, addr, state);
 }
 
 export function commitWatcherStatesBatch(cache: any, persistStates: any, updates: any[]) {
   if (!Array.isArray(updates) || updates.length === 0) return [];
 
   const committed: Array<{ pool_address: string; block: number; data: any }> = [];
-  const changedAddrs: string[] = [];
+  const nextStates = new Map<string, any>();
   const committedAt = Date.now();
 
   for (const update of updates) {
@@ -207,20 +217,23 @@ export function commitWatcherStatesBatch(cache: any, persistStates: any, updates
     if (!addr || !state) continue;
     state.timestamp = committedAt;
     validateWatcherStateOrThrow(state);
-    cache.set(addr, state);
     committed.push({
       pool_address: addr,
       block: Number(update?.rawLog?.blockNumber ?? 0),
       data: state,
     });
-    changedAddrs.push(addr);
+    nextStates.set(addr, state);
   }
 
   if (committed.length > 0) {
     persistStates(committed);
   }
 
-  return changedAddrs;
+  for (const [addr, state] of nextStates.entries()) {
+    mergeStateIntoCache(cache, addr, state);
+  }
+
+  return [...nextStates.keys()];
 }
 
 export function persistWatcherState(registry: any, addr: any, state: any, rawLog: any, fallbackBlock: any) {

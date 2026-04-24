@@ -1,4 +1,5 @@
 import { takeTopNBy } from "../util/bounded_priority.ts";
+import { metadataWithRegistryTokenDecimals } from "../state/pool_metadata.ts";
 
 export type PoolRecord = {
   pool_address: string;
@@ -34,6 +35,11 @@ type WarmupGroupResult = {
 type FetchAndCacheOptions = {
   v3HydrationMode?: "full" | "nearby" | "none" | "tiered";
   v3NearWordRadius?: number;
+  logContext?: FetchLogContext;
+};
+type FetchLogContext = {
+  label: string;
+  eventPrefix: string;
 };
 type V3FetchOptions = {
   hydrationMode?: "full" | "nearby" | "none";
@@ -59,7 +65,7 @@ type WarmupDeps = {
     addresses: string[],
     concurrency: number,
     poolMeta: Map<any, any>,
-    onProgress: (completed: number, total: number) => void,
+    onProgress: (completed: number, total: number, addr?: string, rawState?: unknown | null) => void,
     fetchOptions?: V3FetchOptions,
   ) => Promise<any>;
   fetchAndNormalizeBalancerPool: (pool: PoolRecord) => Promise<{ addr: string; normalized: Record<string, unknown> }>;
@@ -76,7 +82,7 @@ type WarmupDeps = {
 };
 
 const WARMUP_V2 = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
-const WARMUP_V3 = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3"]);
+const WARMUP_V3 = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
 const WARMUP_BAL = new Set(["BALANCER_WEIGHTED", "BALANCER_STABLE", "BALANCER_V2"]);
 const WARMUP_CRV = new Set([
   "CURVE_STABLE", "CURVE_CRYPTO", "CURVE_MAIN", "CURVE_MAIN_REGISTRY",
@@ -84,10 +90,26 @@ const WARMUP_CRV = new Set([
   "CURVE_CRYPTO_FACTORY", "CURVE_STABLE_FACTORY",
   "CURVE_STABLESWAP_NG", "CURVE_TRICRYPTO_NG",
 ]);
+const SUPPORTED_WARMUP_PROTOCOLS = new Set([...WARMUP_V2, ...WARMUP_V3, ...WARMUP_BAL, ...WARMUP_CRV]);
 const WARMUP_PROGRESS_LOG_EVERY = 25;
 const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled: 0, failed: 0 };
 
+export function isSupportedWarmupProtocol(protocol: string | null | undefined) {
+  return SUPPORTED_WARMUP_PROTOCOLS.has(String(protocol ?? ""));
+}
+
 export function createWarmupManager(deps: WarmupDeps) {
+  function resolveFetchLogContext(options: FetchAndCacheOptions): FetchLogContext {
+    return options.logContext ?? {
+      label: "State warmup",
+      eventPrefix: "warmup",
+    };
+  }
+
+  function eventName(logContext: FetchLogContext, suffix: string) {
+    return `${logContext.eventPrefix}_${suffix}`;
+  }
+
   function effectiveSyncWarmupV3FullBudget() {
     const cappedByTotalWarmup = Math.min(
       deps.maxSyncWarmupV3Pools,
@@ -97,7 +119,16 @@ export function createWarmupManager(deps: WarmupDeps) {
   }
 
   function isAlgebraPool(pool: any) {
-    return pool?.protocol === "QUICKSWAP_V3" || deps.getPoolMetadata(pool)?.isAlgebra === true;
+    const metadata = deps.getPoolMetadata(pool);
+    return pool?.protocol === "QUICKSWAP_V3" || pool?.protocol === "KYBERSWAP_ELASTIC" || metadata?.isAlgebra === true || metadata?.isKyberElastic === true;
+  }
+
+  function getPoolMetadataWithDecimals(pool: PoolRecord, tokens: string[]) {
+    return metadataWithRegistryTokenDecimals(deps.getRegistry(), pool, tokens);
+  }
+
+  function supportsWarmupProtocol(pool: PoolRecord | null | undefined) {
+    return isSupportedWarmupProtocol(pool?.protocol);
   }
 
   function warmupProgressSnapshot(stats: WarmupStats) {
@@ -125,9 +156,14 @@ export function createWarmupManager(deps: WarmupDeps) {
     };
   }
 
-  function logWarmupProgress(stats: WarmupStats, phase: string, meta: Record<string, unknown> = {}) {
-    deps.log(`State warmup progress: ${phase}.`, "info", {
-      event: "warmup_progress",
+  function logWarmupProgress(
+    stats: WarmupStats,
+    phase: string,
+    logContext: FetchLogContext,
+    meta: Record<string, unknown> = {},
+  ) {
+    deps.log(`${logContext.label} progress: ${phase}.`, "info", {
+      event: eventName(logContext, "progress"),
       phase,
       ...warmupProgressSnapshot(stats),
       ...(meta || {}),
@@ -144,7 +180,9 @@ export function createWarmupManager(deps: WarmupDeps) {
     const globalBlock = Number(globalCheckpoint);
     if (Number.isFinite(globalBlock) && globalBlock >= 0) return globalBlock;
 
-    return null;
+    // Discovery can fail before any checkpoint exists, but the fetched warmup
+    // snapshot is still useful to resume from on the next boot.
+    return 0;
   }
 
   function createWarmupStats(pools: PoolRecord[], groups: WarmupGroup[]): WarmupStats {
@@ -172,6 +210,7 @@ export function createWarmupManager(deps: WarmupDeps) {
     pools: PoolRecord[],
     noDataFailures: Set<string> | undefined,
     sourceLabel: string,
+    logContext: FetchLogContext,
     stats: WarmupStats,
     groupStats: WarmupGroupStats,
   ) {
@@ -186,8 +225,8 @@ export function createWarmupManager(deps: WarmupDeps) {
       deps.stateCache.delete(addr);
       groupStats.disabled++;
       stats.disabled++;
-      deps.log(`[warmup] Disabled ${addr} after permanent ${sourceLabel} failure.`, "warn", {
-        event: "warmup_disable_pool",
+      deps.log(`[${logContext.eventPrefix}] Disabled ${addr} after permanent ${sourceLabel} failure.`, "warn", {
+        event: eventName(logContext, "disable_pool"),
         poolAddress: addr,
         source: sourceLabel,
         ...warmupProgressSnapshot(stats),
@@ -195,7 +234,13 @@ export function createWarmupManager(deps: WarmupDeps) {
     }
   }
 
-  async function runWarmupGroup(pools: PoolRecord[], group: WarmupGroup, stats: WarmupStats, persistBlock: number | null) {
+  async function runWarmupGroup(
+    pools: PoolRecord[],
+    group: WarmupGroup,
+    stats: WarmupStats,
+    persistBlock: number | null,
+    logContext: FetchLogContext,
+  ) {
     if (!pools.length) return;
 
     const groupStats = stats.protocols[group.key];
@@ -222,11 +267,18 @@ export function createWarmupManager(deps: WarmupDeps) {
     groupStats.failed += failedWithoutDisable;
     stats.failed += failedWithoutDisable;
 
-    disableWarmupNoDataPools(pools, noDataFailures, `${String(group.key)} warmup`, stats, groupStats);
+    disableWarmupNoDataPools(
+      pools,
+      noDataFailures,
+      `${String(group.key)} ${logContext.label.toLowerCase()}`,
+      logContext,
+      stats,
+      groupStats,
+    );
     persistWarmupBatch(persisted, persistBlock);
 
     if (group.progressPhase) {
-      logWarmupProgress(stats, group.progressPhase, {
+      logWarmupProgress(stats, group.progressPhase, logContext, {
         protocol: group.key,
         completed: groupStats.normalized + groupStats.failed + groupStats.disabled,
         total: groupStats.scheduled,
@@ -235,7 +287,32 @@ export function createWarmupManager(deps: WarmupDeps) {
   }
 
   async function fetchAndCacheStates(pools: PoolRecord[], options: FetchAndCacheOptions = {}) {
+    const logContext = resolveFetchLogContext(options);
     if (!pools.length) {
+      return {
+        scheduled: 0,
+        fetched: 0,
+        normalized: 0,
+        disabled: 0,
+        failed: 0,
+        protocols: {},
+      };
+    }
+
+    const supportedPools = pools.filter((pool) => supportsWarmupProtocol(pool));
+    const unsupportedProtocols = [...new Set(
+      pools
+        .filter((pool) => !supportsWarmupProtocol(pool))
+        .map((pool) => String(pool.protocol || "unknown")),
+    )].sort();
+    if (unsupportedProtocols.length > 0) {
+      deps.log(`${logContext.label}: skipping unsupported protocols in RPC batch.`, "info", {
+        event: eventName(logContext, "skip_unsupported_protocols"),
+        skippedPools: pools.length - supportedPools.length,
+        unsupportedProtocols,
+      });
+    }
+    if (!supportedPools.length) {
       return {
         scheduled: 0,
         fetched: 0,
@@ -262,7 +339,7 @@ export function createWarmupManager(deps: WarmupDeps) {
             return {
               addr,
               raw,
-              normalized: raw && tokens.length ? deps.normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata) : null,
+              normalized: raw && tokens.length ? deps.normalizePoolState(addr, pool.protocol, tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
               noDataFailures: statesMap?.noDataFailures,
             };
           });
@@ -274,20 +351,41 @@ export function createWarmupManager(deps: WarmupDeps) {
         progressPhase: "v3_complete",
         async fetch(group) {
           const poolMeta = new Map();
+          const poolByAddress = new Map<string, PoolRecord>();
           for (const pool of group) {
+            poolByAddress.set(pool.pool_address.toLowerCase(), pool);
             if (isAlgebraPool(pool)) {
-              poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
+              const metadata = deps.getPoolMetadata(pool);
+              poolMeta.set(pool.pool_address.toLowerCase(), {
+                isAlgebra: true,
+                isKyberElastic: pool.protocol === "KYBERSWAP_ELASTIC" || metadata?.isKyberElastic === true,
+              });
             }
           }
           let lastV3ProgressLogAt = 0;
           const hydrationMode = options.v3HydrationMode ?? "tiered";
           const fullHydrationBudget = effectiveSyncWarmupV3FullBudget();
-          const progress = (completed: number, total: number) => {
+          const persistPartialV3State = (addr: string, rawState: unknown | null | undefined) => {
+            if (!rawState) return;
+            const normalizedAddr = addr.toLowerCase();
+            const pool = poolByAddress.get(normalizedAddr);
+            if (!pool) return;
+            const tokens = deps.getPoolTokens(pool);
+            if (!tokens.length) return;
+            const normalized = deps.normalizePoolState(normalizedAddr, pool.protocol, tokens, rawState, getPoolMetadataWithDecimals(pool, tokens));
+            if (!normalized) return;
+            deps.stateCache.set(normalizedAddr, normalized);
+            if (persistBlock != null) {
+              persistWarmupBatch([{ pool_address: normalizedAddr, block: persistBlock, data: normalized }], persistBlock);
+            }
+          };
+          const progress = (completed: number, total: number, addr?: string, rawState?: unknown | null) => {
+            if (addr) persistPartialV3State(addr, rawState);
             const now = Date.now();
             if (completed === total || completed % 10 === 0 || now - lastV3ProgressLogAt >= 5_000) {
               lastV3ProgressLogAt = now;
-              deps.log(`State warmup progress: v3_progress (${completed}/${total}).`, "info", {
-                event: "warmup_progress",
+              deps.log(`${logContext.label} progress: v3_progress (${completed}/${total}).`, "info", {
+                event: eventName(logContext, "progress"),
                 phase: "v3_progress",
                 protocol: "v3",
                 completed,
@@ -314,8 +412,8 @@ export function createWarmupManager(deps: WarmupDeps) {
                 batchPools.map((pool) => pool.pool_address),
                 deps.v3PollConcurrency,
                 poolMeta,
-                (batchCompleted: number, batchTotal: number) => {
-                  progress(completed + batchCompleted, total);
+                (batchCompleted: number, batchTotal: number, addr?: string, rawState?: unknown | null) => {
+                  progress(completed + batchCompleted, total, addr, rawState);
                   if (batchCompleted === batchTotal) completed += batchTotal;
                 },
                 {
@@ -350,7 +448,7 @@ export function createWarmupManager(deps: WarmupDeps) {
             return {
               addr,
               raw,
-              normalized: raw && tokens.length ? deps.normalizePoolState(addr, pool.protocol, tokens, raw, pool.metadata) : null,
+              normalized: raw && tokens.length ? deps.normalizePoolState(addr, pool.protocol, tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
               noDataFailures: statesMap?.noDataFailures,
             };
           });
@@ -371,7 +469,11 @@ export function createWarmupManager(deps: WarmupDeps) {
             } finally {
               completed++;
               if (completed === group.length || completed % WARMUP_PROGRESS_LOG_EVERY === 0) {
-                logWarmupProgress(stats, "balancer_progress", { protocol: "balancer", completed, total: group.length });
+                logWarmupProgress(stats, "balancer_progress", logContext, {
+                  protocol: "balancer",
+                  completed,
+                  total: group.length,
+                });
               }
             }
           }, deps.enrichConcurrency);
@@ -392,7 +494,11 @@ export function createWarmupManager(deps: WarmupDeps) {
             } finally {
               completed++;
               if (completed === group.length || completed % WARMUP_PROGRESS_LOG_EVERY === 0) {
-                logWarmupProgress(stats, "curve_progress", { protocol: "curve", completed, total: group.length });
+                logWarmupProgress(stats, "curve_progress", logContext, {
+                  protocol: "curve",
+                  completed,
+                  total: group.length,
+                });
               }
             }
           }, deps.enrichConcurrency);
@@ -400,11 +506,11 @@ export function createWarmupManager(deps: WarmupDeps) {
       },
     ];
 
-    stats = createWarmupStats(pools, groups);
-    logWarmupProgress(stats, "rpc_fetch_started");
+    stats = createWarmupStats(supportedPools, groups);
+    logWarmupProgress(stats, "rpc_fetch_started", logContext);
     await Promise.all(groups.map((group) => {
-      const groupPools = pools.filter((pool) => group.protocols.has(pool.protocol));
-      return runWarmupGroup(groupPools, group, stats, persistBlock);
+      const groupPools = supportedPools.filter((pool) => group.protocols.has(pool.protocol));
+      return runWarmupGroup(groupPools, group, stats, persistBlock, logContext);
     }));
     return stats;
   }
@@ -508,6 +614,10 @@ export function createWarmupManager(deps: WarmupDeps) {
   async function warmupStateCache() {
     const activePools = deps.getRegistry()?.getActivePoolsMeta() ?? [];
     const needsState = activePools.filter((p: PoolRecord) => !deps.validatePoolState(deps.stateCache.get(p.pool_address.toLowerCase())).valid);
+    const supportedNeedsState = needsState.filter((pool: PoolRecord) => supportsWarmupProtocol(pool));
+    const unsupportedHubAdjacentPools = needsState.filter((pool: PoolRecord) =>
+      !supportsWarmupProtocol(pool) && poolTouchesAnyHub(pool, deps.polygonHubTokens)
+    );
 
     if (needsState.length === 0) {
       deps.log("State cache already warm — skipping warmup.", "info", {
@@ -517,15 +627,19 @@ export function createWarmupManager(deps: WarmupDeps) {
       return;
     }
 
-    const hubPairPools = needsState.filter((p: PoolRecord) => poolBothTokensAreHubs(p, deps.polygonHubTokens));
-    const oneHubPools = needsState.filter((p: PoolRecord) =>
+    const hubPairPools = supportedNeedsState.filter((p: PoolRecord) => poolBothTokensAreHubs(p, deps.polygonHubTokens));
+    const oneHubPools = supportedNeedsState.filter((p: PoolRecord) =>
       !poolBothTokensAreHubs(p, deps.polygonHubTokens) && poolTouchesAnyHub(p, deps.polygonHubTokens)
     );
     if (hubPairPools.length === 0 && oneHubPools.length === 0) {
       deps.log("State warmup: no hub-adjacent pools without state — watcher will populate the rest.", "info", {
         event: "warmup_skip",
-        reason: "no_hub_adjacent_pools_without_state",
+        reason: unsupportedHubAdjacentPools.length > 0
+          ? "no_supported_hub_adjacent_pools_without_state"
+          : "no_hub_adjacent_pools_without_state",
         needsState: needsState.length,
+        supportedNeedsState: supportedNeedsState.length,
+        unsupportedHubAdjacentPools: unsupportedHubAdjacentPools.length,
       });
       return;
     }
@@ -573,6 +687,8 @@ export function createWarmupManager(deps: WarmupDeps) {
     deps.log(`State warmup: fetching ${syncWarmupPools.length}/${targetedPools} hub-adjacent pools via RPC (sync)...`, "info", {
       event: "warmup_start",
       needsState: needsState.length,
+      supportedNeedsState: supportedNeedsState.length,
+      unsupportedHubAdjacentPools: unsupportedHubAdjacentPools.length,
       hubPairPools: hubPairPools.length,
       oneHubPools: oneHubPools.length,
       syncWarmupPools: syncWarmupPools.length,
@@ -599,6 +715,8 @@ export function createWarmupManager(deps: WarmupDeps) {
     }
     deps.log(`State warmup complete: ${valid}/${syncWarmupPools.length} sync hub-adjacent pools routable.`, "info", {
       event: "warmup_complete",
+      supportedNeedsState: supportedNeedsState.length,
+      unsupportedHubAdjacentPools: unsupportedHubAdjacentPools.length,
       hubPairPools: hubPairPools.length,
       oneHubPools: oneHubPools.length,
       syncWarmupPools: syncWarmupPools.length,

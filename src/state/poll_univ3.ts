@@ -20,6 +20,8 @@ import { normalizeV3State } from "./normalizer.ts";
 import { TimedPoller } from "./poller_base.ts";
 import { mergeStateIntoCache } from "./cache_utils.ts";
 import { V3_POLL_MAX_POOLS } from "../config/index.ts";
+import { parsePoolMetadata, parsePoolTokens } from "./pool_record.ts";
+import { metadataWithRegistryTokenDecimals } from "./pool_metadata.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
 
@@ -27,10 +29,12 @@ const V3_PROTOCOLS = new Set([
   "UNISWAP_V3",
   "QUICKSWAP_V3",
   "SUSHISWAP_V3",
+  "KYBERSWAP_ELASTIC",
 ]);
 
 function isAlgebraPool(pool: any) {
-  return pool?.protocol === "QUICKSWAP_V3" || pool?.metadata?.isAlgebra === true;
+  const metadata = parsePoolMetadata(pool?.metadata);
+  return pool?.protocol === "QUICKSWAP_V3" || pool?.protocol === "KYBERSWAP_ELASTIC" || metadata?.isAlgebra === true || metadata?.isKyberElastic === true;
 }
 
 // ─── Poller class ─────────────────────────────────────────────
@@ -75,7 +79,10 @@ export class PollUniv3 extends TimedPoller {
     const poolMeta = new Map();
     for (const pool of pools) {
       if (isAlgebraPool(pool)) {
-        poolMeta.set(pool.pool_address.toLowerCase(), { isAlgebra: true });
+        poolMeta.set(pool.pool_address.toLowerCase(), {
+          isAlgebra: true,
+          isKyberElastic: pool.protocol === "KYBERSWAP_ELASTIC" || parsePoolMetadata(pool.metadata).isKyberElastic === true,
+        });
       }
     }
 
@@ -94,13 +101,9 @@ export class PollUniv3 extends TimedPoller {
         continue;
       }
 
-      const normalized = normalizeV3State(
-        addr,
-        pool.protocol,
-        pool.tokens,
-        rawState,
-        pool.metadata
-      );
+      const tokens = parsePoolTokens(pool.tokens);
+      const metadata = metadataWithRegistryTokenDecimals(this._registry, pool, tokens);
+      const normalized = normalizeV3State(addr, pool.protocol, tokens, rawState, metadata);
 
       mergeStateIntoCache(this._cache, addr, normalized);
       updated++;

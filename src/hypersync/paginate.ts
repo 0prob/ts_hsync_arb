@@ -35,6 +35,24 @@ function resolvePaginationTarget(query: HyperSyncLogQuery, nextBlock: number, ar
   return nextBlock;
 }
 
+function isTerminalBoundedCursor(
+  query: HyperSyncLogQuery,
+  pageFromBlock: number,
+  nextBlock: number,
+  pageLogCount: number,
+) {
+  if (query.toBlock == null) return false;
+  const targetEnd = Number(query.toBlock);
+  if (!Number.isFinite(targetEnd)) return false;
+  if (nextBlock !== pageFromBlock) return false;
+  if (pageLogCount !== 0) return false;
+
+  // HyperSync can occasionally return a non-advancing cursor on the final
+  // empty block of an exclusive toBlock-bounded historical scan. Treat that
+  // as completion so discovery can checkpoint the boundary instead of failing.
+  return pageFromBlock + 1 >= targetEnd;
+}
+
 export async function fetchAllLogsWithClient<TLog>(
   hypersyncClient: { get: (query: HyperSyncLogQuery) => Promise<HyperSyncGetResponse<TLog>> },
   query: HyperSyncLogQuery,
@@ -92,6 +110,10 @@ export async function fetchAllLogsWithClient<TLog>(
       throw new Error(
         "HyperSync response did not include a finite nextBlock cursor; cannot paginate safely."
       );
+    }
+    if (isTerminalBoundedCursor(currentQuery, pageFromBlock, nextBlock, pageLogs.length)) {
+      lastNextBlock = Number(currentQuery.toBlock);
+      break;
     }
     if (archiveHeight == null && currentQuery.toBlock == null && nextBlock === pageFromBlock) {
       throw new Error(

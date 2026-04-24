@@ -21,6 +21,7 @@ import { readContractWithRetry, throttledMap } from "../enrichment/rpc.ts";
 import { normalizeCurveState } from "./normalizer.ts";
 import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { parsePoolTokens } from "./pool_record.ts";
+import { metadataWithTokenDecimals } from "./pool_metadata.ts";
 import { asBatchResult, TimedPoller } from "./poller_base.ts";
 
 // ─── Protocols covered ────────────────────────────────────────
@@ -91,16 +92,6 @@ const FEE_ABI = [
   },
 ];
 
-const N_COINS_ABI = [
-  {
-    name: "N_COINS",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-];
-
 // ─── Fetch helpers ────────────────────────────────────────────
 
 /**
@@ -164,18 +155,21 @@ export async function fetchCurvePoolState(poolAddress: string, nCoins: number) {
   };
 }
 
-export async function fetchAndNormalizeCurvePool(pool: any) {
+export { metadataWithTokenDecimals };
+
+export async function fetchAndNormalizeCurvePool(pool: any, options: { tokenDecimals?: Map<string, number> | null } = {}) {
   const addr = pool.pool_address.toLowerCase();
   const tokens = parsePoolTokens(pool.tokens);
   const nCoins = tokens.length || 2;
 
   const rawState = await fetchCurvePoolState(addr, nCoins);
+  const metadata = metadataWithTokenDecimals(pool, tokens, options.tokenDecimals);
   const normalized = normalizeCurveState(
     addr,
     pool.protocol,
     tokens,
     rawState,
-    pool.metadata
+    metadata
   );
 
   return { addr, normalized };
@@ -210,7 +204,9 @@ export class PollCurve extends TimedPoller {
       pools,
       async (pool: any) => {
         try {
-          const { addr, normalized } = await fetchAndNormalizeCurvePool(pool);
+          const tokens = parsePoolTokens(pool.tokens);
+          const tokenDecimals = this._registry.getTokenDecimals(tokens);
+          const { addr, normalized } = await fetchAndNormalizeCurvePool(pool, { tokenDecimals });
           return asBatchResult(addr, normalized);
         } catch (err: any) {
           const addr = pool.pool_address.toLowerCase();

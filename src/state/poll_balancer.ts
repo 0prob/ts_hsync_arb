@@ -12,6 +12,7 @@ import { readContractWithRetry, throttledMap } from "../enrichment/rpc.ts";
 import { normalizeBalancerState } from "./normalizer.ts";
 import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { parsePoolMetadata, parsePoolTokens } from "./pool_record.ts";
+import { metadataWithTokenDecimals } from "./pool_metadata.ts";
 import { asBatchResult, TimedPoller } from "./poller_base.ts";
 
 const BALANCER_PROTOCOLS = new Set([
@@ -133,7 +134,7 @@ export async function fetchBalancerPoolState(poolAddress: string, poolId: string
     throw new Error(`getPoolTokens failed: ${vaultResult.reason?.message}`);
   }
 
-  const [vaultTokens, vaultBalances] = vaultResult.value;
+  const [vaultTokens, vaultBalances, lastChangeBlock] = vaultResult.value;
   const balances = Array.from(vaultBalances).map((v) => BigInt(v as any));
 
   if (weightsResult.status === "rejected") {
@@ -160,11 +161,12 @@ export async function fetchBalancerPoolState(poolAddress: string, poolId: string
     balances,
     weights,
     swapFee,
+    lastChangeBlock: Number(lastChangeBlock),
     fetchedAt: Date.now(),
   };
 }
 
-export async function fetchAndNormalizeBalancerPool(pool: any) {
+export async function fetchAndNormalizeBalancerPool(pool: any, options: { tokenDecimals?: Map<string, number> | null } = {}) {
   const addr = pool.pool_address.toLowerCase();
   const meta = parsePoolMetadata(pool.metadata);
   const poolId = meta?.poolId || meta?.pool_id || null;
@@ -172,8 +174,9 @@ export async function fetchAndNormalizeBalancerPool(pool: any) {
   const rawState = await fetchBalancerPoolState(addr, poolId);
 
   const tokens = rawState.tokens.length >= 2 ? rawState.tokens : parsePoolTokens(pool.tokens);
+  const metadata = metadataWithTokenDecimals({ ...pool, metadata: meta }, tokens, options.tokenDecimals);
 
-  const normalized = normalizeBalancerState(addr, pool.protocol, tokens, rawState, meta);
+  const normalized = normalizeBalancerState(addr, pool.protocol, tokens, rawState, metadata);
 
   return { addr, normalized };
 }
@@ -205,7 +208,9 @@ export class PollBalancer extends TimedPoller {
       pools,
       async (pool: any) => {
         try {
-          const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool);
+          const tokens = parsePoolTokens(pool.tokens);
+          const tokenDecimals = this._registry.getTokenDecimals(tokens);
+          const { addr, normalized } = await fetchAndNormalizeBalancerPool(pool, { tokenDecimals });
           return asBatchResult(addr, normalized);
         } catch (err) {
           const addr = pool.pool_address.toLowerCase();

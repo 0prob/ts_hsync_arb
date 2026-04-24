@@ -87,13 +87,21 @@ const candidates = [
     totalGas: 100_000,
     logWeight: -0.03,
   }),
+  makeCandidate("0x6000000000000000000000000000000000000000", {
+    startToken: lowRateToken,
+    profit: 50_000n,
+    amountIn: 1_000_000n,
+    totalGas: 80_000,
+    logWeight: -0.02,
+  }),
 ];
 
 const optimizedIds: string[] = [];
 const assessedIds: string[] = [];
+const secondChanceId = candidates[5].id;
 
 const pipeline = await evaluateCandidatePipeline(candidates, {
-  shortlistLimit: 4,
+  shortlistLimit: 6,
   gasPriceWei,
   getTokenToMaticRate(tokenAddress) {
     if (tokenAddress === highRateToken) return 10n ** 12n;
@@ -103,6 +111,13 @@ const pipeline = await evaluateCandidatePipeline(candidates, {
     const candidate = candidates.find((entry) => entry.path === path);
     assert(candidate, "optimize callback should receive one of the shortlisted candidates");
     optimizedIds.push(candidate.id);
+    if (candidate.id === secondChanceId) {
+      return {
+        ...quickResult,
+        profit: 300_000n,
+        amountOut: quickResult.amountIn + 300_000n,
+      };
+    }
     return {
       ...quickResult,
       profit: quickResult.profit + 10_000n,
@@ -120,7 +135,7 @@ const pipeline = await evaluateCandidatePipeline(candidates, {
   },
 });
 
-assert.equal(pipeline.shortlisted.length, 4, "pipeline should respect shortlist limit");
+assert.equal(pipeline.shortlisted.length, 6, "pipeline should respect shortlist limit");
 assert(
   pipeline.shortlisted.some((entry) => entry.id === candidates[1].id),
   "pipeline shortlist should include the score-favored low-gas candidate",
@@ -133,6 +148,14 @@ assert.equal(
 assert(
   optimizedIds.length >= 3,
   "pipeline should optimize the front of the shortlist aggressively",
+);
+assert(
+  optimizedIds.includes(secondChanceId),
+  "pipeline should optimize a failed quick assessment once before rejecting the route",
+);
+assert(
+  pipeline.profitable.some((entry) => entry.id === secondChanceId),
+  "pipeline should keep a route that becomes executable only after second-chance optimization",
 );
 assert.equal(
   pipeline.profitable.length,
