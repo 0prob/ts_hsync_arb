@@ -47,6 +47,7 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
   } = options;
 
   let lastError;
+  const capabilityFailedUrls = new Set<string>();
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     // If every endpoint is currently rate-limited or cooling down, wait for
@@ -69,14 +70,29 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
     } catch (error) {
       lastError = error;
 
-      if (isRateLimitError(error) || isEndpointCapabilityError(error)) {
+      if (isEndpointCapabilityError(error)) {
+        capabilityFailedUrls.add(endpoint.url);
         rpcManager.markRateLimited(endpoint.url, error);
         if (attempt === 0 && onRateLimitMessage) {
-          const reason = isEndpointCapabilityError(error)
-            ? "unsupported for contract reads"
-            : "rate-limited";
           console.warn(
-            onRateLimitMessage(rpcShortUrl(endpoint.url), endpoint, attempt, reason)
+            onRateLimitMessage(rpcShortUrl(endpoint.url), endpoint, attempt, "unsupported for contract reads")
+          );
+        }
+        if (capabilityFailedUrls.size >= rpcManager.endpoints.length) {
+          throw new Error(
+            `RPC method unsupported by all configured endpoints (${capabilityFailedUrls.size}): ${
+              (error as { message?: string })?.message ?? String(error)
+            }`
+          );
+        }
+        continue;
+      }
+
+      if (isRateLimitError(error)) {
+        rpcManager.markRateLimited(endpoint.url, error);
+        if (attempt === 0 && onRateLimitMessage) {
+          console.warn(
+            onRateLimitMessage(rpcShortUrl(endpoint.url), endpoint, attempt, "rate-limited")
           );
         }
         continue;

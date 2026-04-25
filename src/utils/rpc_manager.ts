@@ -18,17 +18,53 @@ import { logger } from "./logger.ts";
 import { FREE_RPC_URLS } from "../config/index.ts";
 
 // ─── Metrics ───────────────────────────────────────────────────
-// Imported lazily to avoid circular dependency (metrics → logger → nothing)
-import type { Counter } from "prom-client";
-let _rpcSwitches: Counter | null = null;
+// Imported lazily to avoid circular dependency (metrics → logger → metrics).
+type RpcMetricHandles = {
+  rpcErrors?: any;
+  rpcSwitches?: any;
+  rpcLatencyMs?: any;
+};
+
+let _rpcMetrics: RpcMetricHandles | null = null;
+let _rpcMetricsPromise: Promise<RpcMetricHandles | null> | null = null;
+
 async function lazyMetrics() {
-  if (_rpcSwitches) return;
-  try {
-    const m = await import("./metrics.ts");
-    _rpcSwitches = m.rpcSwitches ?? null;
-  } catch {
-    // metrics module may not expose these gauges yet; safe to skip
-  }
+  if (_rpcMetrics) return _rpcMetrics;
+  if (_rpcMetricsPromise) return _rpcMetricsPromise;
+
+  _rpcMetricsPromise = import("./metrics.ts")
+    .then((m) => {
+      _rpcMetrics = {
+        rpcErrors: m.rpcErrors,
+        rpcSwitches: m.rpcSwitches,
+        rpcLatencyMs: m.rpcLatencyMs,
+      };
+      return _rpcMetrics;
+    })
+    .catch(() => null)
+    .finally(() => {
+      _rpcMetricsPromise = null;
+    });
+
+  return _rpcMetricsPromise;
+}
+
+function recordRpcSwitch(reason: string) {
+  void lazyMetrics().then((metrics) => {
+    metrics?.rpcSwitches?.labels(reason).inc();
+  });
+}
+
+function recordRpcError(method: string) {
+  void lazyMetrics().then((metrics) => {
+    metrics?.rpcErrors?.labels(method).inc();
+  });
+}
+
+function observeRpcLatency(endpoint: string, latencyMs: number) {
+  void lazyMetrics().then((metrics) => {
+    metrics?.rpcLatencyMs?.labels(endpoint).observe(latencyMs);
+  });
 }
 
 // ─── RpcEndpoint ───────────────────────────────────────────────
@@ -103,7 +139,8 @@ class RpcEndpoint {
     if (!methodUnavailable) {
       this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
     }
-    lazyMetrics();
+    recordRpcSwitch(methodUnavailable ? "unsupported_method" : "rate_limited");
+    recordRpcError("unknown");
   }
 
   /**
@@ -126,6 +163,8 @@ class RpcEndpoint {
       ERROR_COOLDOWN_MAX_MS
     );
     this.errorCooldownUntil = Date.now() + cooldownMs;
+    recordRpcSwitch("error");
+    recordRpcError("unknown");
   }
 
   /**
@@ -143,6 +182,7 @@ class RpcEndpoint {
       ]);
       void raceResult; // discard value; we only care about latency
       this.latencyMs = Date.now() - start;
+      observeRpcLatency(rpcManagerShortUrl(this.url), this.latencyMs);
       // A cheap block-number probe should not erase an active contract-read
       // cooldown window; let a real successful request restore trust instead.
       if (!this.isRateLimited() && !this.isCoolingDown()) {
