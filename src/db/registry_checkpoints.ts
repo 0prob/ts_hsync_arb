@@ -96,16 +96,23 @@ export function rollbackToBlock(db: import('./sqlite.ts').CompatDatabase, block:
      WHERE status = 'removed'
        AND removed_block >= ?`
   );
+  const deleteLiquidityEvents = checkpointStmt(
+    db,
+    "rollbackDeleteLiquidityEvents",
+    `DELETE FROM liquidity_events WHERE block_number >= ?`
+  );
 
   return db.transaction(() => {
     const stateResult = deleteState.run(block);
     const poolResult = deletePools.run(block);
     const reactivatedResult = reactivateRemovedPools.run(block);
+    const liquidityEventResult = deleteLiquidityEvents.run(block);
     resetCheckpoints.run(block - 1, block - 1);
     return {
       poolsRemoved: poolResult.changes,
       statesRemoved: stateResult.changes,
       poolsReactivated: reactivatedResult.changes,
+      liquidityEventsRemoved: liquidityEventResult.changes,
     };
   })();
 }

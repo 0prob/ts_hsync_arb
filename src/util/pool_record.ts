@@ -1,8 +1,21 @@
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const EVM_ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 
 const tokenCache = new WeakMap<object, string[]>();
 const metadataCache = new WeakMap<object, Record<string, any>>();
 const MAX_JSON_UNWRAP_DEPTH = 3;
+
+export function normalizeEvmAddress(value: unknown, options: { allowZero?: boolean } = {}): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (!EVM_ADDRESS_RE.test(normalized)) return null;
+  if (!options.allowZero && normalized === ZERO_ADDRESS) return null;
+  return normalized;
+}
+
+export function isEvmAddress(value: unknown, options: { allowZero?: boolean } = {}) {
+  return normalizeEvmAddress(value, options) != null;
+}
 
 export function parsePoolTokensValue(value: unknown): string[] {
   try {
@@ -11,9 +24,9 @@ export function parsePoolTokensValue(value: unknown): string[] {
       parsed = JSON.parse(parsed || "[]");
     }
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((token) =>
-      typeof token === "string" ? token.toLowerCase() : String(token).toLowerCase()
-    );
+    return parsed
+      .map((token) => normalizeEvmAddress(token))
+      .filter((token): token is string => token != null);
   } catch {
     return [];
   }

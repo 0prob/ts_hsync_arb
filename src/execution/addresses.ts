@@ -6,6 +6,14 @@
  * determine router targets and approval targets.
  */
 
+export {
+  BALANCER_PROTOCOLS,
+  CURVE_CRYPTO_PROTOCOLS,
+  CURVE_STABLE_PROTOCOLS,
+  V2_PROTOCOLS as DIRECT_SWAP_PROTOCOLS,
+  V3_PROTOCOLS as V3_SWAP_PROTOCOLS,
+} from "../protocols/classification.ts";
+
 // ─── Flash Loan Providers ─────────────────────────────────────
 
 /** Balancer V2 Vault — flash loan source (fee = 0) AND swap router */
@@ -73,56 +81,3 @@ export const PROTOCOL_ROUTERS = {
  * Currently empty as V3 is now supported directly via callback.
  */
 export const ROUTER_REQUIRED_PROTOCOLS = new Set([]);
-
-/**
- * Protocols that support direct V2 pair swap (transfer-first pattern).
- */
-export const DIRECT_SWAP_PROTOCOLS = new Set([
-  "QUICKSWAP_V2",
-  "SUSHISWAP_V2",
-  "UNISWAP_V2",
-  "DFYN_V2",
-  "COMETHSWAP_V2",
-]);
-
-/**
- * Protocols that support direct V3 pool swap (callback-based payment).
- */
-export const V3_SWAP_PROTOCOLS = new Set([
-  "UNISWAP_V3",
-  "QUICKSWAP_V3",
-  "SUSHISWAP_V3",
-]);
-
-/**
- * Curve stable pool protocols — use int128 coin indices in exchange().
- * Main registry pools, factory stable pools, 3pool forks.
- */
-export const CURVE_STABLE_PROTOCOLS = new Set([
-  "CURVE_STABLE",
-  "CURVE_MAIN",
-  "CURVE_MAIN_REGISTRY",
-  "CURVE_FACTORY_STABLE",
-  "CURVE_STABLE_FACTORY",
-  "CURVE_STABLESWAP_NG",
-]);
-
-/**
- * Curve crypto pool protocols — use uint256 coin indices in exchange().
- * Tricrypto, factory crypto pools (USDC/ETH/BTC and similar).
- */
-export const CURVE_CRYPTO_PROTOCOLS = new Set([
-  "CURVE_CRYPTO",
-  "CURVE_FACTORY_CRYPTO",
-  "CURVE_CRYPTO_FACTORY",
-  "CURVE_TRICRYPTO_NG",
-]);
-
-/**
- * Balancer V2 pool protocols — use Vault.swap() for execution.
- */
-export const BALANCER_PROTOCOLS = new Set([
-  "BALANCER_WEIGHTED",
-  "BALANCER_STABLE",
-  "BALANCER_V2",
-]);

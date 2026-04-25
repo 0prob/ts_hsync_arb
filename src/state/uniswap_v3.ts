@@ -23,6 +23,7 @@ import {
   throttledMap,
 } from "../enrichment/rpc.ts";
 import { ENRICH_CONCURRENCY } from "../config/index.ts";
+import { isEndpointCapabilityError } from "../utils/rpc_manager.ts";
 
 // ─── ABI fragments ───────────────────────────────────────────
 
@@ -363,9 +364,10 @@ async function fetchTickBitmapWordRange(
           contracts,
           allowFailure: true,
         });
-      } catch {
-        // Fall back to per-word reads for this chunk if multicall is unavailable
-        // or rejected by the current endpoint.
+      } catch (error) {
+        // Fall back only when multicall is unsupported. Retrying a rate-limit or
+        // transport failure as per-word reads multiplies RPC load during warmup.
+        if (!shouldFallbackToIndividualV3Reads(error)) throw error;
         results = await Promise.all(
           wordChunk.map(async (wordPos) => {
             try {
@@ -444,8 +446,9 @@ export async function fetchTickData(
           contracts,
           allowFailure: true,
         });
-      } catch {
-        // Preserve existing behavior if multicall cannot be used on this endpoint.
+      } catch (error) {
+        // Preserve existing behavior only if multicall cannot be used.
+        if (!shouldFallbackToIndividualV3Reads(error)) throw error;
         results = await Promise.all(
           tickChunk.map(async (tick) => {
             try {
@@ -480,6 +483,10 @@ export async function fetchTickData(
   );
 
   return tickMap;
+}
+
+function shouldFallbackToIndividualV3Reads(error: unknown): boolean {
+  return isEndpointCapabilityError(error);
 }
 
 /**

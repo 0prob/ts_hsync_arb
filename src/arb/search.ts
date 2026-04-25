@@ -14,6 +14,7 @@ type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
 type FeeSnapshot = {
   maxFee?: bigint;
+  effectiveGasPriceWei?: bigint;
   updatedAt?: number;
 } | null;
 type RawRouteResult = Record<string, bigint | string | boolean | string[] | bigint[] | number | undefined>;
@@ -21,6 +22,16 @@ type CandidatePipelineResult = {
   shortlisted: CandidateEntry[];
   optimizedCandidates: number;
   profitable: ExecutableCandidate[];
+  assessmentSummary?: {
+    shortlisted: number;
+    assessed: number;
+    missingTokenRates: number;
+    optimizedCandidates: number;
+    secondChanceOptimized: number;
+    profitable: number;
+    rejected: number;
+    rejectReasons: Record<string, number>;
+  };
 };
 
 function toBigIntInput(value: RawRouteResult[string]) {
@@ -236,12 +247,13 @@ export function createArbSearcher(deps: SearchDeps) {
       });
       return [];
     }
-    const gasPriceWei = feeSnapshot.maxFee;
+    const gasPriceWei = feeSnapshot.effectiveGasPriceWei ?? feeSnapshot.maxFee;
 
     const {
       shortlisted: topCandidates,
       optimizedCandidates,
       profitable,
+      assessmentSummary,
     } = await deps.evaluateCandidatePipeline(candidates, {
       shortlistLimit: deps.maxPathsToOptimize,
       gasPriceWei,
@@ -304,6 +316,7 @@ export function createArbSearcher(deps: SearchDeps) {
       optimizedCandidates,
       skippedOptimization: topCandidates.length - optimizedCandidates,
       profitableRoutes: eligibleProfitable.length,
+      assessmentSummary,
     });
 
     eligibleProfitable.sort(compareAssessmentProfit);

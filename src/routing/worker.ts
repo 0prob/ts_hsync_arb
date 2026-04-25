@@ -8,6 +8,8 @@
 
 import { parentPort, workerData } from "worker_threads";
 import { evaluatePaths } from "./simulator.ts";
+import { rehydrateStateData } from "../db/registry_codec.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 
 if (!parentPort) {
   throw new Error("worker.ts must run in a Worker thread");
@@ -15,8 +17,14 @@ if (!parentPort) {
 
 try {
   const { paths, stateObj, testAmount, options } = workerData || {};
-  const stateCache =
-    stateObj instanceof Map ? stateObj : new Map(Object.entries(stateObj || {}));
+  const incoming = stateObj instanceof Map ? stateObj : new Map(Object.entries(stateObj || {}));
+  const stateCache = new Map();
+  for (const [poolAddress, state] of incoming) {
+    const normalizedPool = normalizeEvmAddress(poolAddress);
+    if (!normalizedPool) continue;
+    rehydrateStateData(state.protocol, state);
+    stateCache.set(normalizedPool, state);
+  }
 
   const profitable = evaluatePaths(
     paths || [],

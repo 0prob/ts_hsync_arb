@@ -3,15 +3,18 @@
  * src/db/registry_assets.js — Token metadata and pool fee helpers
  */
 
+import { normalizeEvmAddress } from "../util/pool_record.ts";
+
 function assetStmt(db: any, key: any, sql: any) {
   return db.statement(key, sql);
 }
 
 function normalizeTokenAddress(address: any) {
-  if (typeof address !== "string") return null;
-  const trimmed = address.trim();
-  if (!trimmed) return null;
-  return trimmed.toLowerCase();
+  return normalizeEvmAddress(address);
+}
+
+function normalizePoolAddress(address: any) {
+  return normalizeEvmAddress(address);
 }
 
 function normalizeTokenText(value: any) {
@@ -85,17 +88,28 @@ export function getTokenDecimals(db: any, addresses: any) {
 }
 
 export function batchUpsertTokenMeta(db: any, tokens: any, upsertTokenMetaImpl = upsertTokenMeta) {
-  if (!Array.isArray(tokens) || tokens.length === 0) return;
+  if (!Array.isArray(tokens) || tokens.length === 0) return { upserted: 0, skipped: 0, tokens: [] };
 
   const merged = new Map();
+  let skipped = 0;
   for (const token of tokens) {
     const normalizedAddress = normalizeTokenAddress(token?.address);
-    if (!normalizedAddress) continue;
+    if (!normalizedAddress) {
+      skipped++;
+      continue;
+    }
 
     const prior = merged.get(normalizedAddress);
+    let decimals: number;
+    try {
+      decimals = normalizeTokenDecimals(token?.decimals);
+    } catch {
+      skipped++;
+      continue;
+    }
     const next = {
       address: normalizedAddress,
-      decimals: normalizeTokenDecimals(token?.decimals),
+      decimals,
       symbol: normalizeTokenText(token?.symbol),
       name: normalizeTokenText(token?.name),
     };
@@ -108,16 +122,27 @@ export function batchUpsertTokenMeta(db: any, tokens: any, upsertTokenMetaImpl =
     });
   }
 
-  if (merged.size === 0) return;
+  if (merged.size === 0) return { upserted: 0, skipped, tokens: [] };
 
-  db.transaction((list: any) => {
+  const persisted = [...merged.values()];
+  const upserted = db.transaction((list: any) => {
+    let changes = 0;
     for (const t of list) {
       upsertTokenMetaImpl(db, t.address, t.decimals, t.symbol, t.name);
+      changes++;
     }
-  })([...merged.values()]);
+    return changes;
+  })(persisted);
+
+  return { upserted, skipped, tokens: persisted };
 }
 
 export function upsertPoolFee(db: any, poolAddress: any, feeBps: any, feeRaw = null, protocol = null) {
+  const normalizedAddress = normalizePoolAddress(poolAddress);
+  if (!normalizedAddress) {
+    throw new Error("Pool address is required");
+  }
+
   assetStmt(
     db,
     "upsertPoolFee",
@@ -129,14 +154,17 @@ export function upsertPoolFee(db: any, poolAddress: any, feeBps: any, feeRaw = n
          protocol   = COALESCE(excluded.protocol, pool_fees.protocol),
          updated_at = excluded.updated_at`
   )
-    .run(poolAddress.toLowerCase(), feeBps, feeRaw, protocol);
+    .run(normalizedAddress, feeBps, feeRaw, protocol);
 }
 
 export function getPoolFee(db: any, poolAddress: any) {
+  const normalizedAddress = normalizePoolAddress(poolAddress);
+  if (!normalizedAddress) return null;
+
   const row = assetStmt(
     db,
     "getPoolFee",
     `SELECT fee_bps, fee_raw FROM pool_fees WHERE address = ?`
-  ).get(poolAddress.toLowerCase());
+  ).get(normalizedAddress);
   return row ? { feeBps: row.fee_bps, feeRaw: row.fee_raw } : null;
 }

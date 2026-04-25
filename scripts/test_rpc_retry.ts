@@ -65,6 +65,36 @@ async function testCapabilityFailureFailsAfterEachEndpointOnce() {
   });
 }
 
+async function testWaitsForCooldownBeforeRetrying() {
+  await withFakeEndpoints(async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      const waitUntil = Date.now() + 80;
+      for (const endpoint of rpcManager.endpoints) {
+        endpoint.errorCooldownUntil = waitUntil;
+      }
+
+      const attempted: string[] = [];
+      const startedAt = Date.now();
+      const result = await executeWithRpcRetry((_client: any, endpoint: any) => {
+        attempted.push(endpoint.url);
+        return "ok";
+      }, { retries: 0 });
+
+      assert.equal(result, "ok");
+      assert.equal(attempted.length, 1);
+      assert.ok(
+        Date.now() - startedAt >= 75,
+        "RPC retry should wait for endpoint cooldown before issuing the call",
+      );
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+}
+
 await testCapabilityFailureFailsAfterEachEndpointOnce();
+await testWaitsForCooldownBeforeRetrying();
 
 console.log("test_rpc_retry: ok");

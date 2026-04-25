@@ -1,10 +1,7 @@
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 
 export function normalizeTokenHydrationAddress(address: any) {
-  if (typeof address !== "string") return null;
-  const trimmed = address.trim().toLowerCase();
-  if (!trimmed || trimmed === ZERO_ADDRESS) return null;
-  return trimmed;
+  return normalizeEvmAddress(address);
 }
 
 export function normalizeHydrationAddresses(tokenAddresses: any) {

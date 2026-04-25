@@ -29,6 +29,38 @@ export const executionClient = createPublicClient({
 
 const gasEstimateCache = new Map<string, bigint>();
 const GAS_ORACLE_MAX_AGE_MS = 15_000;
+const GAS_MULTIPLIER_SCALE = 10_000n;
+
+type FeeSnapshot = {
+  baseFee: bigint;
+  priorityFee: bigint;
+  maxFee: bigint;
+  updatedAt?: number;
+};
+
+function maxBigInt(a: bigint, b: bigint) {
+  return a > b ? a : b;
+}
+
+export function effectiveGasPriceWei(fees: FeeSnapshot) {
+  const effective = fees.baseFee + fees.priorityFee;
+  return effective > fees.maxFee ? fees.maxFee : effective;
+}
+
+function bufferedGasLimit(gasEstimate: bigint, gasMultiplier: number) {
+  if (!Number.isFinite(gasMultiplier) || gasMultiplier <= 0) {
+    throw new Error("gasMultiplier must be a finite positive number");
+  }
+  if (gasEstimate < 0n) {
+    throw new Error("gasEstimate must be non-negative");
+  }
+  const multiplierBpsNumber = Math.ceil(gasMultiplier * Number(GAS_MULTIPLIER_SCALE));
+  if (!Number.isSafeInteger(multiplierBpsNumber)) {
+    throw new Error("gasMultiplier is too large");
+  }
+  const multiplierBps = BigInt(multiplierBpsNumber);
+  return (gasEstimate * multiplierBps + GAS_MULTIPLIER_SCALE - 1n) / GAS_MULTIPLIER_SCALE;
+}
 
 // ─── Gas Oracle ───────────────────────────────────────────────
 
@@ -145,11 +177,15 @@ class GasOracle {
    * Get the latest cached fee data.
    */
   getFees() {
-    return {
+    const snapshot = {
       baseFee: this.baseFee,
       priorityFee: this.priorityFee,
       maxFee: this.maxFee,
       updatedAt: this.updatedAt,
+    };
+    return {
+      ...snapshot,
+      effectiveGasPriceWei: effectiveGasPriceWei(snapshot),
     };
   }
 
@@ -305,6 +341,9 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
       gasEstimateCache.set(gasEstimateCacheKey, gasEstimate as bigint);
     }
   }
+  if (gasEstimate == null) {
+    throw new Error("gas estimate unavailable");
+  }
   const fees = requireFreshFees
     ? await ensureFreshGasOracle({
         maxAgeMs: gasOracleMaxAgeMs,
@@ -312,22 +351,45 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
       })
     : oracle.getFees();
 
-  const maxFeePerGas = maxFeeOverride ?? fees.maxFee;
-  const maxPriorityFeePerGas = priorityFeeOverride ?? fees.priorityFee;
+  const baseFee = fees.baseFee;
+  let maxPriorityFeePerGas = priorityFeeOverride ?? fees.priorityFee;
+  let maxFeePerGas = maxFeeOverride ?? fees.maxFee;
 
-  const gasLimit = BigInt(Math.ceil(Number(gasEstimate) * gasMultiplier));
-  const estimatedCostWei = gasLimit * maxFeePerGas;
+  if (maxFeeOverride != null && maxFeePerGas < baseFee) {
+    throw new Error("maxFeePerGas is below current baseFee");
+  }
+  if (priorityFeeOverride != null && maxFeeOverride == null) {
+    maxFeePerGas = maxBigInt(maxFeePerGas, baseFee * 2n + maxPriorityFeePerGas);
+  }
+  if (maxPriorityFeePerGas > maxFeePerGas) {
+    if (priorityFeeOverride != null && maxFeeOverride != null) {
+      throw new Error("maxPriorityFeePerGas cannot exceed maxFeePerGas");
+    }
+    maxPriorityFeePerGas = maxFeePerGas;
+  }
+
+  const gasLimit = bufferedGasLimit(gasEstimate, gasMultiplier);
+  const effectiveGasPrice = effectiveGasPriceWei({
+    baseFee,
+    priorityFee: maxPriorityFeePerGas,
+    maxFee: maxFeePerGas,
+  });
+  const estimatedCostWei = gasLimit * effectiveGasPrice;
+  const maxCostWei = gasLimit * maxFeePerGas;
 
   return {
     maxFeePerGas,
     maxPriorityFeePerGas,
     gasLimit,
+    effectiveGasPriceWei: effectiveGasPrice,
     estimatedCostWei,
+    maxCostWei,
   };
 }
 
 export async function quickGasCheck(estimatedGasUnits = 400_000) {
   const fees = await ensureFreshGasOracle();
-  const estimatedCostWei = fees.maxFee * BigInt(estimatedGasUnits);
-  return { gasPrice: fees.maxFee, estimatedCostWei };
+  const gasPrice = effectiveGasPriceWei(fees);
+  const estimatedCostWei = gasPrice * BigInt(estimatedGasUnits);
+  return { gasPrice, estimatedCostWei, maxCostWei: fees.maxFee * BigInt(estimatedGasUnits) };
 }

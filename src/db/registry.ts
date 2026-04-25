@@ -17,6 +17,7 @@
 
 import fs from "fs";
 import path from "path";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 import { CompatDatabase } from "./sqlite.ts";
 import { RegistryMetaCache } from "./registry_meta_cache.ts";
 import {
@@ -83,6 +84,7 @@ export class RegistryService {
       fs.mkdirSync(dbDir, { recursive: true });
     }
     this.db = new CompatDatabase(dbPath);
+    this.db.pragma("foreign_keys = ON");
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this._initSchema();
@@ -227,9 +229,7 @@ export class RegistryService {
   }
 
   _normalizeTokenAddress(address: string | null | undefined) {
-    if (typeof address !== "string") return null;
-    const trimmed = address.trim().toLowerCase();
-    return trimmed || null;
+    return normalizeEvmAddress(address);
   }
 
   _normalizeTokenText(value: string | null | undefined) {
@@ -239,9 +239,7 @@ export class RegistryService {
   }
 
   _normalizePoolAddress(address: string | null | undefined) {
-    if (typeof address !== "string") return null;
-    const trimmed = address.trim().toLowerCase();
-    return trimmed || null;
+    return normalizeEvmAddress(address);
   }
 
   _cacheTokenMetaEntry(meta: {
@@ -443,7 +441,7 @@ export class RegistryService {
   // ─── Batch Operations ────────────────────────────────────────
 
   batchUpsertPools(poolList: Record<string, unknown>[]) {
-    batchUpsertPoolsRecord(
+    return batchUpsertPoolsRecord(
       this.db,
       this._stmtFn,
       this._invalidatePoolMetaCacheFn,
@@ -457,7 +455,7 @@ export class RegistryService {
    * @param {Array<{ pool_address: string, block: number, data: Object }>} stateList
    */
   batchUpdateStates(stateList: Record<string, unknown>[]) {
-    batchUpdateStatesRecord(this.db, this._stmtFn, stateList);
+    return batchUpdateStatesRecord(this.db, this._stmtFn, stateList);
   }
 
   /**
@@ -582,8 +580,8 @@ export class RegistryService {
    * @param {Array<{ address: string, decimals: number, symbol?: string, name?: string }>} tokens
    */
   batchUpsertTokenMeta(tokens: Array<{ address: string; decimals: number; symbol?: string; name?: string }>) {
-    batchUpsertTokenMetaRecords(this.db, tokens);
-    for (const token of tokens) {
+    const result = batchUpsertTokenMetaRecords(this.db, tokens);
+    for (const token of result?.tokens ?? []) {
       this._refreshTokenMetaCacheAfterWrite(
         token?.address,
         token?.decimals,
@@ -591,6 +589,7 @@ export class RegistryService {
         token?.name ?? null,
       );
     }
+    return result;
   }
 
   // ─── Fee Tiers ────────────────────────────────────────────────

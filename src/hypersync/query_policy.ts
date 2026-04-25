@@ -62,6 +62,15 @@ type HyperSyncLogQueryOptions = {
   blockFields?: unknown[];
 };
 
+function fieldKey(field: unknown) {
+  return String(field);
+}
+
+function fieldLabel(field: unknown) {
+  const label = fieldKey(field).trim();
+  return label.length > 0 ? label : "<blank>";
+}
+
 function normalizeQueryBlock(name: string, value: number | undefined) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric < 0) {
@@ -108,6 +117,38 @@ function normalizeLogFilter(filter: HyperSyncLogFilter, index: number): HyperSyn
   };
 }
 
+function normalizeFieldSelection(
+  name: string,
+  fields: unknown[],
+  requiredFields: unknown[] = [],
+) {
+  const seen = new Set<string>();
+  const normalized: unknown[] = [];
+  for (const field of Array.isArray(fields) ? fields : []) {
+    const value = typeof field === "string" ? field.trim() : field;
+    if (value == null) continue;
+    if (typeof value === "string" && value.length === 0) continue;
+
+    const key = fieldKey(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(value);
+  }
+
+  if (normalized.length === 0) {
+    throw new Error(`HyperSync query must request at least one ${name} field.`);
+  }
+
+  const missing = requiredFields.filter((field) => !seen.has(fieldKey(field)));
+  if (missing.length > 0) {
+    throw new Error(
+      `HyperSync query ${name} fields must include ${missing.map(fieldLabel).join(", ")}.`,
+    );
+  }
+
+  return normalized;
+}
+
 export function buildHyperSyncLogQuery(options: HyperSyncLogQueryOptions): HyperSyncLogQuery {
   const {
     fromBlock,
@@ -130,14 +171,8 @@ export function buildHyperSyncLogQuery(options: HyperSyncLogQueryOptions): Hyper
     throw new Error("HyperSync query must include at least one log filter.");
   }
   const normalizedLogs = logs.map((filter, index) => normalizeLogFilter(filter, index));
-  const normalizedLogFields = Array.isArray(logFields) ? [...logFields] : [];
-  const normalizedBlockFields = Array.isArray(blockFields) ? [...blockFields] : [];
-  if (normalizedLogFields.length === 0) {
-    throw new Error("HyperSync query must request at least one log field.");
-  }
-  if (normalizedBlockFields.length === 0) {
-    throw new Error("HyperSync query must request at least one block field.");
-  }
+  const normalizedLogFields = normalizeFieldSelection("log", logFields, [LogField.BlockNumber]);
+  const normalizedBlockFields = normalizeFieldSelection("block", blockFields, [BlockField.Number]);
   const normalizedMaxNumLogs = normalizePositiveQueryLimit("maxNumLogs", maxNumLogs);
   const normalizedMaxNumBlocks =
     maxNumBlocks != null ? normalizePositiveQueryLimit("maxNumBlocks", maxNumBlocks) : undefined;

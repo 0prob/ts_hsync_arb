@@ -40,42 +40,13 @@
 
 import { defaultRates } from "../math/curve.ts";
 import { MIN_TICK, MAX_TICK } from "../math/tick_math.ts";
-
-// ─── Protocol classification ──────────────────────────────────
-
-const V2_PROTOCOLS = new Set([
-  "QUICKSWAP_V2",
-  "SUSHISWAP_V2",
-  "UNISWAP_V2",
-  "DFYN_V2",
-  "COMETHSWAP_V2",
-]);
-
-const V3_PROTOCOLS = new Set([
-  "UNISWAP_V3",
-  "QUICKSWAP_V3",
-  "SUSHISWAP_V3",
-  "KYBERSWAP_ELASTIC",
-]);
-
-const CURVE_PROTOCOLS = new Set([
-  "CURVE_STABLE",
-  "CURVE_CRYPTO",
-  "CURVE_MAIN",
-  "CURVE_MAIN_REGISTRY",
-  "CURVE_FACTORY_STABLE",
-  "CURVE_FACTORY_CRYPTO",
-  "CURVE_CRYPTO_FACTORY",
-  "CURVE_STABLE_FACTORY",
-  "CURVE_STABLESWAP_NG",
-  "CURVE_TRICRYPTO_NG",
-]);
-
-const BALANCER_PROTOCOLS = new Set([
-  "BALANCER_WEIGHTED",
-  "BALANCER_STABLE",
-  "BALANCER_V2",
-]);
+import {
+  BALANCER_PROTOCOLS,
+  CURVE_PROTOCOLS,
+  normalizeProtocolKey,
+  V2_PROTOCOLS,
+  V3_PROTOCOLS,
+} from "../protocols/classification.ts";
 
 const ONE = 10n ** 18n;
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -124,6 +95,18 @@ export function resolveV2FeeNumerator(meta: any = {}, fallback: bigint = DEFAULT
   try {
     const fee = BigInt(rawFee);
     return fee > 0n && fee < DEFAULT_V2_FEE_DENOMINATOR ? fee : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function resolveV3Fee(meta: any = {}, fallback: bigint = 3000n) {
+  const rawFee = meta?.fee;
+  if (rawFee == null) return fallback;
+
+  try {
+    const fee = BigInt(rawFee);
+    return fee >= 0n ? fee : fallback;
   } catch {
     return fallback;
   }
@@ -179,7 +162,7 @@ export function normalizeV3State(poolAddress: any, protocol: any, tokens: any, r
   const normalizedTokens = Array.isArray(tokens) ? tokens.map((t: any) => String(t).toLowerCase()) : [];
   const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
   const isAlgebra = rawState.isAlgebra === true || meta?.isAlgebra === true || protocol === "QUICKSWAP_V3";
-  const fee = BigInt(rawState.fee || meta?.fee || 3000);
+  const fee = rawState.fee != null ? BigInt(rawState.fee) : resolveV3Fee(meta);
   return {
     poolId: poolAddress.toLowerCase(),
     protocol,
@@ -309,16 +292,17 @@ export function normalizePoolState(poolAddress: any, protocol: any, tokens: any,
   if (!rawState) return null;
 
   const addr = poolAddress.toLowerCase();
+  const protocolKey = normalizeProtocolKey(protocol);
   let normalized = null;
 
-  if (V2_PROTOCOLS.has(protocol)) {
-    normalized = normalizeV2State(addr, protocol, tokens, rawState, meta);
-  } else if (V3_PROTOCOLS.has(protocol)) {
-    normalized = normalizeV3State(addr, protocol, tokens, rawState, meta);
-  } else if (CURVE_PROTOCOLS.has(protocol)) {
-    normalized = normalizeCurveState(addr, protocol, tokens, rawState, meta);
-  } else if (BALANCER_PROTOCOLS.has(protocol)) {
-    normalized = normalizeBalancerState(addr, protocol, tokens, rawState, meta);
+  if (V2_PROTOCOLS.has(protocolKey)) {
+    normalized = normalizeV2State(addr, protocolKey, tokens, rawState, meta);
+  } else if (V3_PROTOCOLS.has(protocolKey)) {
+    normalized = normalizeV3State(addr, protocolKey, tokens, rawState, meta);
+  } else if (CURVE_PROTOCOLS.has(protocolKey)) {
+    normalized = normalizeCurveState(addr, protocolKey, tokens, rawState, meta);
+  } else if (BALANCER_PROTOCOLS.has(protocolKey)) {
+    normalized = normalizeBalancerState(addr, protocolKey, tokens, rawState, meta);
   } else {
     console.warn(`[normalizer] Unknown protocol: ${protocol} for pool ${addr}`);
     return null;
@@ -326,7 +310,7 @@ export function normalizePoolState(poolAddress: any, protocol: any, tokens: any,
 
   const verdict = validatePoolState(normalized);
   if (!verdict.valid) {
-    console.warn(`[normalizer] Rejecting invalid ${protocol} state for pool ${addr}: ${verdict.reason}`);
+    console.warn(`[normalizer] Rejecting invalid ${protocolKey} state for pool ${addr}: ${verdict.reason}`);
     return null;
   }
 

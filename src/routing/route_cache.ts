@@ -21,14 +21,28 @@
  */
 
 import { routeKeyFromEdges } from "./finder.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 
 type CachedEdge = { poolAddress: string };
 type CachedPath = { startToken: string; edges: CachedEdge[] };
 type CachedResult = { profit: bigint | string };
 type CachedEntry = { path: CachedPath; result: CachedResult; profit: bigint };
 
-function normalisePoolAddress(poolAddress: string) {
-  return poolAddress.toLowerCase();
+function normalisePoolAddress(poolAddress: unknown) {
+  return normalizeEvmAddress(poolAddress);
+}
+
+function hasValidPoolEdges(path: CachedPath | null | undefined) {
+  return Array.isArray(path?.edges) && path.edges.every((edge) => normalisePoolAddress(edge?.poolAddress) != null);
+}
+
+function profitFromResult(result: CachedResult | null | undefined) {
+  try {
+    if (result?.profit == null) return null;
+    return typeof result.profit === "bigint" ? result.profit : BigInt(result.profit);
+  } catch {
+    return null;
+  }
 }
 
 export class RouteCache {
@@ -57,11 +71,14 @@ export class RouteCache {
     if (!profitable || profitable.length === 0) return;
 
     // Normalise profit to BigInt (workers deserialise as strings)
-    const toAdd = profitable.map(({ path, result }) => ({
-      path,
-      result,
-      profit: typeof result.profit === "bigint" ? result.profit : BigInt(result.profit),
-    }));
+    const toAdd: CachedEntry[] = [];
+    for (const { path, result } of profitable) {
+      if (!hasValidPoolEdges(path)) continue;
+      const profit = profitFromResult(result);
+      if (profit == null) continue;
+      toAdd.push({ path, result, profit });
+    }
+    if (toAdd.length === 0) return;
 
     // Prefer the latest observation for a route before ranking by profit.
     // Otherwise an older, stale high-profit snapshot can mask a fresh lower-profit update.
@@ -95,7 +112,9 @@ export class RouteCache {
   getByPools(changedPools: Set<string> | string[]) {
     const idxSet = new Set<number>();
     for (const pool of changedPools) {
-      const hits = this._poolIndex.get(pool.toLowerCase());
+      const normalizedPool = normalisePoolAddress(pool);
+      if (!normalizedPool) continue;
+      const hits = this._poolIndex.get(normalizedPool);
       if (hits) for (const i of hits) idxSet.add(i);
     }
     return [...idxSet].map((i) => this._routes[i]).filter(Boolean);
@@ -128,11 +147,16 @@ export class RouteCache {
    */
   prune(stateCache: Map<string, object>) {
     const normalisedStatePools = new Set(
-      [...stateCache.keys()].map((poolAddress) => normalisePoolAddress(poolAddress))
+      [...stateCache.keys()]
+        .map((poolAddress) => normalisePoolAddress(poolAddress))
+        .filter((poolAddress): poolAddress is string => poolAddress != null)
     );
     const before = this._routes.length;
     this._routes = this._routes.filter((entry) =>
-      entry.path.edges.every((e) => normalisedStatePools.has(normalisePoolAddress(e.poolAddress)))
+      entry.path.edges.every((e) => {
+        const normalizedPool = normalisePoolAddress(e.poolAddress);
+        return normalizedPool != null && normalisedStatePools.has(normalizedPool);
+      })
     );
     if (this._routes.length < before) this._rebuildIndex();
   }
@@ -147,12 +171,19 @@ export class RouteCache {
    * @returns {number} number of removed routes
    */
   removeByPools(poolAddresses: Set<string> | string[]) {
-    const blocked = new Set([...poolAddresses].map((pool) => normalisePoolAddress(pool)));
+    const blocked = new Set(
+      [...poolAddresses]
+        .map((pool) => normalisePoolAddress(pool))
+        .filter((pool): pool is string => pool != null)
+    );
     if (blocked.size === 0 || this._routes.length === 0) return 0;
 
     const before = this._routes.length;
     this._routes = this._routes.filter((entry) =>
-      entry.path.edges.every((edge) => !blocked.has(edge.poolAddress.toLowerCase()))
+      entry.path.edges.every((edge) => {
+        const normalizedPool = normalisePoolAddress(edge.poolAddress);
+        return normalizedPool != null && !blocked.has(normalizedPool);
+      })
     );
     if (this._routes.length < before) this._rebuildIndex();
     return before - this._routes.length;
@@ -177,6 +208,7 @@ export class RouteCache {
     for (let i = 0; i < this._routes.length; i++) {
       for (const edge of this._routes[i].path.edges) {
         const pool = normalisePoolAddress(edge.poolAddress);
+        if (!pool) continue;
         if (!this._poolIndex.has(pool)) this._poolIndex.set(pool, new Set());
         this._poolIndex.get(pool)?.add(i);
       }

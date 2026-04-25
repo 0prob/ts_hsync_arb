@@ -1,5 +1,12 @@
 import { takeTopNBy } from "../util/bounded_priority.ts";
 import { metadataWithRegistryTokenDecimals } from "../state/pool_metadata.ts";
+import {
+  BALANCER_PROTOCOLS,
+  CURVE_PROTOCOLS,
+  normalizeProtocolKey,
+  V2_PROTOCOLS,
+  V3_PROTOCOLS,
+} from "../protocols/classification.ts";
 
 export type PoolRecord = {
   pool_address: string;
@@ -81,21 +88,16 @@ type WarmupDeps = {
   enrichConcurrency: number;
 };
 
-const WARMUP_V2 = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
-const WARMUP_V3 = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
-const WARMUP_BAL = new Set(["BALANCER_WEIGHTED", "BALANCER_STABLE", "BALANCER_V2"]);
-const WARMUP_CRV = new Set([
-  "CURVE_STABLE", "CURVE_CRYPTO", "CURVE_MAIN", "CURVE_MAIN_REGISTRY",
-  "CURVE_FACTORY_STABLE", "CURVE_FACTORY_CRYPTO",
-  "CURVE_CRYPTO_FACTORY", "CURVE_STABLE_FACTORY",
-  "CURVE_STABLESWAP_NG", "CURVE_TRICRYPTO_NG",
-]);
+const WARMUP_V2 = V2_PROTOCOLS;
+const WARMUP_V3 = V3_PROTOCOLS;
+const WARMUP_BAL = BALANCER_PROTOCOLS;
+const WARMUP_CRV = CURVE_PROTOCOLS;
 const SUPPORTED_WARMUP_PROTOCOLS = new Set([...WARMUP_V2, ...WARMUP_V3, ...WARMUP_BAL, ...WARMUP_CRV]);
 const WARMUP_PROGRESS_LOG_EVERY = 25;
 const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled: 0, failed: 0 };
 
 export function isSupportedWarmupProtocol(protocol: string | null | undefined) {
-  return SUPPORTED_WARMUP_PROTOCOLS.has(String(protocol ?? ""));
+  return SUPPORTED_WARMUP_PROTOCOLS.has(normalizeProtocolKey(protocol));
 }
 
 export function createWarmupManager(deps: WarmupDeps) {
@@ -195,7 +197,7 @@ export function createWarmupManager(deps: WarmupDeps) {
       protocols: Object.fromEntries(
         groups.map((group) => [
           group.key,
-          { ...EMPTY_PROTOCOL_STATS, scheduled: pools.filter((pool) => group.protocols.has(pool.protocol)).length },
+          { ...EMPTY_PROTOCOL_STATS, scheduled: pools.filter((pool) => group.protocols.has(normalizeProtocolKey(pool.protocol))).length },
         ]),
       ),
     } as WarmupStats;
@@ -339,7 +341,7 @@ export function createWarmupManager(deps: WarmupDeps) {
             return {
               addr,
               raw,
-              normalized: raw && tokens.length ? deps.normalizePoolState(addr, pool.protocol, tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
+              normalized: raw && tokens.length ? deps.normalizePoolState(addr, normalizeProtocolKey(pool.protocol), tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
               noDataFailures: statesMap?.noDataFailures,
             };
           });
@@ -358,7 +360,7 @@ export function createWarmupManager(deps: WarmupDeps) {
               const metadata = deps.getPoolMetadata(pool);
               poolMeta.set(pool.pool_address.toLowerCase(), {
                 isAlgebra: true,
-                isKyberElastic: pool.protocol === "KYBERSWAP_ELASTIC" || metadata?.isKyberElastic === true,
+                isKyberElastic: normalizeProtocolKey(pool.protocol) === "KYBERSWAP_ELASTIC" || metadata?.isKyberElastic === true,
               });
             }
           }
@@ -372,7 +374,7 @@ export function createWarmupManager(deps: WarmupDeps) {
             if (!pool) return;
             const tokens = deps.getPoolTokens(pool);
             if (!tokens.length) return;
-            const normalized = deps.normalizePoolState(normalizedAddr, pool.protocol, tokens, rawState, getPoolMetadataWithDecimals(pool, tokens));
+            const normalized = deps.normalizePoolState(normalizedAddr, normalizeProtocolKey(pool.protocol), tokens, rawState, getPoolMetadataWithDecimals(pool, tokens));
             if (!normalized) return;
             deps.stateCache.set(normalizedAddr, normalized);
             if (persistBlock != null) {
@@ -448,7 +450,7 @@ export function createWarmupManager(deps: WarmupDeps) {
             return {
               addr,
               raw,
-              normalized: raw && tokens.length ? deps.normalizePoolState(addr, pool.protocol, tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
+              normalized: raw && tokens.length ? deps.normalizePoolState(addr, normalizeProtocolKey(pool.protocol), tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
               noDataFailures: statesMap?.noDataFailures,
             };
           });
@@ -509,7 +511,7 @@ export function createWarmupManager(deps: WarmupDeps) {
     stats = createWarmupStats(supportedPools, groups);
     logWarmupProgress(stats, "rpc_fetch_started", logContext);
     await Promise.all(groups.map((group) => {
-      const groupPools = supportedPools.filter((pool) => group.protocols.has(pool.protocol));
+      const groupPools = supportedPools.filter((pool) => group.protocols.has(normalizeProtocolKey(pool.protocol)));
       return runWarmupGroup(groupPools, group, stats, persistBlock, logContext);
     }));
     return stats;
@@ -544,22 +546,23 @@ export function createWarmupManager(deps: WarmupDeps) {
     const bothCoreHubs = coreHubMatches >= 2;
     const tokenCount = tokens.length > 0 ? tokens.length : Number.MAX_SAFE_INTEGER;
     const metadata = deps.getPoolMetadata(pool);
+    const protocol = normalizeProtocolKey(pool.protocol);
 
     let protocolRank = 3;
-    if (WARMUP_V2.has(pool.protocol)) protocolRank = 0;
-    else if (WARMUP_V3.has(pool.protocol)) protocolRank = 1;
-    else if (WARMUP_BAL.has(pool.protocol)) protocolRank = 2;
+    if (WARMUP_V2.has(protocol)) protocolRank = 0;
+    else if (WARMUP_V3.has(protocol)) protocolRank = 1;
+    else if (WARMUP_BAL.has(protocol)) protocolRank = 2;
 
     let metadataReadiness = 0;
-    if (WARMUP_V2.has(pool.protocol)) {
+    if (WARMUP_V2.has(protocol)) {
       if (metadata.feeNumerator != null || metadata.fee != null) metadataReadiness += 1;
-    } else if (WARMUP_V3.has(pool.protocol)) {
+    } else if (WARMUP_V3.has(protocol)) {
       if (metadata.fee != null) metadataReadiness += 2;
       if (metadata.tickSpacing != null) metadataReadiness += 1;
       if (metadata.isAlgebra === true) metadataReadiness += 1;
-    } else if (WARMUP_BAL.has(pool.protocol)) {
+    } else if (WARMUP_BAL.has(protocol)) {
       if (metadata.poolId != null || metadata.pool_id != null) metadataReadiness += 2;
-    } else if (WARMUP_CRV.has(pool.protocol)) {
+    } else if (WARMUP_CRV.has(protocol)) {
       if (metadata.coins != null || metadata.nCoins != null) metadataReadiness += 1;
     }
 
@@ -678,10 +681,11 @@ export function createWarmupManager(deps: WarmupDeps) {
     let balancerCount = 0;
     let curveCount = 0;
     for (const pool of syncWarmupPools) {
-      if (WARMUP_V2.has(pool.protocol)) v2Count++;
-      else if (WARMUP_V3.has(pool.protocol)) v3Count++;
-      else if (WARMUP_BAL.has(pool.protocol)) balancerCount++;
-      else if (WARMUP_CRV.has(pool.protocol)) curveCount++;
+      const protocol = normalizeProtocolKey(pool.protocol);
+      if (WARMUP_V2.has(protocol)) v2Count++;
+      else if (WARMUP_V3.has(protocol)) v3Count++;
+      else if (WARMUP_BAL.has(protocol)) balancerCount++;
+      else if (WARMUP_CRV.has(protocol)) curveCount++;
     }
 
     deps.log(`State warmup: fetching ${syncWarmupPools.length}/${targetedPools} hub-adjacent pools via RPC (sync)...`, "info", {

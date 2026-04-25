@@ -38,6 +38,7 @@ import {
   V3_SWAP_PROTOCOLS,
 } from "./addresses.ts";
 import { MIN_SQRT_RATIO, MAX_SQRT_RATIO } from "../math/tick_math.ts";
+import { normalizeProtocolKey } from "../protocols/classification.ts";
 
 const CALL_STRUCT_ARRAY_ABI = [
   {
@@ -361,7 +362,7 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
     const edge = path.edges[i];
     const amountIn  = result.hopAmounts[i];
     const amountOut = result.hopAmounts[i + 1];
-    const proto = edge.protocol;
+    const proto = normalizeProtocolKey(edge.protocol);
 
     const meta = edge.metadata || {};
 

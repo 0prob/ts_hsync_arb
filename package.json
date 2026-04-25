@@ -10,7 +10,6 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env --import=tsx runner.ts --loop --live",
     "start:tui": "node --env-file-if-exists=.env --import=tsx runner.ts --loop --live --tui",
-    "test": "env NODE_ENV=test node --import=tsx scripts/run_all_tests.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

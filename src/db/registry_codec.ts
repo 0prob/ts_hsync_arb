@@ -3,6 +3,15 @@
  * src/db/registry_codec.js — Shared JSON/row conversion helpers for RegistryService
  */
 
+import { normalizeEvmAddress } from "../util/pool_record.ts";
+import {
+  isBalancerProtocol,
+  isCurveProtocol,
+  isV2Protocol,
+  isV3Protocol,
+  normalizeProtocolKey,
+} from "../protocols/classification.ts";
+
 const BIGINT_SCALAR_FIELDS: Record<string, string[]> = {
   V2:      ["fee", "reserve0", "reserve1"],
   V3:      ["fee", "sqrtPriceX96", "liquidity"],
@@ -16,11 +25,11 @@ const BIGINT_ARRAY_FIELDS: Record<string, string[]> = {
 };
 
 function protocolClass(protocol: string): string {
-  if (!protocol) return "";
-  if (protocol.includes("_V2")) return "V2";
-  if (protocol.includes("_V3")) return "V3";
-  if (protocol.startsWith("CURVE")) return "CURVE";
-  if (protocol.startsWith("BALANCER")) return "BALANCER";
+  const protocolKey = normalizeProtocolKey(protocol);
+  if (isV2Protocol(protocolKey)) return "V2";
+  if (isV3Protocol(protocolKey)) return "V3";
+  if (isCurveProtocol(protocolKey)) return "CURVE";
+  if (isBalancerProtocol(protocolKey)) return "BALANCER";
   return "";
 }
 
@@ -29,27 +38,57 @@ function toBigIntSafe(v: any): bigint | any {
   try { return BigInt(v); } catch { return v; }
 }
 
+function toBigIntOrZero(v: any): bigint {
+  if (typeof v === "bigint") return v;
+  try { return BigInt(v ?? 0); } catch { return 0n; }
+}
+
 export function normalizeAddress(value: any) {
-  return typeof value === "string" ? value.toLowerCase() : value;
+  return typeof value === "string" ? value.trim().toLowerCase() : value;
 }
 
 function normalizeAddressList(values: any) {
   if (!Array.isArray(values)) return [];
-  return values.map(normalizeAddress);
+  return values
+    .map((value) => normalizeEvmAddress(value))
+    .filter((value): value is string => value != null);
+}
+
+function tickEntriesFrom(value: any): Array<[unknown, any]> {
+  if (!value) return [];
+  if (value instanceof Map) return [...value.entries()];
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (Array.isArray(entry) && entry.length >= 2) return [entry[0], entry[1]] as [unknown, any];
+        if (entry && typeof entry === "object" && ("tick" in entry || "index" in entry)) {
+          return [entry.tick ?? entry.index, entry] as [unknown, any];
+        }
+        return null;
+      })
+      .filter((entry): entry is [unknown, any] => entry != null);
+  }
+  if (typeof value === "object") return Object.entries(value);
+  return [];
+}
+
+export function rehydrateV3Ticks(ticks: any) {
+  const entries: Array<[number, { liquidityGross: bigint; liquidityNet: bigint }]> = [];
+  for (const [tick, liquidity] of tickEntriesFrom(ticks)) {
+    const tickNumber = Number(tick);
+    if (!Number.isInteger(tickNumber)) continue;
+    entries.push([tickNumber, {
+      liquidityGross: toBigIntOrZero(liquidity?.liquidityGross),
+      liquidityNet: toBigIntOrZero(liquidity?.liquidityNet),
+    }]);
+  }
+  entries.sort(([a], [b]) => a - b);
+  return new Map(entries);
 }
 
 function rehydrateV3State(data: any) {
-  if (!data?.ticks || data.ticks instanceof Map) return;
-
-  data.ticks = new Map(
-    Object.entries(data.ticks).map(([tick, liquidity]: [string, any]) => [
-      Number(tick),
-      {
-        liquidityGross: toBigIntSafe(liquidity?.liquidityGross ?? 0),
-        liquidityNet: toBigIntSafe(liquidity?.liquidityNet ?? 0),
-      },
-    ])
-  );
+  if (!data?.ticks) return;
+  data.ticks = rehydrateV3Ticks(data.ticks);
 }
 
 export function rehydrateStateData(protocol: string, data: any): any {

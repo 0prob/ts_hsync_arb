@@ -23,14 +23,12 @@ import { toFiniteNumber } from "../util/bigint.ts";
 import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/pool_record.ts";
 import { PROTOCOLS } from "../protocols/index.ts";
 import { EXTRA_HUB_4_TOKENS, EXTRA_POLYGON_HUB_TOKENS } from "../config/index.ts";
+import { normalizeProtocolKey, V2_PROTOCOLS, V3_PROTOCOLS } from "../protocols/classification.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
-const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
-
 function protocolSupportsRouting(protocol: string) {
-  const definition = (PROTOCOLS as Record<string, { capabilities?: { routing?: boolean } }>)[protocol];
+  const definition = (PROTOCOLS as Record<string, { capabilities?: { routing?: boolean } }>)[normalizeProtocolKey(protocol)];
   return definition?.capabilities?.routing !== false;
 }
 
@@ -40,8 +38,9 @@ function getLiveStateRef(stateMap: any, poolAddress: any) {
 }
 
 function getProtocolKind(protocol: any) {
-  if (V2_PROTOCOLS.has(protocol)) return "v2";
-  if (V3_PROTOCOLS.has(protocol)) return "v3";
+  const protocolKey = normalizeProtocolKey(protocol);
+  if (V2_PROTOCOLS.has(protocolKey)) return "v2";
+  if (V3_PROTOCOLS.has(protocolKey)) return "v3";
   return "other";
 }
 
@@ -90,14 +89,15 @@ function createSwapEdge({
 
 function getRoutablePoolContext(pool: any, stateMap: any) {
   if (pool.status !== "active") return null;
-  if (!protocolSupportsRouting(pool.protocol)) return null;
+  const protocol = normalizeProtocolKey(pool.protocol);
+  if (!protocolSupportsRouting(protocol)) return null;
 
   const tokens = getPoolTokens(pool);
   if (!tokens || tokens.length < 2 || hasZeroAddressToken(tokens)) return null;
 
   const poolAddress = pool.pool_address.toLowerCase();
   const metadata = getPoolMetadata(pool);
-  const isV3 = V3_PROTOCOLS.has(pool.protocol);
+  const isV3 = V3_PROTOCOLS.has(protocol);
   const stateRef = getLiveStateRef(stateMap, poolAddress);
   const fee = isV3
     ? metadata?.fee !== undefined
@@ -113,6 +113,7 @@ function getRoutablePoolContext(pool: any, stateMap: any) {
 
   return {
     tokens: tokens.map((token: string) => token.toLowerCase()),
+    protocol,
     poolAddress,
     metadata,
     fee,
@@ -130,12 +131,12 @@ function addPoolEdges(
   const context = getRoutablePoolContext(pool, stateMap);
   if (!context || !shouldInclude(context)) return false;
 
-  const { tokens, poolAddress, metadata, fee, stateRef, swapFn } = context;
+  const { tokens, protocol, poolAddress, metadata, fee, stateRef, swapFn } = context;
   for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
     for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
       if (tokenInIdx === tokenOutIdx) continue;
       graph.addEdge(createSwapEdge({
-        protocol: pool.protocol,
+        protocol,
         poolAddress,
         tokenIn: tokens[tokenInIdx],
         tokenOut: tokens[tokenOutIdx],

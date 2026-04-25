@@ -22,28 +22,13 @@ import { workerPool } from "./worker_pool.ts";
 import { EVAL_WORKER_THRESHOLD, WORKER_COUNT } from "../config/index.ts";
 import { getPathHopCount } from "./path_hops.ts";
 import { resolveSwapTokenIndexes } from "./swap_indices.ts";
-
-// ─── Protocol classification ─────────────────────────────────
-
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
-const V3_PROTOCOLS = new Set(["UNISWAP_V3", "QUICKSWAP_V3", "SUSHISWAP_V3", "KYBERSWAP_ELASTIC"]);
-const CURVE_PROTOCOLS = new Set([
-  "CURVE_STABLE",
-  "CURVE_CRYPTO",
-  "CURVE_MAIN",
-  "CURVE_MAIN_REGISTRY",
-  "CURVE_FACTORY_STABLE",
-  "CURVE_FACTORY_CRYPTO",
-  "CURVE_CRYPTO_FACTORY",
-  "CURVE_STABLE_FACTORY",
-  "CURVE_STABLESWAP_NG",
-  "CURVE_TRICRYPTO_NG",
-]);
-const BALANCER_PROTOCOLS = new Set([
-  "BALANCER_WEIGHTED",
-  "BALANCER_STABLE",
-  "BALANCER_V2",
-]);
+import {
+  BALANCER_PROTOCOLS,
+  CURVE_PROTOCOLS,
+  normalizeProtocolKey,
+  V2_PROTOCOLS,
+  V3_PROTOCOLS,
+} from "../protocols/classification.ts";
 
 // ─── Single-hop simulation ────────────────────────────────────
 
@@ -65,7 +50,7 @@ export function simulateHop(edge: any, amountIn: any, stateCache: any) {
     return { amountOut: 0n, gasEstimate: 0 };
   }
 
-  const protocol = edge.protocol;
+  const protocol = normalizeProtocolKey(edge.protocol);
 
   // V3: use pre-attached swapFn if available (highest fidelity)
   if (edge.swapFn && edge.stateRef) {

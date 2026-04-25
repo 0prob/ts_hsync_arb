@@ -43,6 +43,25 @@ function probeAmountFromBalance(balance: any) {
   return probe > 0n ? probe : 1n;
 }
 
+function positiveLog(value: any) {
+  if (typeof value === "bigint") {
+    if (value <= 0n) return null;
+    const digits = value.toString();
+    if (digits.length <= 15) return Math.log(Number(value));
+
+    const mantissaDigits = digits.slice(0, 15);
+    const mantissa =
+      mantissaDigits.length === 1
+        ? Number(mantissaDigits)
+        : Number(`${mantissaDigits[0]}.${mantissaDigits.slice(1)}`);
+    return Math.log(mantissa) + (digits.length - 1) * Math.LN10;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return Math.log(numeric);
+}
+
 function quoteBasedLogWeight(edge: any, simulateFn: any) {
   const state = edge.stateRef;
   const balances = state?.balances;
@@ -56,10 +75,19 @@ function quoteBasedLogWeight(edge: any, simulateFn: any) {
   const probeAmount = probeAmountFromBalance(balanceIn);
   if (probeAmount <= 0n) return null;
 
-  const { amountOut } = simulateFn(probeAmount, state, inIdx, outIdx);
+  let amountOut;
+  try {
+    ({ amountOut } = simulateFn(probeAmount, state, inIdx, outIdx));
+  } catch {
+    return null;
+  }
   if (!amountOut || amountOut <= 0n) return null;
 
-  return Math.log(Number(amountOut)) - Math.log(Number(probeAmount));
+  const amountOutLog = positiveLog(amountOut);
+  const probeAmountLog = positiveLog(probeAmount);
+  if (amountOutLog == null || probeAmountLog == null) return null;
+
+  return amountOutLog - probeAmountLog;
 }
 
 /**
@@ -85,7 +113,10 @@ export function edgeSpotLogWeight(edge: any) {
     const [rIn, rOut] = edge.zeroForOne ? [r0, r1] : [r1, r0];
     const feeNumerator = toFiniteNumber(edge.fee ?? state.fee, 997);
     if (feeNumerator <= 0 || feeNumerator >= 1000) return null;
-    return Math.log(Number(rOut)) - Math.log(Number(rIn)) + Math.log(feeNumerator / 1000);
+    const logOut = positiveLog(rOut);
+    const logIn = positiveLog(rIn);
+    if (logOut == null || logIn == null) return null;
+    return logOut - logIn + Math.log(feeNumerator / 1000);
   }
 
   if (edge.protocolKind === "v3") {
@@ -244,6 +275,18 @@ function shouldPruneEdge(edge: any, opts: any = {}) {
   return false; // Balancer/Curve — let through, simulator handles
 }
 
+function normalizePathLimit(value: any, fallback: number) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.floor(numeric);
+}
+
+function normalizeStartTokens(startTokens: any) {
+  if (typeof startTokens === "string") return [startTokens];
+  if (!startTokens || typeof startTokens[Symbol.iterator] !== "function") return [];
+  return [...startTokens].filter((token) => typeof token === "string" && token.length > 0);
+}
+
 // ─── 2-hop paths ──────────────────────────────────────────────
 
 /**
@@ -267,6 +310,7 @@ function shouldPruneEdge(edge: any, opts: any = {}) {
  * @returns {ArbPath[]}
  */
 export function find2HopPaths(graph: any, startToken: any, opts: any = {}) {
+  const maxPaths = normalizePathLimit(opts.maxPaths, 10_000);
   const paths = [];
   const edgesOut = graph.getEdges(startToken);
 
@@ -288,6 +332,7 @@ export function find2HopPaths(graph: any, startToken: any, opts: any = {}) {
         annotatePath(
           paths[paths.push({ startToken, edges: [fwd, ret], hopCount: 2 }) - 1]
         );
+        if (paths.length >= maxPaths) return paths;
       }
     }
   }
@@ -309,7 +354,7 @@ export function find2HopPaths(graph: any, startToken: any, opts: any = {}) {
  * @returns {ArbPath[]}
  */
 export function find3HopPaths(graph: any, startToken: any, opts: any = {}) {
-  const { maxPaths = 10_000 } = opts;
+  const maxPaths = normalizePathLimit(opts.maxPaths, 10_000);
   const paths = [];
 
   for (const e1 of graph.getEdges(startToken)) {
@@ -362,7 +407,7 @@ export function find3HopPaths(graph: any, startToken: any, opts: any = {}) {
  * @returns {ArbPath[]}
  */
 export function find4HopPathsBidirectional(graph: any, startToken: any, opts: any = {}) {
-  const { maxPaths = 2_000 } = opts;
+  const maxPaths = normalizePathLimit(opts.maxPaths, 2_000);
   const paths: any[] = [];
 
   // ── Forward half: A → B → C ──────────────────────────────
@@ -437,7 +482,7 @@ export function find4HopPathsBidirectional(graph: any, startToken: any, opts: an
 export const find4HopPaths = find4HopPathsBidirectional;
 
 function findNHopPaths(graph: any, startToken: any, exactHops: number, opts: any = {}) {
-  const { maxPaths = 2_000 } = opts;
+  const maxPaths = normalizePathLimit(opts.maxPaths, 2_000);
   if (!Number.isFinite(exactHops) || exactHops < 2) return [];
 
   const paths: any[] = [];
@@ -520,13 +565,16 @@ export function findArbPaths(graph: any, startTokens: any, opts: any = {}) {
 
   const pruneOpts = { minV2Reserve, probeWei };
   const allPaths  = [];
-  const tokenList = Array.isArray(startTokens) ? startTokens : [...startTokens];
+  const tokenList = normalizeStartTokens(startTokens);
 
   for (const token of tokenList) {
     if (!graph.hasToken(token)) continue;
 
     if (include2Hop) {
-      allPaths.push(...find2HopPaths(graph, token, pruneOpts));
+      allPaths.push(...find2HopPaths(graph, token, {
+        ...pruneOpts,
+        maxPaths: maxPathsPerToken,
+      }));
     }
 
     if (include3Hop) {

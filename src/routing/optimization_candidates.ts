@@ -27,6 +27,17 @@ type CandidateEntryLike = {
   result: CandidateResultLike;
 };
 
+function normalizeCandidateLimit(limit: number) {
+  if (!Number.isFinite(limit) || limit <= 0) return 0;
+  return Math.floor(limit);
+}
+
+function compareCandidateProfit(a: CandidateEntryLike, b: CandidateEntryLike) {
+  if (b.result.profit > a.result.profit) return 1;
+  if (b.result.profit < a.result.profit) return -1;
+  return 0;
+}
+
 function scoreForCandidate(
   entry: CandidateEntryLike,
   options: {
@@ -64,28 +75,39 @@ export function selectOptimizationCandidates<T extends CandidateEntryLike>(
     getTokenToMaticRate: (tokenAddress: string) => bigint;
   },
 ) {
-  if (candidates.length <= limit) return candidates;
+  const normalizedLimit = normalizeCandidateLimit(limit);
+  if (normalizedLimit === 0 || candidates.length === 0) return [];
 
   const scoreCaches = {
     tokenRates: new Map<string, bigint>(),
     scored: new WeakMap<CandidateEntryLike, ReturnType<typeof scoreRoute> | null>(),
   };
   const selected = new Map<string, T>();
+  const fallbackKeys = new WeakMap<CandidateEntryLike, string>();
+  let fallbackKeyId = 0;
+  const selectionKeyFor = (entry: T) => {
+    try {
+      return routeKeyFromEdges(entry.path.startToken, entry.path.edges);
+    } catch {
+      let fallbackKey = fallbackKeys.get(entry);
+      if (!fallbackKey) {
+        fallbackKey = `candidate:${++fallbackKeyId}`;
+        fallbackKeys.set(entry, fallbackKey);
+      }
+      return fallbackKey;
+    }
+  };
   const addBatch = (batch: T[]) => {
     for (const entry of batch) {
-      const key = routeKeyFromEdges(entry.path.startToken, entry.path.edges);
+      const key = selectionKeyFor(entry);
       if (!selected.has(key)) {
         selected.set(key, entry);
-        if (selected.size >= limit) break;
+        if (selected.size >= normalizedLimit) break;
       }
     }
   };
 
-  const topByProfit = [...candidates].sort((a, b) => {
-    if (b.result.profit > a.result.profit) return 1;
-    if (b.result.profit < a.result.profit) return -1;
-    return 0;
-  });
+  const topByProfit = [...candidates].sort(compareCandidateProfit);
   const topByRoi = [...candidates].sort((a, b) => {
     const scoredA = scoreForCandidate(a, options, scoreCaches);
     const scoredB = scoreForCandidate(b, options, scoreCaches);
@@ -100,13 +122,15 @@ export function selectOptimizationCandidates<T extends CandidateEntryLike>(
     (a, b) => normaliseLogWeight(a.path.logWeight) - normaliseLogWeight(b.path.logWeight)
   );
 
-  addBatch(topByProfit.slice(0, Math.ceil(limit * 0.4)));
-  addBatch(topByScore.slice(0, Math.ceil(limit * 0.3)));
-  addBatch(topByRoi.slice(0, Math.ceil(limit * 0.2)));
-  addBatch(topByLogWeight.slice(0, Math.ceil(limit * 0.1)));
+  addBatch(topByProfit.slice(0, Math.ceil(normalizedLimit * 0.4)));
+  addBatch(topByScore.slice(0, Math.ceil(normalizedLimit * 0.3)));
+  addBatch(topByRoi.slice(0, Math.ceil(normalizedLimit * 0.2)));
+  addBatch(topByLogWeight.slice(0, Math.ceil(normalizedLimit * 0.1)));
   addBatch(topByProfit);
 
-  return [...selected.values()].slice(0, limit);
+  return [...selected.values()]
+    .sort(compareCandidateProfit)
+    .slice(0, normalizedLimit);
 }
 
 export function shouldOptimizeCandidate(

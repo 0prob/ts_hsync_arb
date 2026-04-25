@@ -23,21 +23,7 @@ import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { parsePoolTokens } from "./pool_record.ts";
 import { metadataWithTokenDecimals } from "./pool_metadata.ts";
 import { asBatchResult, TimedPoller } from "./poller_base.ts";
-
-// ─── Protocols covered ────────────────────────────────────────
-
-const CURVE_PROTOCOLS = new Set([
-  "CURVE_STABLE",
-  "CURVE_CRYPTO",
-  "CURVE_MAIN",
-  "CURVE_MAIN_REGISTRY",
-  "CURVE_FACTORY_STABLE",
-  "CURVE_FACTORY_CRYPTO",
-  "CURVE_CRYPTO_FACTORY",
-  "CURVE_STABLE_FACTORY",
-  "CURVE_STABLESWAP_NG",
-  "CURVE_TRICRYPTO_NG",
-]);
+import { CURVE_PROTOCOLS, normalizeProtocolKey } from "../protocols/classification.ts";
 
 // ─── ABI fragments ────────────────────────────────────────────
 
@@ -193,7 +179,7 @@ export class PollCurve extends TimedPoller {
     const t0 = Date.now();
 
     const pools = this._registry.getActivePoolsMeta().filter(
-      (p: any) => CURVE_PROTOCOLS.has(p.protocol)
+      (p: any) => CURVE_PROTOCOLS.has(normalizeProtocolKey(p.protocol))
     );
 
     if (pools.length === 0) {

@@ -199,6 +199,33 @@ function summarizeLogForTui(msg: string, payload: LogMeta | undefined) {
   if (typeof payload.pass === "number") parts.push(`pass=${payload.pass}`);
   if (typeof payload.changedPools === "number") parts.push(`changed=${payload.changedPools}`);
   if (typeof payload.opportunities === "number") parts.push(`opps=${payload.opportunities}`);
+  if (typeof payload.candidates === "number") parts.push(`candidates=${payload.candidates}`);
+  if (typeof payload.topCandidates === "number") parts.push(`top=${payload.topCandidates}`);
+  if (typeof payload.profitableRoutes === "number") parts.push(`profitable=${payload.profitableRoutes}`);
+  if (typeof payload.missingTokenRates === "number" && payload.missingTokenRates > 0) {
+    parts.push(`missingRates=${payload.missingTokenRates}`);
+  }
+  const assessmentSummary = payload.assessmentSummary;
+  if (assessmentSummary && typeof assessmentSummary === "object" && !Array.isArray(assessmentSummary)) {
+    const summary = assessmentSummary as Record<string, unknown>;
+    if (typeof summary.assessed === "number") parts.push(`assessed=${summary.assessed}`);
+    if (typeof summary.rejected === "number") parts.push(`rejected=${summary.rejected}`);
+    if (typeof summary.missingTokenRates === "number" && summary.missingTokenRates > 0) {
+      parts.push(`missingRates=${summary.missingTokenRates}`);
+    }
+    const rejectReasons = summary.rejectReasons;
+    if (rejectReasons && typeof rejectReasons === "object" && !Array.isArray(rejectReasons)) {
+      const [reason, count] = Object.entries(rejectReasons as Record<string, unknown>)
+        .sort((a, b) => Number(b[1] ?? 0) - Number(a[1] ?? 0))[0] ?? [];
+      if (reason && typeof count === "number" && count > 0) parts.push(`topReject=${reason}:${count}`);
+    }
+  }
+  const rejectReasons = payload.rejectReasons;
+  if (rejectReasons && typeof rejectReasons === "object" && !Array.isArray(rejectReasons)) {
+    const [reason, count] = Object.entries(rejectReasons as Record<string, unknown>)
+      .sort((a, b) => Number(b[1] ?? 0) - Number(a[1] ?? 0))[0] ?? [];
+    if (reason && typeof count === "number" && count > 0) parts.push(`topReject=${reason}:${count}`);
+  }
   if (typeof payload.txHash === "string") parts.push(`tx=${payload.txHash.slice(0, 10)}`);
 
   return parts.length > 0 ? `${parts.join(" ")} | ${msg}` : msg;
@@ -242,8 +269,9 @@ function roiForCandidate(candidate: CandidateEntry | null | undefined) {
 async function getCurrentFeeSnapshot() {
   try {
     const fees = await fetchEIP1559Fees();
-    if (fees?.maxFee) {
-      botState.gasPrice = (Number(fees.maxFee) / 1e9).toFixed(2);
+    const displayGasPrice = fees?.effectiveGasPriceWei ?? fees?.maxFee;
+    if (displayGasPrice) {
+      botState.gasPrice = (Number(displayGasPrice) / 1e9).toFixed(2);
     }
     if (!fees?.updatedAt || Date.now() - fees.updatedAt > MAX_GAS_AGE_MS) {
       return null;
@@ -409,6 +437,12 @@ const { scheduleArb, cancelScheduledArb, waitForIdle: waitForArbIdle } = createA
   recordArbActivity,
   getAdaptiveDebounceMs,
   runPass: () => runPass(),
+  onRunError: (err) => {
+    log(`Scheduled arb pass failed: ${err instanceof Error ? err.message : String(err)}`, "error", {
+      event: "scheduled_arb_error",
+      err,
+    });
+  },
 });
 const watcherHaltCoordinator = createWatcherHaltCoordinator({
   log,
@@ -580,6 +614,7 @@ passRunner = createPassRunner({
     botState.passCount = passCount;
     botState.consecutiveErrors = consecutiveErrors;
     botState.opportunities = opportunities;
+    botState.lastArbMs = Date.now();
   },
   log,
   trackBackgroundTask: (task) => {

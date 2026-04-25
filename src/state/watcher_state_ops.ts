@@ -5,7 +5,7 @@
 
 import { mergeStateIntoCache, reloadCacheFromRegistry } from "./cache_utils.ts";
 import { createWatcherProtocolHandlers } from "./watcher_protocol_handlers.ts";
-import { resolveV2FeeNumerator, validatePoolState } from "./normalizer.ts";
+import { resolveV2FeeNumerator, resolveV3Fee, validatePoolState } from "./normalizer.ts";
 import { logger } from "../utils/logger.ts";
 import { parsePoolMetadataValue } from "../util/pool_record.ts";
 
@@ -117,14 +117,25 @@ export function updateV2State(state: any, decoded: any, pool: any = null) {
   }
 }
 
-export function updateV3SwapState(state: any, decoded: any) {
+function ensureV3Fee(state: any, pool: any = null) {
+  const currentFee = typeof state.fee === "bigint" ? state.fee : null;
+  if (currentFee != null && currentFee >= 0n) return;
+
+  const metadata = parsePoolMetadataValue(pool?.metadata);
+  state.fee = resolveV3Fee(metadata);
+  state.feeSource = metadata?.fee != null ? "metadata" : "default";
+}
+
+export function updateV3SwapState(state: any, decoded: any, pool: any = null) {
   state.sqrtPriceX96 = BigInt(decoded.body[2].val);
   state.liquidity = BigInt(decoded.body[3].val);
   state.tick = Number(decoded.body[4].val);
   state.initialized = true;
+  ensureV3Fee(state, pool);
 }
 
-export function updateV3LiquidityState(state: any, decoded: any, isMint: any) {
+export function updateV3LiquidityState(state: any, decoded: any, isMint: any, pool: any = null) {
+  ensureV3Fee(state, pool);
   const tickLower = Number(decoded.indexed[1].val);
   const tickUpper = Number(decoded.indexed[2].val);
   // Mint body: [sender, amount, amount0, amount1] → amount at index 1

@@ -20,6 +20,7 @@ import { evaluatePaths } from "./simulator.ts";
 import { findArbPaths } from "./finder.ts";
 import { deserializeTopology } from "./graph.ts";
 import { rehydrateStateData } from "../db/registry_codec.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 
 if (!parentPort) throw new Error("persistent_worker must run in a Worker thread");
 
@@ -32,19 +33,17 @@ parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
     if (type === "SYNC_STATE") {
       const { stateObj, retainPools } = payload;
       for (const [poolAddress, state] of Object.entries(stateObj || {}) as [string, any][]) {
+        const normalizedPool = normalizeEvmAddress(poolAddress);
+        if (!normalizedPool) continue;
         rehydrateStateData(state.protocol, state);
-        if (state.ticks && !(state.ticks instanceof Map)) {
-          state.ticks = new Map(
-            Object.entries(state.ticks).map(([k, v]: [string, any]) => [
-              Number(k),
-              { liquidityGross: BigInt(v.liquidityGross ?? 0), liquidityNet: BigInt(v.liquidityNet ?? 0) },
-            ])
-          );
-        }
-        workerStateMap.set(poolAddress, state);
+        workerStateMap.set(normalizedPool, state);
       }
       if (Array.isArray(retainPools)) {
-        const retained = new Set(retainPools.map((poolAddress: string) => poolAddress.toLowerCase()));
+        const retained = new Set(
+          retainPools
+            .map((poolAddress: string) => normalizeEvmAddress(poolAddress))
+            .filter((poolAddress: string | null): poolAddress is string => poolAddress != null)
+        );
         for (const poolAddress of [...workerStateMap.keys()]) {
           if (!retained.has(poolAddress)) {
             workerStateMap.delete(poolAddress);
@@ -66,16 +65,10 @@ parentPort!.on("message", ({ type = "EVALUATE", id, ...payload }) => {
           ? stateObj
           : new Map(Object.entries(stateObj));
         for (const [poolAddress, state] of incoming) {
+          const normalizedPool = normalizeEvmAddress(poolAddress);
+          if (!normalizedPool) continue;
           rehydrateStateData(state.protocol, state);
-          if (state.ticks && !(state.ticks instanceof Map)) {
-            state.ticks = new Map(
-              Object.entries(state.ticks).map(([k, v]: [string, any]) => [
-                Number(k),
-                { liquidityGross: BigInt(v.liquidityGross ?? 0), liquidityNet: BigInt(v.liquidityNet ?? 0) },
-              ])
-            );
-          }
-          workerStateMap.set(poolAddress, state);
+          workerStateMap.set(normalizedPool, state);
         }
       }
 

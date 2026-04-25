@@ -19,6 +19,8 @@ import { encodeRoute, encodeExecuteArb, buildFlashParams } from "./calldata.ts";
 import { gasEstimateCacheKey, recommendGasParams } from "./gas.ts";
 import { routeExecutionCacheKey } from "../routing/route_identity.ts";
 import { getPathHopCount } from "../routing/path_hops.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
+import { isSwapExecutionProtocol, normalizeProtocolKey } from "../protocols/classification.ts";
 
 // ─── Defaults ─────────────────────────────────────────────────
 
@@ -32,8 +34,9 @@ function assertValidRouteForExecution(route: any) {
   if (!route?.path || !route?.result) {
     throw new Error("buildArbTx: route path/result required");
   }
-  if (!route.path.startToken) {
-    throw new Error("buildArbTx: path.startToken required");
+  const startToken = normalizeEvmAddress(route.path.startToken);
+  if (!startToken) {
+    throw new Error("buildArbTx: valid path.startToken required");
   }
   if (!Array.isArray(route.path.edges) || route.path.edges.length === 0) {
     throw new Error("buildArbTx: path.edges must be non-empty");
@@ -56,26 +59,60 @@ function assertValidRouteForExecution(route: any) {
   if (!Array.isArray(route.result.poolPath) || route.result.poolPath.length !== route.path.edges.length) {
     throw new Error("buildArbTx: poolPath length mismatch");
   }
-  if (route.result.tokenPath[0] !== route.path.startToken) {
+  if (route.result.hopAmounts[0] !== route.result.amountIn) {
+    throw new Error("buildArbTx: hopAmounts must start with amountIn");
+  }
+  if (route.result.hopAmounts[route.result.hopAmounts.length - 1] !== route.result.amountOut) {
+    throw new Error("buildArbTx: hopAmounts must end with amountOut");
+  }
+  const normalizedTokenPath = route.result.tokenPath.map((token: unknown) => normalizeEvmAddress(token));
+  const normalizedPoolPath = route.result.poolPath.map((pool: unknown) => normalizeEvmAddress(pool));
+  if (normalizedTokenPath.some((token: string | null) => token == null)) {
+    throw new Error("buildArbTx: tokenPath contains invalid token address");
+  }
+  if (normalizedPoolPath.some((pool: string | null) => pool == null)) {
+    throw new Error("buildArbTx: poolPath contains invalid pool address");
+  }
+  if (normalizedTokenPath[0] !== startToken) {
     throw new Error("buildArbTx: tokenPath must start with path.startToken");
   }
+  if (normalizedTokenPath[normalizedTokenPath.length - 1] !== startToken) {
+    throw new Error("buildArbTx: tokenPath must end with path.startToken");
+  }
+  const normalizedEdges: Array<{ poolAddress: string; protocol: string; tokenIn: string; tokenOut: string }> = [];
   for (let i = 0; i < route.path.edges.length; i++) {
     const edge = route.path.edges[i];
-    if (route.result.tokenPath[i] !== edge.tokenIn) {
+    const protocol = normalizeProtocolKey(edge?.protocol);
+    if (!protocol) throw new Error(`buildArbTx: edge ${i} missing protocol`);
+    if (!isSwapExecutionProtocol(protocol)) {
+      throw new Error(`buildArbTx: edge ${i} uses unsupported execution protocol ${protocol}`);
+    }
+    const edgeTokenIn = normalizeEvmAddress(edge?.tokenIn);
+    const edgeTokenOut = normalizeEvmAddress(edge?.tokenOut);
+    const edgePool = normalizeEvmAddress(edge?.poolAddress);
+    if (!edgeTokenIn || !edgeTokenOut || !edgePool) {
+      throw new Error(`buildArbTx: edge ${i} contains invalid route address`);
+    }
+    if (normalizedTokenPath[i] !== edgeTokenIn) {
       throw new Error(`buildArbTx: tokenPath input mismatch at hop ${i}`);
     }
-    if (route.result.tokenPath[i + 1] !== edge.tokenOut) {
+    if (normalizedTokenPath[i + 1] !== edgeTokenOut) {
       throw new Error(`buildArbTx: tokenPath output mismatch at hop ${i}`);
     }
-    if (route.result.poolPath[i] !== edge.poolAddress) {
+    if (normalizedPoolPath[i] !== edgePool) {
       throw new Error(`buildArbTx: poolPath mismatch at hop ${i}`);
     }
+    normalizedEdges.push({ poolAddress: edgePool, protocol, tokenIn: edgeTokenIn, tokenOut: edgeTokenOut });
   }
 
-  for (const [index, edge] of route.path.edges.entries()) {
-    if (!edge?.protocol) throw new Error(`buildArbTx: edge ${index} missing protocol`);
-    if (!edge?.poolAddress) throw new Error(`buildArbTx: edge ${index} missing poolAddress`);
-    if (!edge?.tokenIn || !edge?.tokenOut) throw new Error(`buildArbTx: edge ${index} missing token addresses`);
+  route.path.startToken = startToken;
+  route.result.tokenPath = normalizedTokenPath;
+  route.result.poolPath = normalizedPoolPath;
+  for (let i = 0; i < route.path.edges.length; i++) {
+    route.path.edges[i].poolAddress = normalizedEdges[i].poolAddress;
+    route.path.edges[i].protocol = normalizedEdges[i].protocol;
+    route.path.edges[i].tokenIn = normalizedEdges[i].tokenIn;
+    route.path.edges[i].tokenOut = normalizedEdges[i].tokenOut;
   }
 }
 
@@ -121,6 +158,7 @@ export function gasEstimateCacheKeyForRoute(route: any) {
  * @property {bigint}  maxFeePerGas         EIP-1559 max fee
  * @property {bigint}  maxPriorityFeePerGas EIP-1559 priority fee
  * @property {bigint}  gasLimit             Gas limit with safety buffer
+ * @property {bigint}  effectiveGasPriceWei Expected EIP-1559 paid gas price
  * @property {Object}  meta                 Human-readable metadata
  * @property {Object}  flashParams          Encoded flash loan params
  */
@@ -226,6 +264,7 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
     slippageBps,
     gasLimit: gasParams.gasLimit.toString(),
     estimatedGasCostWei: gasParams.estimatedCostWei.toString(),
+    maxGasCostWei: gasParams.maxCostWei?.toString?.(),
   };
 
   return {
@@ -235,6 +274,8 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
     maxFeePerGas: gasParams.maxFeePerGas,
     maxPriorityFeePerGas: gasParams.maxPriorityFeePerGas,
     gasLimit: gasParams.gasLimit,
+    effectiveGasPriceWei: gasParams.effectiveGasPriceWei,
+    maxCostWei: gasParams.maxCostWei,
     meta,
     flashParams,
     calls,

@@ -214,7 +214,7 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
     const postBuildAssessment = assessRouteResult(
       best.path,
       { ...best.result, totalGas: gasLimitToSafeNumber(builtTx.gasLimit) },
-      builtTx.maxFeePerGas,
+      builtTx.effectiveGasPriceWei ?? builtTx.maxFeePerGas,
       tokenToMaticRate,
       { minProfitWei: deps.minProfitWei },
     );

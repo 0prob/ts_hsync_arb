@@ -51,13 +51,14 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     // If every endpoint is currently rate-limited or cooling down, wait for
-    // the soonest one to recover before issuing the call.  Without this, we
+    // the soonest one to recover before issuing the call. Without this, we
     // burn all retry slots instantly on rapid-fire 429s and then throw even
-    // though a healthy endpoint would be available in a few seconds — or we
-    // keep hammering cooling endpoints and extend their cooldowns indefinitely.
+    // though a healthy endpoint would be available in a few seconds, or wake
+    // early and keep extending endpoint cooldowns under concurrent warmup.
     const waitMs = rpcManager.msUntilAnyEndpointAvailable();
     if (waitMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(waitMs + 50, 30_000)));
+      const jitterMs = Math.floor(Math.random() * 250);
+      await new Promise((resolve) => setTimeout(resolve, waitMs + 50 + jitterMs));
     }
 
     const endpoint = rpcManager.checkoutBestEndpoint();

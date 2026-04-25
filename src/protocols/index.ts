@@ -40,6 +40,7 @@ export const PROTOCOLS = {
 };
 
 export { CONTRACT_CATALOG, POLYGON_CHAIN_ID } from "./contract_catalog.ts";
+export * from "./classification.ts";
 
 /**
  * Curve PoolRemoved lifecycle event definition.

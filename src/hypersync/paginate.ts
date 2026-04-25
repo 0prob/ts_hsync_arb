@@ -26,6 +26,20 @@ type HyperSyncPageResult<TLog> = {
   archiveHeight: number | null;
   rollbackGuard: Record<string, unknown> | null;
   nextBlock: number | null;
+  pages: number;
+};
+
+type HyperSyncPaginationProgress = {
+  pages: number;
+  logs: number;
+  fromBlock: number;
+  nextBlock: number;
+  archiveHeight: number | null;
+};
+
+type HyperSyncPaginationOptions = {
+  maxPages?: number;
+  onProgress?: (progress: HyperSyncPaginationProgress) => void;
 };
 
 function resolvePaginationTarget(query: HyperSyncLogQuery, nextBlock: number, archiveHeight: number | null) {
@@ -53,24 +67,50 @@ function isTerminalBoundedCursor(
   return pageFromBlock + 1 >= targetEnd;
 }
 
+function parseBlockInteger(name: string, value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isSafeInteger(numeric) || numeric < 0) {
+    throw new Error(`HyperSync ${name} must be a finite non-negative safe integer.`);
+  }
+  return numeric;
+}
+
+function parseOptionalBlockInteger(name: string, value: unknown) {
+  if (value == null) return null;
+  return parseBlockInteger(name, value);
+}
+
+function parsePositiveInteger(name: string, value: unknown, fallback: number) {
+  if (value == null) return fallback;
+  const numeric = Number(value);
+  if (!Number.isSafeInteger(numeric) || numeric <= 0) {
+    throw new Error(`HyperSync ${name} must be a finite positive safe integer.`);
+  }
+  return numeric;
+}
+
+function pageLogsFromResponse<TLog>(res: HyperSyncGetResponse<TLog>): TLog[] {
+  const logs = res.data?.logs;
+  if (logs == null) return [];
+  if (!Array.isArray(logs)) {
+    throw new Error("HyperSync response data.logs must be an array when provided.");
+  }
+  return logs;
+}
+
 export async function fetchAllLogsWithClient<TLog>(
   hypersyncClient: { get: (query: HyperSyncLogQuery) => Promise<HyperSyncGetResponse<TLog>> },
   query: HyperSyncLogQuery,
+  options: HyperSyncPaginationOptions = {},
 ): Promise<HyperSyncPageResult<TLog>> {
-  if (!Number.isFinite(Number(query?.fromBlock))) {
-    throw new Error("HyperSync query must include a finite fromBlock.");
-  }
-  if (query?.toBlock != null && !Number.isFinite(Number(query.toBlock))) {
-    throw new Error("HyperSync query toBlock must be finite when provided.");
-  }
-
-  const initialFromBlock = Number(query.fromBlock);
-  const initialToBlock = query?.toBlock != null ? Number(query.toBlock) : null;
+  const initialFromBlock = parseBlockInteger("query fromBlock", query?.fromBlock);
+  const initialToBlock = parseOptionalBlockInteger("query toBlock", query?.toBlock);
   if (initialToBlock != null && initialToBlock < initialFromBlock) {
     throw new Error(
       `HyperSync query has invalid block range: fromBlock ${initialFromBlock} exceeds toBlock ${initialToBlock}.`,
     );
   }
+  const maxPages = parsePositiveInteger("pagination maxPages", options.maxPages, 10_000);
 
   if (initialToBlock != null && initialToBlock === initialFromBlock) {
     return {
@@ -78,39 +118,47 @@ export async function fetchAllLogsWithClient<TLog>(
       archiveHeight: null,
       rollbackGuard: null,
       nextBlock: initialFromBlock,
+      pages: 0,
     };
   }
 
   const allLogs: TLog[] = [];
   let currentQuery = applyHistoricalHyperSyncQueryPolicy(query);
-  let archiveHeight = null;
+  let archiveHeight: number | null = null;
   let rollbackGuard: Record<string, unknown> | null = null;
-  let lastNextBlock = null;
+  let lastNextBlock: number | null = null;
   let pages = 0;
 
   while (true) {
-    const pageFromBlock = Number(currentQuery.fromBlock);
+    const pageFromBlock = parseBlockInteger("page fromBlock", currentQuery.fromBlock);
+    if (pages >= maxPages) {
+      throw new Error(
+        `HyperSync pagination exceeded maxPages ${maxPages} before reaching a terminal cursor.`,
+      );
+    }
     const res = await hypersyncClient.get(currentQuery);
     pages++;
 
     if (res.archiveHeight != null) {
-      archiveHeight = Number(res.archiveHeight);
+      archiveHeight = parseBlockInteger("response archiveHeight", res.archiveHeight);
     }
     if (res.rollbackGuard) {
       rollbackGuard = res.rollbackGuard;
     }
 
-    const pageLogs = res.data?.logs ?? [];
+    const pageLogs = pageLogsFromResponse(res);
     if (pageLogs.length > 0) {
       allLogs.push(...pageLogs);
     }
 
-    const nextBlock = Number(res.nextBlock);
-    if (!Number.isFinite(nextBlock)) {
-      throw new Error(
-        "HyperSync response did not include a finite nextBlock cursor; cannot paginate safely."
-      );
-    }
+    const nextBlock = parseBlockInteger("response nextBlock cursor", res.nextBlock);
+    options.onProgress?.({
+      pages,
+      logs: allLogs.length,
+      fromBlock: pageFromBlock,
+      nextBlock,
+      archiveHeight,
+    });
     if (isTerminalBoundedCursor(currentQuery, pageFromBlock, nextBlock, pageLogs.length)) {
       lastNextBlock = Number(currentQuery.toBlock);
       break;
@@ -145,15 +193,12 @@ export async function fetchAllLogsWithClient<TLog>(
     currentQuery = { ...currentQuery, fromBlock: nextBlock };
   }
 
-  if (pages > 1) {
-    console.log(`    (fetched ${pages} pages, ${allLogs.length} total logs)`);
-  }
-
   return {
     logs: allLogs,
     archiveHeight,
     rollbackGuard,
     nextBlock: lastNextBlock,
+    pages,
   };
 }
 

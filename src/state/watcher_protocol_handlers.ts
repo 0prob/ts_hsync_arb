@@ -14,16 +14,16 @@ export function createWatcherProtocolHandlers({
       updateV2State(state, decoded, pool);
       return true;
     }],
-    [topic0.V3_SWAP, ({ state, decoded }: any) => {
-      updateV3SwapState(state, decoded);
+    [topic0.V3_SWAP, ({ state, decoded, pool }: any) => {
+      updateV3SwapState(state, decoded, pool);
       return true;
     }],
-    [topic0.V3_MINT, ({ state, decoded }: any) => {
-      updateV3LiquidityState(state, decoded, true);
+    [topic0.V3_MINT, ({ state, decoded, pool }: any) => {
+      updateV3LiquidityState(state, decoded, true, pool);
       return true;
     }],
-    [topic0.V3_BURN, ({ state, decoded }: any) => {
-      updateV3LiquidityState(state, decoded, false);
+    [topic0.V3_BURN, ({ state, decoded, pool }: any) => {
+      updateV3LiquidityState(state, decoded, false, pool);
       return true;
     }],
     [topic0.BAL_BALANCE, ({ addr, pool, enqueueEnrichment, refreshBalancer }: any) => {

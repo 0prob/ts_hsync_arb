@@ -19,10 +19,7 @@ import { TimedPoller } from "./poller_base.ts";
 import { mergeStateIntoCache } from "./cache_utils.ts";
 import { parsePoolTokens } from "./pool_record.ts";
 import { metadataWithRegistryTokenDecimals } from "./pool_metadata.ts";
-
-// ─── Protocols covered ────────────────────────────────────────
-
-const V2_PROTOCOLS = new Set(["QUICKSWAP_V2", "SUSHISWAP_V2", "UNISWAP_V2", "DFYN_V2", "COMETHSWAP_V2"]);
+import { normalizeProtocolKey, V2_PROTOCOLS } from "../protocols/classification.ts";
 
 // ─── Poller class ─────────────────────────────────────────────
 
@@ -50,7 +47,7 @@ export class PollUniv2 extends TimedPoller {
 
     // Load active V2 pools from registry
     const pools = this._registry.getActivePoolsMeta().filter(
-      (p: any) => V2_PROTOCOLS.has(p.protocol)
+      (p: any) => V2_PROTOCOLS.has(normalizeProtocolKey(p.protocol))
     );
 
     if (pools.length === 0) {
@@ -77,7 +74,7 @@ export class PollUniv2 extends TimedPoller {
 
       const tokens = parsePoolTokens(pool.tokens);
       const metadata = metadataWithRegistryTokenDecimals(this._registry, pool, tokens);
-      const normalized = normalizeV2State(addr, pool.protocol, tokens, rawState, metadata);
+      const normalized = normalizeV2State(addr, normalizeProtocolKey(pool.protocol), tokens, rawState, metadata);
 
       mergeStateIntoCache(this._cache, addr, normalized);
       updated++;

@@ -14,7 +14,7 @@ type RevalidationDeps = {
   minProfitWei: bigint;
   maxExecutionBatch: number;
   log: (msg: string, level?: "fatal" | "error" | "warn" | "info" | "debug" | "trace", meta?: unknown) => void;
-  getCurrentFeeSnapshot: () => Promise<{ maxFee?: bigint } | null>;
+  getCurrentFeeSnapshot: () => Promise<{ maxFee?: bigint; effectiveGasPriceWei?: bigint } | null>;
   getFreshTokenToMaticRate: (tokenAddress: string) => bigint;
   getRouteFreshness: (path: ArbPathLike) => { ok: boolean; reason?: string };
   simulateRoute: (path: ArbPathLike, amountIn: bigint, stateCache: Map<string, Record<string, any>>) => RouteResultLike;
@@ -46,14 +46,23 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
       });
       return;
     }
-    const gasPriceWei = feeSnapshot.maxFee;
+    const gasPriceWei = feeSnapshot.effectiveGasPriceWei ?? feeSnapshot.maxFee;
 
     const profitable: ExecutableCandidate[] = [];
     let quickRejected = 0;
     let optimizedRoutes = 0;
+    let missingTokenRates = 0;
+    const rejectReasons: Record<string, number> = {};
+    const recordReject = (reason: string | undefined) => {
+      const key = reason && reason.trim() ? reason : "assessment_rejected";
+      rejectReasons[key] = (rejectReasons[key] ?? 0) + 1;
+    };
     for (const { path, result: prev } of affected) {
       const tokenToMaticRate = deps.getFreshTokenToMaticRate(path.startToken);
-      if (tokenToMaticRate <= 0n) continue;
+      if (tokenToMaticRate <= 0n) {
+        missingTokenRates++;
+        continue;
+      }
 
       const quickResult = deps.simulateRoute(
         path,
@@ -90,7 +99,10 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
         ) || quickResult;
       }
       if (!optimized?.profitable) {
-        if (!quickAssessment.shouldExecute) quickRejected++;
+        if (!quickAssessment.shouldExecute) {
+          quickRejected++;
+          recordReject(quickAssessment.rejectReason);
+        }
         continue;
       }
 
@@ -105,6 +117,9 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
         profitable.push({ path, result: optimized, assessment });
       } else if (!quickAssessment.shouldExecute) {
         quickRejected++;
+        recordReject(assessment.rejectReason || quickAssessment.rejectReason);
+      } else {
+        recordReject(assessment.rejectReason);
       }
     }
 
@@ -113,6 +128,8 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
       affectedRoutes: affected.length,
       quickRejected,
       optimizedRoutes,
+      missingTokenRates,
+      rejectReasons,
       profitableRoutes: profitable.length,
     });
 

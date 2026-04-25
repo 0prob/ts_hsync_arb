@@ -57,6 +57,15 @@ function formatStatus(state: BotState, spinnerFrame: string) {
   return colorize('IDLE', YELLOW);
 }
 
+function formatLastPass(timestampMs: number) {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return 'never';
+  const date = new Date(timestampMs);
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
 function normalizeOpportunity(opportunity: BotOpportunityRow, index: number, width: number) {
   const prefix = colorize(`${String(index + 1).padStart(2, '0')}.`, CYAN);
   const routeWidth = Math.max(18, width - 30);
@@ -67,10 +76,18 @@ function normalizeOpportunity(opportunity: BotOpportunityRow, index: number, wid
 }
 
 function summarizeLogLevel(line: string) {
+  if (line.includes('[FATAL]')) return RED;
   if (line.includes('[ERROR]')) return RED;
   if (line.includes('[WARN]')) return YELLOW;
   if (line.includes('[DEBUG]')) return BLUE;
   return WHITE;
+}
+
+function normalizeLogLine(line: string) {
+  return line
+    .replace(/\s+/g, ' ')
+    .replace(/topReject=net profit ([^|]+)/g, 'topReject=net_profit $1')
+    .trim();
 }
 
 function formatLogs(state: BotState, width: number) {
@@ -79,7 +96,7 @@ function formatLogs(state: BotState, width: number) {
     return [colorize('No logs yet...', DIM)];
   }
 
-  return logs.map((line) => colorize(truncate(line.replace(/\s+/g, ' ').trim(), width), summarizeLogLevel(line)));
+  return logs.map((line) => colorize(truncate(normalizeLogLine(line), width), summarizeLogLevel(line)));
 }
 
 function appendCapturedLog(state: BotState, label: string, line: string) {
@@ -166,6 +183,9 @@ function renderFrame(state: BotState, columns: number, spinnerFrame: string): st
     `${colorize('status', DIM)} ${formatStatus(state, spinnerFrame)}`,
     `${colorize('passes', DIM)} ${state.passCount}`,
     `${colorize('errors', DIM)} ${state.consecutiveErrors}`,
+    `${colorize('last', DIM)} ${formatLastPass(state.lastArbMs)}`,
+  ].join(` ${colorize('•', DIM)} `);
+  const market = [
     `${colorize('gas', DIM)} ${state.gasPrice} gwei`,
     `${colorize('matic', DIM)} $${state.maticPrice}`,
   ].join(` ${colorize('•', DIM)} `);
@@ -176,6 +196,7 @@ function renderFrame(state: BotState, columns: number, spinnerFrame: string): st
     `│ ${pad(subtitle, innerWidth)} │`,
     `│ ${pad('', innerWidth)} │`,
     `│ ${pad(truncate(stats, innerWidth), innerWidth)} │`,
+    `│ ${pad(truncate(market, innerWidth), innerWidth)} │`,
     `│ ${pad('', innerWidth)} │`,
     `│ ${pad(section('Top opportunities', innerWidth, MAGENTA), innerWidth)} │`,
   ];
@@ -209,6 +230,7 @@ function signatureFor(state: BotState, columns: number) {
     consecutiveErrors: state.consecutiveErrors,
     gasPrice: state.gasPrice,
     maticPrice: state.maticPrice,
+    lastArbMs: state.lastArbMs,
     opportunities: state.opportunities.slice(0, MAX_OPPORTUNITIES),
     logs: state.logs.slice(0, MAX_LOGS),
   });
@@ -310,6 +332,7 @@ export function startTui(state: BotState): () => void {
 
 export const __tuiTest = {
   formatLogs,
+  formatLastPass,
   installOutputGuard,
   renderFrame,
   signatureFor,

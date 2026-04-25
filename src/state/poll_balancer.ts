@@ -14,12 +14,7 @@ import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { parsePoolMetadata, parsePoolTokens } from "./pool_record.ts";
 import { metadataWithTokenDecimals } from "./pool_metadata.ts";
 import { asBatchResult, TimedPoller } from "./poller_base.ts";
-
-const BALANCER_PROTOCOLS = new Set([
-  "BALANCER_WEIGHTED",
-  "BALANCER_STABLE",
-  "BALANCER_V2",
-]);
+import { BALANCER_PROTOCOLS, normalizeProtocolKey } from "../protocols/classification.ts";
 
 const BALANCER_VAULT = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
 const BALANCER_READ_TIMEOUT_MS = 20_000;
@@ -197,7 +192,7 @@ export class PollBalancer extends TimedPoller {
     const t0 = Date.now();
 
     const pools = this._registry.getActivePoolsMeta().filter((p: any) =>
-      BALANCER_PROTOCOLS.has(p.protocol)
+      BALANCER_PROTOCOLS.has(normalizeProtocolKey(p.protocol))
     );
 
     if (pools.length === 0) {

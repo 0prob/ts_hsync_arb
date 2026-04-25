@@ -22,19 +22,12 @@ import { mergeStateIntoCache } from "./cache_utils.ts";
 import { V3_POLL_MAX_POOLS } from "../config/index.ts";
 import { parsePoolMetadata, parsePoolTokens } from "./pool_record.ts";
 import { metadataWithRegistryTokenDecimals } from "./pool_metadata.ts";
-
-// ─── Protocols covered ────────────────────────────────────────
-
-const V3_PROTOCOLS = new Set([
-  "UNISWAP_V3",
-  "QUICKSWAP_V3",
-  "SUSHISWAP_V3",
-  "KYBERSWAP_ELASTIC",
-]);
+import { normalizeProtocolKey, V3_PROTOCOLS } from "../protocols/classification.ts";
 
 function isAlgebraPool(pool: any) {
   const metadata = parsePoolMetadata(pool?.metadata);
-  return pool?.protocol === "QUICKSWAP_V3" || pool?.protocol === "KYBERSWAP_ELASTIC" || metadata?.isAlgebra === true || metadata?.isKyberElastic === true;
+  const protocol = normalizeProtocolKey(pool?.protocol);
+  return protocol === "QUICKSWAP_V3" || protocol === "KYBERSWAP_ELASTIC" || metadata?.isAlgebra === true || metadata?.isKyberElastic === true;
 }
 
 // ─── Poller class ─────────────────────────────────────────────
@@ -64,7 +57,7 @@ export class PollUniv3 extends TimedPoller {
     const t0 = Date.now();
 
     const pools = this._registry.getActivePoolsMeta()
-      .filter((p: any) => V3_PROTOCOLS.has(p.protocol))
+      .filter((p: any) => V3_PROTOCOLS.has(normalizeProtocolKey(p.protocol)))
       .slice(0, this._maxPools);
 
     if (pools.length === 0) {
@@ -79,9 +72,10 @@ export class PollUniv3 extends TimedPoller {
     const poolMeta = new Map();
     for (const pool of pools) {
       if (isAlgebraPool(pool)) {
+        const protocol = normalizeProtocolKey(pool.protocol);
         poolMeta.set(pool.pool_address.toLowerCase(), {
           isAlgebra: true,
-          isKyberElastic: pool.protocol === "KYBERSWAP_ELASTIC" || parsePoolMetadata(pool.metadata).isKyberElastic === true,
+          isKyberElastic: protocol === "KYBERSWAP_ELASTIC" || parsePoolMetadata(pool.metadata).isKyberElastic === true,
         });
       }
     }
@@ -103,7 +97,7 @@ export class PollUniv3 extends TimedPoller {
 
       const tokens = parsePoolTokens(pool.tokens);
       const metadata = metadataWithRegistryTokenDecimals(this._registry, pool, tokens);
-      const normalized = normalizeV3State(addr, pool.protocol, tokens, rawState, metadata);
+      const normalized = normalizeV3State(addr, normalizeProtocolKey(pool.protocol), tokens, rawState, metadata);
 
       mergeStateIntoCache(this._cache, addr, normalized);
       updated++;

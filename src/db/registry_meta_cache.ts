@@ -3,6 +3,7 @@
  * src/db/registry_meta_cache.js — Metadata cache helper for RegistryService
  */
 
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 import { loadPoolMetaCache } from "./registry_pools.ts";
 
 export class RegistryMetaCache {
@@ -43,7 +44,8 @@ export class RegistryMetaCache {
   }
 
   get(address: any) {
-    const normalizedAddress = address.toLowerCase();
+    const normalizedAddress = normalizeEvmAddress(address);
+    if (!normalizedAddress) return null;
 
     if (this._activePoolMetaByAddressCache?.has(normalizedAddress)) {
       return this._activePoolMetaByAddressCache.get(normalizedAddress) ?? null;

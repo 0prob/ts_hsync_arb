@@ -1,6 +1,15 @@
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
 
+import {
+  normalizeChangedPools,
+  normalizeEventPayload,
+  normalizeReorgBlock,
+  type PoolsChangedEvent,
+  type ReorgDetectedEvent,
+  type WatcherHaltEvent,
+} from "../runtime/events.ts";
+
 type StoppableWatcher = {
   stop: () => Promise<void>;
 };
@@ -22,6 +31,7 @@ export function createArbScheduler(deps: {
   recordArbActivity: (changedPools: number) => void;
   getAdaptiveDebounceMs: () => number;
   runPass: () => Promise<void>;
+  onRunError?: (error: unknown) => void;
 }) {
   let arbQueued = false;
   let lastArbMs = 0;
@@ -38,9 +48,16 @@ export function createArbScheduler(deps: {
     for (const resolve of resolvers) resolve();
   }
 
+  function normalizeChangedPoolCount(value: unknown) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+    return Math.floor(numeric);
+  }
+
   function scheduleArb(changedPools = 0) {
     if (!deps.isRunning()) return;
-    deps.recordArbActivity(changedPools);
+    const changedPoolCount = normalizeChangedPoolCount(changedPools);
+    deps.recordArbActivity(changedPoolCount);
     if (arbQueued || arbRunning) {
       arbDirty = true;
       return;
@@ -68,6 +85,8 @@ export function createArbScheduler(deps: {
       arbRunning = true;
       try {
         await deps.runPass();
+      } catch (error) {
+        deps.onRunError?.(error);
       } finally {
         arbRunning = false;
         if (arbDirty && deps.isRunning()) {
@@ -144,40 +163,45 @@ export function createShutdownHandler(deps: {
 
 export function configureWatcherCallbacks(deps: {
   watcher: {
-    onBatch: ((changedAddrs: Set<string>) => void) | null;
-    onReorg: ((payload: { reorgBlock: number; changedAddrs?: Iterable<string> | Array<string> }) => void) | null;
-    onHalt: ((payload: Record<string, unknown>) => void) | null;
+    onBatch: ((changedAddrs: any) => void) | null;
+    onReorg: ((payload: any) => void) | null;
+    onHalt: ((payload: any) => void) | null;
   };
   log: LoggerFn;
-  onPoolsChanged: (event: { type: "pools_changed"; changedPools: Set<string> }) => Promise<void> | void;
-  onReorgDetected: (event: { type: "reorg_detected"; reorgBlock: number; changedPools: Set<string> }) => Promise<void> | void;
-  onHaltDetected?: (event: { type: "watcher_halt"; payload: Record<string, unknown> }) => Promise<void> | void;
+  onPoolsChanged: (event: PoolsChangedEvent) => Promise<void> | void;
+  onReorgDetected: (event: ReorgDetectedEvent) => Promise<void> | void;
+  onHaltDetected?: (event: WatcherHaltEvent) => Promise<void> | void;
   scheduleArb: (changedPools?: number) => void;
 }) {
-  deps.watcher.onBatch = (changedAddrs: Set<string>) => {
+  deps.watcher.onBatch = (changedAddrs: unknown) => {
+    const changedPools = normalizeChangedPools(changedAddrs);
     Promise.resolve(deps.onPoolsChanged({
       type: "pools_changed",
-      changedPools: changedAddrs,
+      changedPools,
     })).catch((err: unknown) => {
       deps.log(`Watcher batch handling failed: ${errorMessage(err)}`, "warn", {
         event: "watcher_batch_error",
         err,
       });
     }).finally(() => {
-      deps.scheduleArb(changedAddrs.size);
+      deps.scheduleArb(changedPools.size);
     });
   };
 
-  deps.watcher.onReorg = ({ reorgBlock, changedAddrs }: { reorgBlock: number; changedAddrs?: Iterable<string> | Array<string> }) => {
-    const changedPools = new Set(
-      changedAddrs instanceof Set
-        ? changedAddrs
-        : Array.isArray(changedAddrs)
-          ? changedAddrs
-          : changedAddrs
-            ? [...changedAddrs]
-            : [],
-    );
+  deps.watcher.onReorg = (payload: { reorgBlock?: unknown; changedAddrs?: unknown } | unknown) => {
+    const eventPayload = normalizeEventPayload(payload);
+    const reorgBlock = normalizeReorgBlock(eventPayload.reorgBlock);
+    const changedPools = normalizeChangedPools(eventPayload.changedAddrs);
+    if (reorgBlock == null) {
+      deps.log("Watcher reorg event ignored because reorgBlock is invalid", "warn", {
+        event: "watcher_reorg_invalid",
+        reorgBlock: eventPayload.reorgBlock,
+        changedPools: changedPools.size,
+      });
+      deps.scheduleArb(changedPools.size);
+      return;
+    }
+
     Promise.resolve(deps.onReorgDetected({
       type: "reorg_detected",
       reorgBlock,
@@ -192,10 +216,10 @@ export function configureWatcherCallbacks(deps: {
     });
   };
 
-  deps.watcher.onHalt = (payload: Record<string, unknown>) => {
+  deps.watcher.onHalt = (payload: unknown) => {
     Promise.resolve(deps.onHaltDetected?.({
       type: "watcher_halt",
-      payload,
+      payload: normalizeEventPayload(payload),
     })).catch((err: unknown) => {
       deps.log(`Watcher halt handling failed: ${errorMessage(err)}`, "warn", {
         event: "watcher_halt_error",
