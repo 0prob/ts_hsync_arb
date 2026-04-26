@@ -16,12 +16,45 @@ import { HYPERSYNC_URL, ENVIO_API_TOKEN } from "../config/index.ts";
 
 const require = createRequire(import.meta.url);
 
+type HypersyncClientConfig = {
+  url: string;
+  apiToken: string;
+};
+
+export type HypersyncClientRuntime = {
+  getHeight: () => Promise<number>;
+  getChainId: () => Promise<number>;
+  get: <T = unknown>(query: unknown) => Promise<T>;
+  getWithRateLimit: <T = unknown>(query: unknown) => Promise<T>;
+  getEvents: <T = unknown>(query: unknown) => Promise<T>;
+  collect: <T = unknown>(query: unknown, config: unknown) => Promise<T>;
+  collectEvents: <T = unknown>(query: unknown, config: unknown) => Promise<T>;
+  collectParquet: (path: string, query: unknown, config: unknown) => Promise<void>;
+  streamHeight: <T = unknown>() => Promise<T>;
+  stream: <T = unknown>(query: unknown, config: unknown) => Promise<T>;
+  streamEvents: <T = unknown>(query: unknown, config: unknown) => Promise<T>;
+  rateLimitInfo: () => unknown;
+  waitForRateLimit: () => Promise<void>;
+};
+
+type HypersyncModuleLike = {
+  HypersyncClient?: new (cfg: HypersyncClientConfig) => HypersyncClientRuntime;
+} | null;
+
 function createUnsupportedHypersyncError(cause: any) {
   const err = new Error(
     "HyperSync client is unavailable on this runtime. " +
     "The installed @envio-dev/hypersync-client@1.3.0 package does not ship a native binding for this platform."
   );
+  err.name = "HyperSyncClientUnavailableError";
   err.cause = cause;
+  return err;
+}
+
+function createHypersyncConfigError(message: string, cause?: unknown) {
+  const err = new Error(`HyperSync client configuration failed: ${message}`);
+  err.name = "HyperSyncClientConfigError";
+  if (cause !== undefined) err.cause = cause;
   return err;
 }
 
@@ -34,8 +67,62 @@ try {
   hypersyncImportError = createUnsupportedHypersyncError(err);
 }
 
-function throwUnsupportedHypersync() {
-  throw hypersyncImportError;
+function throwUnsupportedHypersync(error = hypersyncImportError): never {
+  throw error ?? createUnsupportedHypersyncError(new Error("unknown HyperSync client initialization failure"));
+}
+
+export function normalizeHypersyncClientConfig(rawConfig: HypersyncClientConfig) {
+  const url = String(rawConfig?.url ?? "").trim();
+  const apiToken = String(rawConfig?.apiToken ?? "").trim();
+  if (!url) {
+    throw createHypersyncConfigError("HYPERSYNC_URL must be a non-empty URL.");
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`unsupported protocol ${parsed.protocol}`);
+    }
+  } catch (err) {
+    throw createHypersyncConfigError(`HYPERSYNC_URL is not a valid HTTP(S) URL: ${url}`, err);
+  }
+  return { url, apiToken };
+}
+
+export function createUnavailableHypersyncClient(error: unknown): HypersyncClientRuntime {
+  const unavailableError = error instanceof Error ? error : createUnsupportedHypersyncError(error);
+  return {
+    getHeight: async () => throwUnsupportedHypersync(unavailableError),
+    getChainId: async () => throwUnsupportedHypersync(unavailableError),
+    get: async () => throwUnsupportedHypersync(unavailableError),
+    getWithRateLimit: async () => throwUnsupportedHypersync(unavailableError),
+    getEvents: async () => throwUnsupportedHypersync(unavailableError),
+    collect: async () => throwUnsupportedHypersync(unavailableError),
+    collectEvents: async () => throwUnsupportedHypersync(unavailableError),
+    collectParquet: async () => throwUnsupportedHypersync(unavailableError),
+    streamHeight: async () => throwUnsupportedHypersync(unavailableError),
+    stream: async () => throwUnsupportedHypersync(unavailableError),
+    streamEvents: async () => throwUnsupportedHypersync(unavailableError),
+    rateLimitInfo: () => throwUnsupportedHypersync(unavailableError),
+    waitForRateLimit: async () => throwUnsupportedHypersync(unavailableError),
+  };
+}
+
+export function createHypersyncClient(
+  hypersyncModule: HypersyncModuleLike,
+  rawConfig: HypersyncClientConfig,
+  importError: unknown = hypersyncImportError,
+): HypersyncClientRuntime {
+  const HypersyncClientImpl = hypersyncModule?.HypersyncClient ?? null;
+  if (!HypersyncClientImpl) {
+    return createUnavailableHypersyncClient(importError ?? createUnsupportedHypersyncError("missing HypersyncClient export"));
+  }
+  try {
+    return new HypersyncClientImpl(normalizeHypersyncClientConfig(rawConfig));
+  } catch (err) {
+    return createUnavailableHypersyncClient(
+      createHypersyncConfigError(String((err as { message?: string })?.message ?? err), err),
+    );
+  }
 }
 
 class UnsupportedDecoder {
@@ -67,11 +154,11 @@ const fallbackLogField = {
 };
 
 const fallbackJoinMode = {
-  JoinAll: "JoinAll",
-  JoinNothing: "JoinNothing",
+  Default: 0,
+  JoinAll: 1,
+  JoinNothing: 2,
 };
 
-const HypersyncClientImpl = hypersync?.HypersyncClient ?? null;
 const DecoderImpl = hypersync?.Decoder ?? UnsupportedDecoder;
 
 export const BlockField = hypersync?.BlockField ?? fallbackBlockField;
@@ -84,14 +171,4 @@ const clientConfig = {
   apiToken: ENVIO_API_TOKEN || "",
 };
 
-export const client = HypersyncClientImpl
-  ? new HypersyncClientImpl(clientConfig)
-  : {
-      getHeight: async () => throwUnsupportedHypersync(),
-      get: async () => throwUnsupportedHypersync(),
-      getEvents: async () => throwUnsupportedHypersync(),
-      collect: async () => throwUnsupportedHypersync(),
-      collectEvents: async () => throwUnsupportedHypersync(),
-      stream: async () => throwUnsupportedHypersync(),
-      streamEvents: async () => throwUnsupportedHypersync(),
-    };
+export const client = createHypersyncClient(hypersync, clientConfig, hypersyncImportError);

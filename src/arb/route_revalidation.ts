@@ -53,12 +53,31 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
     let optimizedRoutes = 0;
     let missingTokenRates = 0;
     const rejectReasons: Record<string, number> = {};
+    const tokenRateCache = new Map<string, bigint>();
     const recordReject = (reason: string | undefined) => {
       const key = reason && reason.trim() ? reason : "assessment_rejected";
       rejectReasons[key] = (rejectReasons[key] ?? 0) + 1;
     };
+    const tokenRateFor = (tokenAddress: string) => {
+      const key = String(tokenAddress ?? "").toLowerCase();
+      const cached = tokenRateCache.get(key);
+      if (cached != null) return cached;
+      const rate = deps.getFreshTokenToMaticRate(tokenAddress);
+      tokenRateCache.set(key, rate);
+      return rate;
+    };
     for (const { path, result: prev } of affected) {
-      const tokenToMaticRate = deps.getFreshTokenToMaticRate(path.startToken);
+      const freshness = deps.getRouteFreshness(path);
+      if (!freshness.ok) {
+        deps.log(`[fast-revalidate] Skipping stale route: ${freshness.reason}`, "debug", {
+          event: "fast_revalidate_skip_stale",
+          reason: freshness.reason,
+          hopCount: path.hopCount,
+        });
+        continue;
+      }
+
+      const tokenToMaticRate = tokenRateFor(path.startToken);
       if (tokenToMaticRate <= 0n) {
         missingTokenRates++;
         continue;
@@ -76,16 +95,6 @@ export function createRouteRevalidator(deps: RevalidationDeps) {
         tokenToMaticRate,
         { minProfitWei: deps.minProfitWei },
       );
-
-      const freshness = deps.getRouteFreshness(path);
-      if (!freshness.ok) {
-        deps.log(`[fast-revalidate] Skipping stale route: ${freshness.reason}`, "debug", {
-          event: "fast_revalidate_skip_stale",
-          reason: freshness.reason,
-          hopCount: path.hopCount,
-        });
-        continue;
-      }
 
       let optimized = quickResult;
       if (quickAssessment.shouldExecute || quickResult.profit > 0n) {

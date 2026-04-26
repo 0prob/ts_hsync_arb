@@ -64,7 +64,7 @@ export function createBootModeCoordinator<Watcher extends WatcherLike, BotState>
     deps.configureWatcher(watcher);
 
     deps.log(
-      `Starting HyperSync stream (debounce: ${deps.fastArbDebounceMs}-${deps.baseArbDebounceMs}ms adaptive, heartbeat: ${deps.formatDuration(deps.heartbeatIntervalMs)})...`,
+      `Starting HyperSync polling watcher (debounce: ${deps.fastArbDebounceMs}-${deps.baseArbDebounceMs}ms adaptive, heartbeat: ${deps.formatDuration(deps.heartbeatIntervalMs)})...`,
       "info",
       {
         event: "watcher_start",

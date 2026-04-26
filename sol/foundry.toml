@@ -1,4 +1,6 @@
 [profile.default]
+solc_version = "0.8.34"
+
 evm_version = "shanghai"     # Modern EVM with PUSH0 support
 via_ir = true                # Yul IR pipeline → smaller bytecode, fixes stack-too-deep
 optimizer = true

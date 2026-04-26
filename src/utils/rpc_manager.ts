@@ -75,6 +75,7 @@ const MAX_BACKOFF_MS = 300_000;     // 5 min ceiling
 const ERROR_COOLDOWN_BASE_MS = 5_000;
 const ERROR_COOLDOWN_MAX_MS = 60_000;
 const METHOD_UNAVAILABLE_COOLDOWN_MS = 86_400_000; // 24 h
+const IN_FLIGHT_LATENCY_PENALTY_MS = 250;
 
 class RpcEndpoint {
   url: string;
@@ -148,6 +149,7 @@ class RpcEndpoint {
    */
   markSuccess() {
     this.consecutiveErrors = 0;
+    this.rateLimitedUntil = 0;
     this.errorCooldownUntil = 0;
     this._backoffMs = INITIAL_BACKOFF_MS;
   }
@@ -155,7 +157,13 @@ class RpcEndpoint {
   /**
    * Record a non-rate-limit error (network, timeout, 5xx).
    */
-  markError() {
+  markError(options: { extendActiveCooldown?: boolean } = {}) {
+    const extendActiveCooldown = options.extendActiveCooldown ?? true;
+    if (!extendActiveCooldown && this.isCoolingDown()) {
+      this.latencyMs = Infinity;
+      return;
+    }
+
     this.consecutiveErrors++;
     this.latencyMs = Infinity;
     const cooldownMs = Math.min(
@@ -189,7 +197,7 @@ class RpcEndpoint {
         this.markSuccess();
       }
     } catch {
-      this.markError();
+      this.markError({ extendActiveCooldown: false });
     }
   }
 }
@@ -199,6 +207,7 @@ class RpcEndpoint {
 class RpcManager {
   endpoints: RpcEndpoint[];
   _probeInterval: ReturnType<typeof setInterval> | null;
+  _probePromise: Promise<void> | null;
   _nextIndex: number;
 
   constructor(urls: string[]) {
@@ -207,12 +216,14 @@ class RpcManager {
     }
     this.endpoints = urls.map((u) => new RpcEndpoint(u));
     this._probeInterval = null;
+    this._probePromise = null;
     this._nextIndex = 0;
   }
 
   /**
    * Return the healthiest endpoint:
-   *   1. Non-rate-limited, non-cooling endpoints sorted by ascending latency
+   *   1. Non-rate-limited, non-cooling endpoints sorted by latency plus a
+   *      small in-flight load penalty
    *   2. If all healthy candidates are cooling down, pick the one whose
    *      transport-error cooldown expires soonest
    *   3. If ALL are rate-limited, pick the one whose cooldown expires soonest
@@ -230,7 +241,7 @@ class RpcManager {
     if (healthy.length > 0) {
       return this._selectEndpoint(
         healthy,
-        (ep) => [ep.inFlight, ep.latencyMs]
+        (ep) => this._endpointLoadScore(ep)
       );
     }
 
@@ -324,8 +335,18 @@ class RpcManager {
    * Probe all endpoints concurrently and log the ranked results.
    */
   async probe() {
-    await Promise.allSettled(this.endpoints.map((ep) => ep.probe()));
-    this._logRanking();
+    if (this._probePromise) return this._probePromise;
+
+    this._probePromise = (async () => {
+      try {
+        await Promise.allSettled(this.endpoints.map((ep) => ep.probe()));
+        this._logRanking();
+      } finally {
+        this._probePromise = null;
+      }
+    })();
+
+    return this._probePromise;
   }
 
   /** Start background probing at the given interval (default 15 s). */
@@ -423,6 +444,18 @@ class RpcManager {
       if (candidates.includes(ep)) return ep;
     }
     return candidates[0];
+  }
+
+  _endpointLoadScore(ep: RpcEndpoint) {
+    const hasLatency = Number.isFinite(ep.latencyMs);
+    const effectiveLatency = hasLatency
+      ? ep.latencyMs + ep.inFlight * IN_FLIGHT_LATENCY_PENALTY_MS
+      : Infinity;
+    return [
+      hasLatency ? 0 : 1,
+      effectiveLatency,
+      ep.inFlight,
+    ];
   }
 }
 

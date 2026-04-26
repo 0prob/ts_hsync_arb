@@ -33,9 +33,9 @@ assert.equal(isSwapExecutionProtocol(" kyberswap_elastic "), true);
 
 {
   const normalized = normalizePoolState(
-    pool,
+    pool.toUpperCase(),
     " kyberswap_elastic ",
-    [tokenA, tokenB],
+    [tokenA.toUpperCase(), tokenB],
     {
       fee: 3000n,
       sqrtPriceX96: 79228162514264337593543950336n,
@@ -48,7 +48,51 @@ assert.equal(isSwapExecutionProtocol(" kyberswap_elastic "), true);
   );
   assert.equal(normalized?.protocol, "KYBERSWAP_ELASTIC");
   assert.equal(normalized?.isKyberElastic, true);
+  assert.equal(normalized?.poolId, pool, "state normalization should canonicalize pool addresses");
+  assert.deepEqual(
+    normalized?.tokens,
+    [tokenA, tokenB],
+    "state normalization should canonicalize token addresses before validation",
+  );
 }
+
+assert.equal(
+  normalizePoolState(
+    "0xnotapool",
+    " kyberswap_elastic ",
+    [tokenA, tokenB],
+    {
+      fee: 3000n,
+      sqrtPriceX96: 79228162514264337593543950336n,
+      tick: 0,
+      liquidity: 1_000_000n,
+      tickSpacing: 60,
+      ticks: new Map(),
+      fetchedAt: 1,
+    },
+  ),
+  null,
+  "invalid pool addresses should be rejected without throwing",
+);
+
+assert.equal(
+  normalizePoolState(
+    pool,
+    " kyberswap_elastic ",
+    [tokenA, "0xnotatoken"],
+    {
+      fee: 3000n,
+      sqrtPriceX96: 79228162514264337593543950336n,
+      tick: 0,
+      liquidity: 1_000_000n,
+      tickSpacing: 60,
+      ticks: new Map(),
+      fetchedAt: 1,
+    },
+  ),
+  null,
+  "invalid token addresses should be rejected without throwing",
+);
 
 {
   const calls = encodeRoute(

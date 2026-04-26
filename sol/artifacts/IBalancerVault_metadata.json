@@ -1,0 +1,74 @@
+{
+	"compiler": {
+		"version": "0.8.34+commit.80d5c536"
+	},
+	"language": "Solidity",
+	"output": {
+		"abi": [
+			{
+				"inputs": [
+					{
+						"internalType": "contract IFlashLoanRecipient",
+						"name": "recipient",
+						"type": "address"
+					},
+					{
+						"internalType": "contract IERC20Minimal[]",
+						"name": "tokens",
+						"type": "address[]"
+					},
+					{
+						"internalType": "uint256[]",
+						"name": "amounts",
+						"type": "uint256[]"
+					},
+					{
+						"internalType": "bytes",
+						"name": "userData",
+						"type": "bytes"
+					}
+				],
+				"name": "flashLoan",
+				"outputs": [],
+				"stateMutability": "nonpayable",
+				"type": "function"
+			}
+		],
+		"devdoc": {
+			"kind": "dev",
+			"methods": {},
+			"version": 1
+		},
+		"userdoc": {
+			"kind": "user",
+			"methods": {},
+			"version": 1
+		}
+	},
+	"settings": {
+		"compilationTarget": {
+			"src/ArbExecutor.sol": "IBalancerVault"
+		},
+		"evmVersion": "osaka",
+		"libraries": {},
+		"metadata": {
+			"bytecodeHash": "ipfs"
+		},
+		"optimizer": {
+			"enabled": false,
+			"runs": 200
+		},
+		"remappings": []
+	},
+	"sources": {
+		"src/ArbExecutor.sol": {
+			"keccak256": "0xadba406bfcc1849dfb5ad768cbde73a9c78a2ee1e3173b415c64ad80b142cc30",
+			"license": "MIT",
+			"urls": [
+				"bzz-raw://bc2f30c2f7065f363a0ce59ee6596befbec5c61ff50c966c01cf66b85049a309",
+				"dweb:/ipfs/Qmdgumui8dnRiDRtCFxiCYzCcQVCvVAi2zgncxdADr4kkL"
+			]
+		}
+	},
+	"version": 1
+}

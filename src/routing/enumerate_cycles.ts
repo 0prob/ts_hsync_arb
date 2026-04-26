@@ -81,24 +81,34 @@ function sortByLogWeight(paths: any) {
   return paths.sort(compareByLogWeight);
 }
 
+function normalizePathBudget(value: any) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.floor(numeric);
+}
+
 function selectTopPaths(paths: any, limit: number) {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
-  if (paths.length <= limit) return sortByLogWeight(paths);
-  return takeTopNBy(paths, limit, compareByLogWeight);
+  const normalizedLimit = normalizePathBudget(limit);
+  if (normalizedLimit <= 0) return [];
+  if (paths.length <= normalizedLimit) return sortByLogWeight(paths);
+  return takeTopNBy(paths, normalizedLimit, compareByLogWeight);
 }
 
 function resolvePhaseBudget(rawBudget: number | undefined, maxTotal: number, fallbackRatio: number) {
-  const fallback = Math.ceil(maxTotal * fallbackRatio);
+  const normalizedMax = normalizePathBudget(maxTotal);
+  if (normalizedMax <= 0) return 0;
+  const fallback = Math.ceil(normalizedMax * fallbackRatio);
   const requested = rawBudget ?? fallback;
-  if (!Number.isFinite(requested)) return fallback;
-  return Math.max(0, Math.min(maxTotal, Math.floor(requested)));
+  const requestedBudget = normalizePathBudget(requested);
+  return Math.max(0, Math.min(normalizedMax, requestedBudget));
 }
 
 // ─── Single-graph (backward-compatible) ──────────────────────
 
 export function enumerateCycles(graph: any, options: any = {}) {
   const opts = { ...DEFAULTS, ...options };
-  if (!Number.isFinite(opts.maxTotalPaths) || opts.maxTotalPaths <= 0) return [];
+  const maxTotal = normalizePathBudget(opts.maxTotalPaths);
+  if (maxTotal <= 0) return [];
 
   let startTokens;
   if (opts.startTokens) {
@@ -129,15 +139,15 @@ export function enumerateCycles(graph: any, options: any = {}) {
   if (opts.minLiquidityWmatic > 0n && opts.getRateWei) {
     paths = pruneByLiquidity(paths, opts.minLiquidityWmatic, opts.getRateWei);
   }
-  return selectTopPaths(paths, opts.maxTotalPaths);
+  return selectTopPaths(paths, maxTotal);
 }
 
 // ─── Dual-graph hub-first (preferred) ────────────────────────
 
 export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any = {}) {
   const opts      = { ...DEFAULTS, ...options };
-  const maxTotal  = opts.maxTotalPaths;
-  if (!Number.isFinite(maxTotal) || maxTotal <= 0) return [];
+  const maxTotal  = normalizePathBudget(opts.maxTotalPaths);
+  if (maxTotal <= 0) return [];
   const hubBudget = resolvePhaseBudget(opts.hubPathBudget, maxTotal, 0.6);
   const pruneOpts = { minV2Reserve: opts.minV2Reserve, probeWei: opts.probeWei };
 

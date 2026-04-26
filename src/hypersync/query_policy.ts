@@ -3,6 +3,8 @@ import {
   HYPERSYNC_BATCH_SIZE,
   HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
 } from "../config/index.ts";
+import { normalizeTopic } from "./topics.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 
 export type HyperSyncLogFilter = {
   address?: string[];
@@ -18,7 +20,7 @@ export type HyperSyncLogQuery = {
   fromBlock: number;
   toBlock?: number;
   logs: HyperSyncLogFilter[];
-  joinMode: string;
+  joinMode: unknown;
   maxNumLogs: number;
   maxNumBlocks?: number;
   fieldSelection: HyperSyncFieldSelection;
@@ -55,7 +57,7 @@ type HyperSyncLogQueryOptions = {
   fromBlock: number;
   logs: HyperSyncLogFilter[];
   toBlock?: number;
-  joinMode?: string;
+  joinMode?: unknown;
   maxNumLogs?: number;
   maxNumBlocks?: number;
   logFields?: unknown[];
@@ -87,32 +89,66 @@ function normalizePositiveQueryLimit(name: string, value: number | undefined) {
   return numeric;
 }
 
+function validJoinModeValues() {
+  return new Set(
+    ["Default", "JoinAll", "JoinNothing"]
+      .map((name) => (JoinMode as Record<string, unknown>)[name])
+      .filter((value): value is number => typeof value === "number"),
+  );
+}
+
+function normalizeJoinMode(joinMode: unknown) {
+  const validValues = validJoinModeValues();
+  const normalizeNumericJoinMode = (value: number) => {
+    if (!Number.isInteger(value) || !validValues.has(value)) {
+      throw new Error("HyperSync query joinMode must be a valid JoinMode enum value.");
+    }
+    return value;
+  };
+
+  if (typeof joinMode === "number") {
+    return normalizeNumericJoinMode(joinMode);
+  }
+
+  if (typeof joinMode === "string") {
+    const normalized = joinMode.trim();
+    if (normalized.length === 0) {
+      throw new Error("HyperSync query joinMode must be a valid JoinMode enum value.");
+    }
+    const namedJoinMode = (JoinMode as Record<string, unknown>)[normalized];
+    if (typeof namedJoinMode === "number") return namedJoinMode;
+    const numericJoinMode = Number(normalized);
+    if (Number.isInteger(numericJoinMode)) return normalizeNumericJoinMode(numericJoinMode);
+  }
+
+  throw new Error("HyperSync query joinMode must be a valid JoinMode enum value.");
+}
+
 function normalizeLogFilter(filter: HyperSyncLogFilter, index: number): HyperSyncLogFilter {
   const address = Array.isArray(filter?.address)
     ? filter.address
-        .map((entry) => String(entry ?? "").trim())
-        .filter((entry) => entry.length > 0)
+        .map((entry) => normalizeEvmAddress(entry))
+        .filter((entry): entry is string => entry != null)
     : [];
+  const normalizedAddress = [...new Set(address)];
   const topics = Array.isArray(filter?.topics)
     ? filter.topics
         .map((group) =>
           Array.isArray(group)
-            ? group
-                .map((entry) => String(entry ?? "").trim())
-                .filter((entry) => entry.length > 0)
+            ? [...new Set(group.map(normalizeTopic).filter((entry) => entry.length > 0))]
             : [],
         )
         .filter((group) => group.length > 0)
     : [];
 
-  if (address.length === 0 && topics.length === 0) {
+  if (normalizedAddress.length === 0 && topics.length === 0) {
     throw new Error(
-      `HyperSync query log filter #${index} must include at least one address or topic constraint.`,
+      `HyperSync query log filter #${index} must include at least one valid address or topic constraint.`,
     );
   }
 
   return {
-    ...(address.length > 0 ? { address: [...address] } : {}),
+    ...(normalizedAddress.length > 0 ? { address: normalizedAddress } : {}),
     ...(topics.length > 0 ? { topics: topics.map((group) => [...group]) } : {}),
   };
 }
@@ -156,7 +192,7 @@ export function buildHyperSyncLogQuery(options: HyperSyncLogQueryOptions): Hyper
     toBlock,
     joinMode = JoinMode.JoinNothing,
     maxNumLogs = HYPERSYNC_BATCH_SIZE,
-    maxNumBlocks,
+    maxNumBlocks = HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
     logFields = DEFAULT_HYPERSYNC_LOG_FIELDS,
     blockFields = DEFAULT_HYPERSYNC_BLOCK_FIELDS,
   } = options;
@@ -176,12 +212,13 @@ export function buildHyperSyncLogQuery(options: HyperSyncLogQueryOptions): Hyper
   const normalizedMaxNumLogs = normalizePositiveQueryLimit("maxNumLogs", maxNumLogs);
   const normalizedMaxNumBlocks =
     maxNumBlocks != null ? normalizePositiveQueryLimit("maxNumBlocks", maxNumBlocks) : undefined;
+  const normalizedJoinMode = normalizeJoinMode(joinMode);
 
   return {
     fromBlock: normalizedFromBlock,
     ...(normalizedToBlock != null ? { toBlock: normalizedToBlock } : {}),
     logs: normalizedLogs,
-    joinMode,
+    joinMode: normalizedJoinMode,
     maxNumLogs: normalizedMaxNumLogs,
     ...(normalizedMaxNumBlocks != null ? { maxNumBlocks: normalizedMaxNumBlocks } : {}),
     fieldSelection: {

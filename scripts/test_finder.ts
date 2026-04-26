@@ -75,6 +75,46 @@ function v2Edge(poolAddress: string, tokenIn: string, tokenOut: string, reserveI
 }
 
 {
+  const graph = new TestGraph();
+  graph.addEdge(v2Edge("0xf1", "a", "b"));
+  graph.addEdge(v2Edge("0xr1", "b", "a"));
+
+  const paths = findArbPaths(graph, [" A ", "a", "missing"], {
+    include2Hop: true,
+    include3Hop: false,
+    include4Hop: false,
+    maxPathsPerToken: 10,
+  });
+
+  assert.equal(paths.length, 1, "aggregate finder should normalize and dedupe start tokens before graph lookup");
+  assert.equal(paths[0].startToken, "a");
+}
+
+{
+  const graph = new TestGraph();
+  for (let i = 0; i < 3; i++) {
+    graph.addEdge(v2Edge(`0xf${i}`, "a", `b${i}`));
+    graph.addEdge(v2Edge(`0xr${i}`, `b${i}`, "a"));
+    graph.addEdge(v2Edge(`0xt${i}`, "a", `c${i}`));
+    graph.addEdge(v2Edge(`0xu${i}`, `c${i}`, `d${i}`));
+    graph.addEdge(v2Edge(`0xv${i}`, `d${i}`, "a"));
+  }
+
+  const paths = findArbPaths(graph, "a", {
+    include2Hop: true,
+    include3Hop: true,
+    include4Hop: false,
+    maxPathsPerToken: 4,
+  });
+
+  assert.equal(
+    paths.length,
+    4,
+    "aggregate finder should apply maxPathsPerToken across 2-hop and 3-hop paths, not per depth",
+  );
+}
+
+{
   const hugeReserve = 10n ** 400n;
   const weight = edgeSpotLogWeight({
     protocol: "QUICKSWAP_V2",

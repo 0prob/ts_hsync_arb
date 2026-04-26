@@ -1,5 +1,6 @@
 import {
   assessRouteResult,
+  minProfitInTokenUnits,
   profitMarginBps,
   type ArbPathLike,
   type ExecutableCandidate,
@@ -48,6 +49,13 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
       throw new Error("post-build gas limit exceeds Number.MAX_SAFE_INTEGER");
     }
     return Number(gasLimit);
+  }
+
+  function gasBudgetWei(candidate: ExecutableCandidate, tokenToMaticRate: bigint) {
+    const minProfitTokens = minProfitInTokenUnits(tokenToMaticRate, deps.minProfitWei);
+    const netBeforeGas = candidate.assessment?.netProfit ?? 0n;
+    if (netBeforeGas <= minProfitTokens) return 0n;
+    return (netBeforeGas - minProfitTokens) * tokenToMaticRate;
   }
 
   async function mapExecutionCandidates<T, R>(
@@ -208,6 +216,7 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
         gasMultiplier: 1.25,
         maxFeeOverride: dynamicBid?.maxFeePerGas,
         priorityFeeOverride: dynamicBid?.maxPriorityFeePerGas,
+        maxEstimatedCostWei: gasBudgetWei(best, tokenToMaticRate),
       },
     );
 

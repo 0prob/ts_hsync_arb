@@ -9,6 +9,16 @@ export function createWatcherProtocolHandlers({
   updateV3SwapState,
   updateV3LiquidityState,
 }: any): Map<any, any> {
+  function hasInitializedV3BaseState(state: any) {
+    return (
+      state?.initialized === true &&
+      state?.sqrtPriceX96 != null &&
+      state?.sqrtPriceX96 !== 0n &&
+      Number.isInteger(state?.tick) &&
+      state?.liquidity != null
+    );
+  }
+
   return new Map([
     [topic0.V2_SYNC, ({ state, decoded, pool }: any) => {
       updateV2State(state, decoded, pool);
@@ -18,11 +28,19 @@ export function createWatcherProtocolHandlers({
       updateV3SwapState(state, decoded, pool);
       return true;
     }],
-    [topic0.V3_MINT, ({ state, decoded, pool }: any) => {
+    [topic0.V3_MINT, ({ addr, log, state, decoded, pool, enqueueEnrichment, refreshV3 }: any) => {
+      if (!hasInitializedV3BaseState(state)) {
+        enqueueEnrichment(addr, () => refreshV3(addr, pool, log));
+        return false;
+      }
       updateV3LiquidityState(state, decoded, true, pool);
       return true;
     }],
-    [topic0.V3_BURN, ({ state, decoded, pool }: any) => {
+    [topic0.V3_BURN, ({ addr, log, state, decoded, pool, enqueueEnrichment, refreshV3 }: any) => {
+      if (!hasInitializedV3BaseState(state)) {
+        enqueueEnrichment(addr, () => refreshV3(addr, pool, log));
+        return false;
+      }
       updateV3LiquidityState(state, decoded, false, pool);
       return true;
     }],

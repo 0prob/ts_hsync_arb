@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { evaluateCandidatePipeline } from "../src/routing/candidate_pipeline.ts";
 
 const optimizedProfits: bigint[] = [];
+let tokenRateLookups = 0;
 
 function candidate(id: string, profit: bigint, startToken = "0xtoken") {
   return {
@@ -39,7 +40,10 @@ const result = await evaluateCandidatePipeline(
   {
     shortlistLimit: 10,
     gasPriceWei: 1n,
-    getTokenToMaticRate: (tokenAddress: string) => tokenAddress === "0xmissing" ? 0n : 1n,
+    getTokenToMaticRate: (tokenAddress: string) => {
+      tokenRateLookups++;
+      return tokenAddress === "0xmissing" ? 0n : 1n;
+    },
     optimizePath: (_path, quickResult) => {
       optimizedProfits.push(quickResult.profit);
       if (quickResult.profit === 5n) {
@@ -61,16 +65,19 @@ const result = await evaluateCandidatePipeline(
 );
 
 assert.equal(result.profitable.length, 2);
-assert.equal(result.assessmentSummary.shortlisted, 4);
+assert.equal(result.assessmentSummary.shortlisted, 3);
 assert.equal(result.assessmentSummary.missingTokenRates, 1);
-assert.equal(result.assessmentSummary.assessed, 3);
+assert.equal(result.assessmentSummary.assessed, 2);
 assert.equal(result.assessmentSummary.optimizedCandidates, 2);
 assert.equal(result.assessmentSummary.secondChanceOptimized, 0);
 assert.equal(result.assessmentSummary.profitable, 2);
-assert.equal(result.assessmentSummary.rejected, 1);
-assert.deepEqual(result.assessmentSummary.rejectReasons, {
-  below_min_profit: 1,
-});
+assert.equal(result.assessmentSummary.rejected, 0);
+assert.deepEqual(result.assessmentSummary.rejectReasons, {});
 assert.deepEqual(optimizedProfits, [100n, 5n]);
+assert.equal(
+  tokenRateLookups,
+  2,
+  "candidate assessment should cache token/MATIC rates per start token during a pass",
+);
 
 console.log("Candidate pipeline assessment checks passed.");

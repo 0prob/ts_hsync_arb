@@ -47,6 +47,44 @@ export function effectiveGasPriceWei(fees: FeeSnapshot) {
   return effective > fees.maxFee ? fees.maxFee : effective;
 }
 
+export function capGasFeesToBudget(
+  fees: {
+    baseFee: bigint;
+    maxPriorityFeePerGas: bigint;
+    maxFeePerGas: bigint;
+  },
+  gasLimit: bigint,
+  maxEstimatedCostWei: bigint | null | undefined,
+) {
+  if (maxEstimatedCostWei == null) return fees;
+  if (maxEstimatedCostWei < 0n) {
+    throw new Error("maxEstimatedCostWei must be >= 0");
+  }
+  if (gasLimit <= 0n) {
+    throw new Error("gasLimit must be > 0 when applying a gas cost budget");
+  }
+
+  const maxAffordableGasPrice = maxEstimatedCostWei / gasLimit;
+  if (maxAffordableGasPrice < fees.baseFee) {
+    throw new Error("gas cost budget is below current baseFee");
+  }
+
+  const maxFeePerGas =
+    fees.maxFeePerGas > maxAffordableGasPrice
+      ? maxAffordableGasPrice
+      : fees.maxFeePerGas;
+  const maxPriorityFromBudget = maxAffordableGasPrice - fees.baseFee;
+  const maxPriorityFeePerGas =
+    fees.maxPriorityFeePerGas > maxPriorityFromBudget
+      ? maxPriorityFromBudget
+      : fees.maxPriorityFeePerGas;
+
+  return {
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+  };
+}
+
 function bufferedGasLimit(gasEstimate: bigint, gasMultiplier: number) {
   if (!Number.isFinite(gasMultiplier) || gasMultiplier <= 0) {
     throw new Error("gasMultiplier must be a finite positive number");
@@ -327,6 +365,7 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
     requireFreshFees = true,
     gasOracleMaxAgeMs = GAS_ORACLE_MAX_AGE_MS,
     allowStaleFeesOnRefreshFailure = true,
+    maxEstimatedCostWei,
   } = options;
 
   // Only perform eth_estimateGas on the hot path when the route shape is not
@@ -361,14 +400,20 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
   if (priorityFeeOverride != null && maxFeeOverride == null) {
     maxFeePerGas = maxBigInt(maxFeePerGas, baseFee * 2n + maxPriorityFeePerGas);
   }
+  const gasLimit = bufferedGasLimit(gasEstimate, gasMultiplier);
+  ({ maxFeePerGas, maxPriorityFeePerGas } = capGasFeesToBudget(
+    { baseFee, maxFeePerGas, maxPriorityFeePerGas },
+    gasLimit,
+    maxEstimatedCostWei,
+  ));
+
   if (maxPriorityFeePerGas > maxFeePerGas) {
-    if (priorityFeeOverride != null && maxFeeOverride != null) {
+    if (priorityFeeOverride != null && maxFeeOverride != null && maxEstimatedCostWei == null) {
       throw new Error("maxPriorityFeePerGas cannot exceed maxFeePerGas");
     }
     maxPriorityFeePerGas = maxFeePerGas;
   }
 
-  const gasLimit = bufferedGasLimit(gasEstimate, gasMultiplier);
   const effectiveGasPrice = effectiveGasPriceWei({
     baseFee,
     priorityFee: maxPriorityFeePerGas,

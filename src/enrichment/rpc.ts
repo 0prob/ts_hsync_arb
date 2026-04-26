@@ -48,8 +48,9 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
 
   let lastError;
   const capabilityFailedUrls = new Set<string>();
+  const maxAttempts = Math.max(1, rpcManager.endpoints.length + retries);
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // If every endpoint is currently rate-limited or cooling down, wait for
     // the soonest one to recover before issuing the call. Without this, we
     // burn all retry slots instantly on rapid-fire 429s and then throw even
@@ -102,12 +103,15 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
       if (!isRetryableError(error)) {
         throw error;
       }
-      if (attempt === retries) {
+      if (attempt === maxAttempts - 1) {
         rpcManager.markError(endpoint.url);
         throw error;
       }
 
       rpcManager.markError(endpoint.url);
+      if (rpcManager.msUntilAnyEndpointAvailable() === 0) {
+        continue;
+      }
 
       const delay = Math.min(
         RPC_BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 200,

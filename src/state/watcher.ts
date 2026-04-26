@@ -16,11 +16,16 @@ import {
   buildHyperSyncLogQuery,
   DEFAULT_HYPERSYNC_BLOCK_FIELDS,
 } from "../hypersync/query_policy.ts";
+import { compareHyperSyncLogs, hyperSyncLogIdentityKey } from "../hypersync/logs.ts";
 import { topic0ForSignature } from "../hypersync/topics.ts";
 import { detectReorg } from "../reorg/detect.ts";
 import { fetchAndNormalizeBalancerPool } from "./poll_balancer.ts";
 import { fetchAndNormalizeCurvePool } from "./poll_curve.ts";
+import { fetchV3PoolState } from "./uniswap_v3.ts";
 import { parsePoolTokens } from "./pool_record.ts";
+import { metadataWithRegistryTokenDecimals } from "./pool_metadata.ts";
+import { normalizeV3State } from "./normalizer.ts";
+import { normalizeProtocolKey } from "../protocols/classification.ts";
 import {
   commitWatcherState,
   commitWatcherStatesBatch,
@@ -47,6 +52,8 @@ const WATCHER_MAX_CONSECUTIVE_INTEGRITY_ERRORS = 3;
 const WATCHER_SHARD_TRANSIENT_RETRY_ATTEMPTS = 3;
 const WATCHER_SHARD_TRANSIENT_RETRY_BASE_MS = 250;
 const WATCHER_SHARD_ARCHIVE_HEIGHT_WARN_SPREAD = 25;
+const WATCHER_ENRICHMENT_RETRY_BASE_MS = 30_000;
+const WATCHER_ENRICHMENT_RETRY_MAX_MS = 300_000;
 
 const V2_SYNC = "event Sync(uint112 reserve0, uint112 reserve1)";
 const V3_SWAP = "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)";
@@ -192,48 +199,9 @@ function mergeRollbackGuards(base: any, next: any) {
   return merged;
 }
 
-function numericLogField(value: any) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function watcherLogIdentityKey(log: any) {
-  const txHash = String(log?.transactionHash ?? "").toLowerCase();
-  const logIndex = Number(log?.logIndex);
-  if (txHash && Number.isFinite(logIndex) && logIndex >= 0) {
-    return `${txHash}:${logIndex}`;
-  }
-
-  const blockNumber = Number(log?.blockNumber);
-  const transactionIndex = Number(log?.transactionIndex);
-  if (
-    Number.isFinite(blockNumber) &&
-    blockNumber >= 0 &&
-    Number.isFinite(transactionIndex) &&
-    transactionIndex >= 0 &&
-    Number.isFinite(logIndex) &&
-    logIndex >= 0
-  ) {
-    return `${blockNumber}:${transactionIndex}:${logIndex}:${String(log?.address ?? "").toLowerCase()}`;
-  }
-
-  return null;
-}
-
 export function sortWatcherLogs(logs: any[]) {
   if (!Array.isArray(logs) || logs.length <= 1) return logs ?? [];
-  return [...logs].sort((a: any, b: any) => {
-    const byBlock = numericLogField(a?.blockNumber) - numericLogField(b?.blockNumber);
-    if (byBlock !== 0) return byBlock;
-
-    const byTxIndex = numericLogField(a?.transactionIndex) - numericLogField(b?.transactionIndex);
-    if (byTxIndex !== 0) return byTxIndex;
-
-    const byLogIndex = numericLogField(a?.logIndex) - numericLogField(b?.logIndex);
-    if (byLogIndex !== 0) return byLogIndex;
-
-    return String(a?.address ?? "").localeCompare(String(b?.address ?? ""));
-  });
+  return [...logs].sort(compareHyperSyncLogs);
 }
 
 export function dedupeWatcherLogs(logs: any[]) {
@@ -242,7 +210,7 @@ export function dedupeWatcherLogs(logs: any[]) {
   const seen = new Set<string>();
   const deduped = [];
   for (const log of logs) {
-    const identity = watcherLogIdentityKey(log);
+    const identity = hyperSyncLogIdentityKey(log);
     if (!identity) {
       deduped.push(log);
       continue;
@@ -378,12 +346,25 @@ export function watcherErrorBackoffMeta(
   currentLastBlock: any,
   errorCategory: string | null = null,
 ) {
-  const err = error as { message?: string; name?: string } | null | undefined;
+  const err = error as {
+    message?: string;
+    name?: string;
+    poolAddress?: string;
+    validationReason?: string;
+    blockNumber?: number;
+    transactionHash?: string;
+    topic0?: string;
+  } | null | undefined;
   return {
     error: String(err?.message ?? error ?? "Unknown watcher error"),
     errorName: err?.name ?? null,
     errorCategory,
     shardFailures: Array.isArray((err as any)?.shardFailures) ? (err as any).shardFailures : undefined,
+    poolAddress: err?.poolAddress ?? undefined,
+    validationReason: err?.validationReason ?? undefined,
+    blockNumber: Number.isFinite(Number(err?.blockNumber)) ? Number(err?.blockNumber) : undefined,
+    transactionHash: err?.transactionHash ?? undefined,
+    topic0: err?.topic0 ?? undefined,
     consecutivePollErrors: Math.max(1, Number(consecutivePollErrors) || 1),
     backoffMs: Math.max(0, Number(backoffMs) || 0),
     currentLastBlock: Math.max(0, Number(currentLastBlock) || 0),
@@ -391,13 +372,25 @@ export function watcherErrorBackoffMeta(
 }
 
 export function classifyWatcherPollError(error: unknown) {
-  const message = String((error as { message?: string } | null | undefined)?.message ?? error ?? "").toLowerCase();
+  const err = error as { message?: string; name?: string } | null | undefined;
+  const name = String(err?.name ?? "").toLowerCase();
+  const message = String(err?.message ?? error ?? "").toLowerCase();
   if (
     message.includes("mismatched rollback guards") ||
     message.includes("inconsistent chain views") ||
     message.includes("watcher shard request failed")
   ) {
     return "transient";
+  }
+  if (
+    name === "watcherstateintegrityerror" ||
+    name === "watcherstateupdateerror" ||
+    message.includes("watcher state integrity failed") ||
+    message.includes("watcher update failed") ||
+    message.includes("invalid timestamp") ||
+    message.includes("invalid watcher state")
+  ) {
+    return "integrity";
   }
   if (
     message.includes("did not include a finite nextblock cursor") ||
@@ -475,6 +468,7 @@ export class StateWatcher {
   private _watchedAddresses: string[];
   private _watchedAddressSet: Set<string>;
   private _pendingEnrichment: Map<string, any>;
+  private _enrichmentRetryState: Map<string, { attempts: number; nextRetryAt: number; lastReason: string }>;
   private _enrichmentEpoch: number;
   private _sleepTimer: ReturnType<typeof setTimeout> | null;
   private _sleepResolve: (() => void) | null;
@@ -497,6 +491,7 @@ export class StateWatcher {
     this._watchedAddresses = [];
     this._watchedAddressSet = new Set();
     this._pendingEnrichment = new Map();
+    this._enrichmentRetryState = new Map();
     this._enrichmentEpoch = 0;
     this._sleepTimer = null;
     this._sleepResolve = null;
@@ -917,7 +912,7 @@ export class StateWatcher {
             ...watcherErrorBackoffMeta(err, this._consecutivePollErrors, backoffMs, this._lastBlock, errorCategory),
             consecutiveIntegrityPollErrors: this._consecutiveIntegrityPollErrors,
           },
-          "HyperSync poll error"
+          errorCategory === "integrity" ? "Watcher integrity error" : "HyperSync poll error"
         );
         if (
           errorCategory === "integrity" &&
@@ -956,6 +951,7 @@ export class StateWatcher {
       topic0: WATCHER_TOPIC0,
       refreshBalancer: this._refreshBalancer.bind(this),
       refreshCurve: this._refreshCurve.bind(this),
+      refreshV3: this._refreshV3.bind(this),
       enqueueEnrichment: this._enqueueEnrichment.bind(this),
       commitStates: this._commitStates.bind(this),
     });
@@ -963,7 +959,23 @@ export class StateWatcher {
 
   _enqueueEnrichment(addr: any, taskFn: any) {
     if (this._closed) return Promise.resolve();
-    const pending = this._pendingEnrichment.get(addr);
+    const normalizedAddr = String(addr ?? "").toLowerCase();
+    const retryState = this._enrichmentRetryState.get(normalizedAddr);
+    const now = Date.now();
+    if (retryState && retryState.nextRetryAt > now) {
+      watcherLogger.debug(
+        {
+          poolAddress: normalizedAddr,
+          retryInMs: retryState.nextRetryAt - now,
+          attempts: retryState.attempts,
+          lastReason: retryState.lastReason,
+        },
+        "Watcher enrichment refresh in cooldown"
+      );
+      return Promise.resolve();
+    }
+
+    const pending = this._pendingEnrichment.get(normalizedAddr);
     if (pending) {
       pending.dirty = true;
       return pending.promise;
@@ -980,16 +992,47 @@ export class StateWatcher {
           entry.dirty = false;
           if (this._closed || entry.epoch !== this._enrichmentEpoch) break;
           await taskFn(entry.epoch);
+          this._clearEnrichmentRetry(normalizedAddr);
         } while (entry.dirty && !this._closed && entry.epoch === this._enrichmentEpoch);
+      } catch (err: any) {
+        this._recordEnrichmentRetry(normalizedAddr, err);
       } finally {
-        if (this._pendingEnrichment.get(addr) === entry) {
-          this._pendingEnrichment.delete(addr);
+        if (this._pendingEnrichment.get(normalizedAddr) === entry) {
+          this._pendingEnrichment.delete(normalizedAddr);
         }
       }
     })();
 
-    this._pendingEnrichment.set(addr, entry);
+    this._pendingEnrichment.set(normalizedAddr, entry);
     return entry.promise;
+  }
+
+  _recordEnrichmentRetry(addr: string, error: any) {
+    const current = this._enrichmentRetryState.get(addr);
+    const attempts = (current?.attempts ?? 0) + 1;
+    const cooldownMs = Math.min(
+      WATCHER_ENRICHMENT_RETRY_BASE_MS * Math.max(1, 2 ** (attempts - 1)),
+      WATCHER_ENRICHMENT_RETRY_MAX_MS,
+    );
+    const lastReason = String(error?.message ?? error ?? "unknown enrichment error");
+    this._enrichmentRetryState.set(addr, {
+      attempts,
+      nextRetryAt: Date.now() + cooldownMs,
+      lastReason,
+    });
+    watcherLogger.warn(
+      {
+        poolAddress: addr,
+        attempts,
+        cooldownMs,
+        error: lastReason,
+      },
+      "Watcher enrichment refresh failed; entering cooldown"
+    );
+  }
+
+  _clearEnrichmentRetry(addr: string) {
+    this._enrichmentRetryState.delete(addr);
   }
 
   async _refreshBalancer(addr: any, pool: any, expectedEpoch = this._enrichmentEpoch) {
@@ -1008,6 +1051,21 @@ export class StateWatcher {
     if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
     const state = this._mergeState(addr, normalized);
     this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);
+  }
+
+  async _refreshV3(addr: any, pool: any, rawLog: any = null, expectedEpoch = this._enrichmentEpoch) {
+    const tokens = parsePoolTokens(pool?.tokens);
+    const metadata = metadataWithRegistryTokenDecimals(this._registry, pool, tokens);
+    const protocol = normalizeProtocolKey(pool?.protocol);
+    const rawState = await fetchV3PoolState(addr, {
+      isAlgebra: protocol === "QUICKSWAP_V3" || metadata?.isAlgebra === true,
+      isKyberElastic: protocol === "KYBERSWAP_ELASTIC" || metadata?.isKyberElastic === true,
+      hydrationMode: "nearby",
+    });
+    const normalized = normalizeV3State(addr, protocol, tokens, rawState, metadata);
+    if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
+    const state = this._mergeState(addr, normalized);
+    this._commitState(addr, state, rawLog ?? { blockNumber: this._lastBlock }, expectedEpoch);
   }
 
   _commitState(addr: any, state: any, rawLog: any, expectedEpoch = this._enrichmentEpoch) {

@@ -15,7 +15,7 @@
  *   poller.stop();
  */
 
-import { fetchMultipleV3States } from "./index.ts";
+import { fetchMultipleV3States } from "./uniswap_v3.ts";
 import { normalizeV3State } from "./normalizer.ts";
 import { TimedPoller } from "./poller_base.ts";
 import { mergeStateIntoCache } from "./cache_utils.ts";

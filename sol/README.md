@@ -51,37 +51,6 @@ $ anvil
 $ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
 ```
 
-### Deploy ArbExecutor
-
-Polygon defaults are baked in for:
-- `BALANCER_VAULT`
-- `UNISWAP_V3_FACTORY`
-- `SUSHISWAP_V3_FACTORY`
-- `QUICKSWAP_V3_FACTORY`
-- `KYBER_ELASTIC_FACTORY`
-
-Only `OWNER` is required.
-
-```shell
-$ cd sol
-$ OWNER=0xYourOwnerAddress \
-  forge script script/ArbExecutor.s.sol:ArbExecutorScript \
-  --rpc-url <your_rpc_url> \
-  --private-key <your_private_key> \
-  --broadcast
-```
-
-Override any constructor address if needed:
-
-```shell
-$ OWNER=0xYourOwnerAddress \
-  QUICKSWAP_V3_FACTORY=0xYourFactory \
-  forge script script/ArbExecutor.s.sol:ArbExecutorScript \
-  --rpc-url <your_rpc_url> \
-  --private-key <your_private_key> \
-  --broadcast
-```
-
 ### Cast
 
 ```shell

@@ -181,8 +181,7 @@ export class PriceOracle {
       if (isWmatic0) {
         const rate = this._scaledRateToWei(quote10);
         if (rate > 0n) {
-          nextRates.set(t1, rate);
-          nextUpdatedAtByToken.set(t1, stateUpdatedAt);
+          this._storeRateCandidate(nextRates, nextUpdatedAtByToken, t1, rate, stateUpdatedAt);
           updatedCount++;
         }
         continue;
@@ -190,8 +189,7 @@ export class PriceOracle {
       if (isWmatic1) {
         const rate = this._scaledRateToWei(quote01);
         if (rate > 0n) {
-          nextRates.set(t0, rate);
-          nextUpdatedAtByToken.set(t0, stateUpdatedAt);
+          this._storeRateCandidate(nextRates, nextUpdatedAtByToken, t0, rate, stateUpdatedAt);
           updatedCount++;
         }
       }
@@ -374,6 +372,27 @@ export class PriceOracle {
         scaledRate: quote.scaledRate,
         updatedAt: quote.updatedAt,
       });
+    }
+  }
+
+  _storeRateCandidate(
+    rates: Map<string, bigint>,
+    updatedAtByToken: Map<string, number>,
+    tokenAddress: string,
+    rate: bigint,
+    updatedAt: number,
+  ) {
+    if (rate <= 0n || updatedAt <= 0) return;
+    const key = tokenAddress.toLowerCase();
+    const existingRate = rates.get(key);
+    const existingUpdatedAt = updatedAtByToken.get(key) ?? 0;
+    if (
+      existingRate == null ||
+      updatedAt > existingUpdatedAt ||
+      (updatedAt === existingUpdatedAt && rate < existingRate)
+    ) {
+      rates.set(key, rate);
+      updatedAtByToken.set(key, updatedAt);
     }
   }
 

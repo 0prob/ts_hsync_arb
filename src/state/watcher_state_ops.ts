@@ -5,22 +5,15 @@
 
 import { mergeStateIntoCache, reloadCacheFromRegistry } from "./cache_utils.ts";
 import { createWatcherProtocolHandlers } from "./watcher_protocol_handlers.ts";
-import { resolveV2FeeNumerator, resolveV3Fee, validatePoolState } from "./normalizer.ts";
+import { resolveV2FeeNumerator, resolveV3Fee, V3_PROTOCOLS, validatePoolState } from "./normalizer.ts";
 import { logger } from "../utils/logger.ts";
 import { parsePoolMetadataValue } from "../util/pool_record.ts";
+import { topicArrayFromHyperSyncLog } from "../hypersync/logs.ts";
 
 const watcherStateLogger: any = logger.child({ component: "watcher_state_ops" });
 
 export function toTopicArray(log: any) {
-  if (Array.isArray(log?.topics)) {
-    const flattened = log.topics.flatMap((topic: any) =>
-      Array.isArray(topic) ? topic : [topic],
-    ).filter((topic: any) => topic != null);
-    if (flattened.length > 0) {
-      return flattened;
-    }
-  }
-  return [log?.topic0, log?.topic1, log?.topic2, log?.topic3].filter((v) => v != null);
+  return topicArrayFromHyperSyncLog(log);
 }
 
 export async function handleWatcherLogs({
@@ -32,6 +25,7 @@ export async function handleWatcherLogs({
   topic0,
   refreshBalancer,
   refreshCurve,
+  refreshV3,
   enqueueEnrichment,
   commitStates,
 }: any) {
@@ -59,7 +53,12 @@ export async function handleWatcherLogs({
     }
     if (!pool) continue;
 
+    const topic0 = toTopicArray(log)[0];
+    const handler = protocolHandlers.get(topic0);
+    if (!handler) continue;
+
     let pending = pendingStateUpdates.get(addr);
+    const hadPending = pending != null;
     if (!pending) {
       pending = {
         addr,
@@ -70,11 +69,10 @@ export async function handleWatcherLogs({
     }
 
     const state = pending.state;
-    if (!state) continue;
-
-    const topic0 = toTopicArray(log)[0];
-    const handler = protocolHandlers.get(topic0);
-    if (!handler) continue;
+    if (!state) {
+      if (!hadPending) pendingStateUpdates.delete(addr);
+      continue;
+    }
 
     try {
       if ((handler as any)({
@@ -86,12 +84,23 @@ export async function handleWatcherLogs({
         enqueueEnrichment,
         refreshBalancer,
         refreshCurve,
+        refreshV3,
       })) {
         pending.rawLog = log;
+      } else if (!hadPending) {
+        pendingStateUpdates.delete(addr);
       }
     } catch (err: any) {
       watcherStateLogger.error({ poolAddress: addr, err }, "Watcher state update failed");
-      throw new Error(`watcher update failed for ${addr}: ${err?.message ?? err}`);
+      const updateError: any = new Error(`watcher update failed for ${addr}: ${err?.message ?? err}`);
+      updateError.name = "WatcherStateUpdateError";
+      updateError.poolAddress = addr;
+      updateError.validationReason = String(err?.validationReason ?? err?.message ?? err ?? "watcher update failed");
+      updateError.blockNumber = Number(log?.blockNumber);
+      updateError.transactionHash = log?.transactionHash != null ? String(log.transactionHash) : undefined;
+      updateError.topic0 = toTopicArray(log)[0] ?? null;
+      updateError.cause = err;
+      throw updateError;
     }
   }
 
@@ -184,24 +193,46 @@ function cloneWatcherState(state: any) {
   return cloned;
 }
 
-function validateWatcherStateOrThrow(state: any) {
+function watcherStateIntegrityError(reason: string, context: any = {}) {
+  const addr = String(context?.addr ?? context?.poolAddress ?? "unknown").toLowerCase();
+  const err: any = new Error(`watcher state integrity failed for ${addr}: ${reason}`);
+  err.name = "WatcherStateIntegrityError";
+  err.poolAddress = addr;
+  err.validationReason = reason;
+  if (context?.rawLog?.blockNumber != null) err.blockNumber = Number(context.rawLog.blockNumber);
+  if (context?.rawLog?.transactionHash != null) err.transactionHash = String(context.rawLog.transactionHash);
+  if (context?.rawLog != null) err.topic0 = toTopicArray(context.rawLog)[0] ?? null;
+  return err;
+}
+
+function validateWatcherStateOrThrow(state: any, context: any = {}) {
   const verdict = validatePoolState(state);
   if (!verdict.valid) {
-    throw new Error(verdict.reason ?? "invalid watcher state");
+    if (verdict.reason === "V3: zero liquidity" && allowsZeroLiquidityWatcherState(state)) {
+      return;
+    }
+    throw watcherStateIntegrityError(verdict.reason ?? "invalid watcher state", context);
   }
 
   if (state.protocol?.includes("V3")) {
     if (state.liquidity == null || state.liquidity < 0n) {
-      throw new Error("V3: negative liquidity");
+      throw watcherStateIntegrityError("V3: negative liquidity", context);
     }
     if (state.ticks instanceof Map) {
       for (const [tick, data] of state.ticks.entries()) {
         if (data.liquidityGross < 0n) {
-          throw new Error(`V3: negative liquidityGross at tick ${tick}`);
+          throw watcherStateIntegrityError(`V3: negative liquidityGross at tick ${tick}`, context);
         }
       }
     }
   }
+}
+
+function allowsZeroLiquidityWatcherState(state: any) {
+  if (!V3_PROTOCOLS.has(state?.protocol) || state?.liquidity !== 0n) return false;
+
+  const rerun = validatePoolState({ ...state, liquidity: 1n });
+  return rerun.valid;
 }
 
 export function mergeWatcherState(cache: any, addr: any, nextState: any) {
@@ -210,7 +241,7 @@ export function mergeWatcherState(cache: any, addr: any, nextState: any) {
 
 export function commitWatcherState(cache: any, persistState: any, addr: any, state: any, rawLog: any) {
   state.timestamp = Date.now();
-  validateWatcherStateOrThrow(state);
+  validateWatcherStateOrThrow(state, { addr, rawLog });
   persistState(addr, state, rawLog);
   mergeStateIntoCache(cache, addr, state);
 }
@@ -227,7 +258,7 @@ export function commitWatcherStatesBatch(cache: any, persistStates: any, updates
     const state = update?.state;
     if (!addr || !state) continue;
     state.timestamp = committedAt;
-    validateWatcherStateOrThrow(state);
+    validateWatcherStateOrThrow(state, { addr, rawLog: update?.rawLog });
     committed.push({
       pool_address: addr,
       block: Number(update?.rawLog?.blockNumber ?? 0),

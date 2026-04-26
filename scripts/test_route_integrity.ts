@@ -69,6 +69,15 @@ function makeRoute(overrides: any = {}) {
     routeExecutionCacheKey(tokenA, edges.length, edges),
     "gas estimate route keys should use canonical route identity and edge-derived hop count",
   );
+  assert.equal(
+    gasEstimateCacheKeyForRoute(makeRoute(), {
+      fromAddress: sender.toUpperCase(),
+      executorAddress: ` ${executor.toUpperCase()} `,
+      callCount: 4,
+    }),
+    `gas:${sender}:${executor}:calls=4:${routeExecutionCacheKey(tokenA, edges.length, edges)}`,
+    "gas estimate route keys should support a stable sender/executor context without deadline-sensitive tx data",
+  );
 
   assert.throws(
     () => routeIdentityFromSerializedPath(tokenA, [poolA], [tokenA, tokenB], [tokenB]),
@@ -79,6 +88,26 @@ function makeRoute(overrides: any = {}) {
     () => routeIdentityFromEdges(tokenA, [{ ...edges[0], poolAddress: "not-a-pool" }]),
     /valid poolAddress/i,
     "route identity should reject malformed route addresses",
+  );
+  assert.throws(
+    () =>
+      gasEstimateCacheKeyForRoute(makeRoute(), {
+        fromAddress: "not-a-sender",
+        executorAddress: executor,
+        callCount: 4,
+      }),
+    /valid fromAddress/i,
+    "contextual gas estimate keys should reject malformed sender addresses",
+  );
+  assert.throws(
+    () =>
+      gasEstimateCacheKeyForRoute(makeRoute(), {
+        fromAddress: sender,
+        executorAddress: executor,
+        callCount: 0,
+      }),
+    /callCount must be a positive integer/i,
+    "contextual gas estimate keys should reject invalid call counts",
   );
 }
 
@@ -98,6 +127,15 @@ function makeRoute(overrides: any = {}) {
   assert.equal(built.to.toLowerCase(), executor);
   assert.equal(built.meta.flashToken.toLowerCase(), tokenA);
   assert.equal(built.meta.pools.length, 2);
+  assert.equal(
+    built.gasEstimateCacheKey,
+    gasEstimateCacheKeyForRoute(makeRoute(), {
+      fromAddress: sender,
+      executorAddress: executor,
+      callCount: built.meta.callCount,
+    }),
+    "buildArbTx should use the stable route gas estimate key by default",
+  );
 }
 
 await assert.rejects(

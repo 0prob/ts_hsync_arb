@@ -64,11 +64,31 @@ function normalizeRouteAmount(value: RawRouteResult[string], fallback = 0n) {
   return fallback;
 }
 
+function isMissingRouteAmount(value: RawRouteResult[string]) {
+  return value == null || (typeof value === "string" && value.trim().length === 0);
+}
+
+function normalizeRouteGas(value: RawRouteResult[string]) {
+  const numeric = Number(value ?? 0);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : -1;
+}
+
+function normalizeExplicitHopCount(value: RawRouteResult[string]) {
+  if (value == null) return undefined;
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function normalizeProbeAmounts(values: bigint[]) {
+  return [...new Set(values.filter((amount) => typeof amount === "bigint" && amount > 0n).map(String))]
+    .map((amount) => BigInt(amount));
+}
+
 export function toRouteResultLike(result: RawRouteResult): RouteResultLike {
   const amountIn = normalizeRouteAmount(toBigIntInput(result.amountIn));
   const amountOut = normalizeRouteAmount(toBigIntInput(result.amountOut));
-  const profit = normalizeRouteAmount(toBigIntInput(result.profit));
-  const profitable = typeof result.profitable === "boolean" ? result.profitable : undefined;
+  const profit = isMissingRouteAmount(result.profit) ? amountOut - amountIn : normalizeRouteAmount(toBigIntInput(result.profit));
+  const profitable = typeof result.profitable === "boolean" ? result.profitable : profit > 0n;
   const poolPath = Array.isArray(result.poolPath) && result.poolPath.every((item) => typeof item === "string")
     ? result.poolPath
     : undefined;
@@ -83,14 +103,16 @@ export function toRouteResultLike(result: RawRouteResult): RouteResultLike {
     amountOut,
     profit,
     profitable,
-    totalGas: Number(result.totalGas ?? 0),
+    totalGas: normalizeRouteGas(result.totalGas),
     poolPath,
     tokenPath,
     hopAmounts,
+    hopCount: normalizeExplicitHopCount(result.hopCount),
   };
+  const derivedHopCount = getResultHopCount(routeResult);
   return {
     ...routeResult,
-    hopCount: getResultHopCount(routeResult) ?? undefined,
+    hopCount: derivedHopCount ?? routeResult.hopCount,
   };
 }
 
@@ -178,15 +200,15 @@ export function createArbSearcher(deps: SearchDeps) {
 
     const merged = new Map<string, CandidateEntry>();
     let totalProbeRuns = 0;
-    let skippedProbeRuns = 0;
+    let totalPathEvaluations = 0;
 
     for (const [startToken, tokenPaths] of byStartToken) {
-      const probeAmounts = deps.getProbeAmountsForToken(startToken);
-      let tokenHits = 0;
+      const probeAmounts = normalizeProbeAmounts(deps.getProbeAmountsForToken(startToken));
 
       for (let i = 0; i < probeAmounts.length; i++) {
         const probeAmount = probeAmounts[i];
         totalProbeRuns++;
+        totalPathEvaluations += tokenPaths.length;
         const batch = await deps.evaluatePathsParallel(
           tokenPaths,
           deps.stateCache,
@@ -198,12 +220,6 @@ export function createArbSearcher(deps: SearchDeps) {
           normaliseCandidateBatch(batch),
           deps.routeKeyFromEdges,
         );
-        tokenHits += batch.length;
-
-        if (tokenHits === 0 && i >= 1) {
-          skippedProbeRuns += probeAmounts.length - (i + 1);
-          break;
-        }
       }
     }
 
@@ -211,15 +227,19 @@ export function createArbSearcher(deps: SearchDeps) {
       event: "multi_probe_summary",
       startTokens: byStartToken.size,
       totalProbeRuns,
-      skippedProbeRuns,
+      totalPathEvaluations,
       mergedCandidates: merged.size,
     });
 
-    return [...merged.values()].sort((a, b) => {
-      if (b.result.profit > a.result.profit) return 1;
-      if (b.result.profit < a.result.profit) return -1;
-      return 0;
-    });
+    return {
+      candidates: [...merged.values()].sort((a, b) => {
+        if (b.result.profit > a.result.profit) return 1;
+        if (b.result.profit < a.result.profit) return -1;
+        return 0;
+      }),
+      totalProbeRuns,
+      totalPathEvaluations,
+    };
   }
 
   return async function findArbs(): Promise<ExecutableCandidate[]> {
@@ -227,15 +247,21 @@ export function createArbSearcher(deps: SearchDeps) {
     const cycles = deps.cachedCycles();
     if (cycles.length === 0) return [];
 
-    const candidates = await evaluateCandidatesMultiProbe(cycles);
-    deps.onPathsEvaluated(cycles.length);
+    const { candidates, totalProbeRuns, totalPathEvaluations } = await evaluateCandidatesMultiProbe(cycles);
+    deps.onPathsEvaluated(totalPathEvaluations);
 
     deps.log(
       candidates.length === 0
         ? `Scanned ${cycles.length} paths — no candidates above fee threshold`
         : `Scanned ${cycles.length} paths → ${candidates.length} candidates`,
       "info",
-      { event: "scan_summary", paths: cycles.length, candidates: candidates.length },
+      {
+        event: "scan_summary",
+        paths: cycles.length,
+        totalProbeRuns,
+        totalPathEvaluations,
+        candidates: candidates.length,
+      },
     );
 
     if (candidates.length === 0) return [];

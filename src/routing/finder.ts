@@ -282,9 +282,27 @@ function normalizePathLimit(value: any, fallback: number) {
 }
 
 function normalizeStartTokens(startTokens: any) {
-  if (typeof startTokens === "string") return [startTokens];
+  const normalize = (token: unknown) => {
+    if (typeof token !== "string") return null;
+    const trimmed = token.trim().toLowerCase();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+  if (typeof startTokens === "string") {
+    const token = normalize(startTokens);
+    return token ? [token] : [];
+  }
   if (!startTokens || typeof startTokens[Symbol.iterator] !== "function") return [];
-  return [...startTokens].filter((token) => typeof token === "string" && token.length > 0);
+  return [...new Set([...startTokens].map(normalize).filter((token): token is string => token != null))];
+}
+
+function compareByPathLogWeight(a: any, b: any) {
+  return toFiniteNumber(a?.logWeight) - toFiniteNumber(b?.logWeight);
+}
+
+function selectTopPathsByLogWeight(paths: any[], limit: number) {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (paths.length <= limit) return paths;
+  return [...paths].sort(compareByPathLogWeight).slice(0, Math.floor(limit));
 }
 
 // ─── 2-hop paths ──────────────────────────────────────────────
@@ -570,19 +588,22 @@ export function findArbPaths(graph: any, startTokens: any, opts: any = {}) {
   for (const token of tokenList) {
     if (!graph.hasToken(token)) continue;
 
+    const shortPaths = [];
     if (include2Hop) {
-      allPaths.push(...find2HopPaths(graph, token, {
+      shortPaths.push(...find2HopPaths(graph, token, {
         ...pruneOpts,
         maxPaths: maxPathsPerToken,
       }));
     }
 
     if (include3Hop) {
-      allPaths.push(...find3HopPaths(graph, token, {
+      shortPaths.push(...find3HopPaths(graph, token, {
         ...pruneOpts,
         maxPaths: maxPathsPerToken,
       }));
     }
+
+    allPaths.push(...selectTopPathsByLogWeight(shortPaths, maxPathsPerToken));
 
     if (include4Hop) {
       const complexPaths = find4HopPathsBidirectional(graph, token, {

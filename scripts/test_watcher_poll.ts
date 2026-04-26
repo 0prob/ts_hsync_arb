@@ -4,14 +4,55 @@ import { client } from "../src/hypersync/client.ts";
 import {
   classifyWatcherPollError,
   StateWatcher,
+  WATCHER_TOPIC0,
+  dedupeWatcherLogs,
+  sortWatcherLogs,
   watcherCheckpointFromNextBlock,
   watcherErrorBackoffMeta,
   watcherProgressMeta,
   watcherShardArchiveHeightMeta,
 } from "../src/state/watcher.ts";
+import { commitWatcherStatesBatch, handleWatcherLogs, toTopicArray } from "../src/state/watcher_state_ops.ts";
 
 function address(index: number) {
   return `0x${index.toString(16).padStart(40, "0")}`;
+}
+
+{
+  assert.deepEqual(
+    toTopicArray({
+      topics: [["  0x" + "Aa".repeat(32) + "  "], null, "0x" + "Bb".repeat(32)],
+      topic0: "0x" + "Cc".repeat(32),
+    }),
+    ["0x" + "aa".repeat(32), "0x" + "bb".repeat(32)],
+    "watcher topic extraction should normalize HyperSync topic fields before dispatch",
+  );
+}
+
+{
+  const poolA = address(101);
+  const poolB = address(102);
+  const logs = [
+    { address: poolB, blockNumber: 12, transactionIndex: 0, logIndex: 0 },
+    { address: poolA, blockNumber: 10, transactionIndex: 1, logIndex: 2 },
+    { address: poolA.toUpperCase(), blockNumber: 10, transactionIndex: 1, logIndex: 1 },
+  ];
+  assert.deepEqual(
+    sortWatcherLogs(logs).map((log) => log.logIndex),
+    [1, 2, 0],
+    "watcher log sorting should use normalized numeric HyperSync log fields",
+  );
+
+  assert.deepEqual(
+    dedupeWatcherLogs([
+      { transactionHash: "0xABC", logIndex: "7", blockNumber: 1 },
+      { transactionHash: "0xabc", logIndex: 7, blockNumber: 2 },
+      { address: poolA.toUpperCase(), blockNumber: 3, transactionIndex: 1, logIndex: 1 },
+      { address: poolA, blockNumber: 3, transactionIndex: 1, logIndex: 1 },
+    ]).map((log) => log.blockNumber),
+    [1, 3],
+    "watcher log dedupe should treat mixed-case tx and pool addresses as identical",
+  );
 }
 
 {
@@ -35,6 +76,27 @@ function address(index: number) {
   assert.deepEqual(
     watcherErrorBackoffMeta(err, 2, 10_000, 123, "transient").shardFailures,
     err.shardFailures,
+  );
+}
+
+{
+  const err: any = new Error("watcher state integrity failed for 0xabc: invalid timestamp");
+  err.name = "WatcherStateIntegrityError";
+  err.poolAddress = "0xabc";
+  err.validationReason = "invalid timestamp";
+  err.blockNumber = 123;
+  assert.equal(classifyWatcherPollError(err), "integrity");
+  assert.deepEqual(
+    {
+      poolAddress: watcherErrorBackoffMeta(err, 1, 15_000, 122, "integrity").poolAddress,
+      validationReason: watcherErrorBackoffMeta(err, 1, 15_000, 122, "integrity").validationReason,
+      blockNumber: watcherErrorBackoffMeta(err, 1, 15_000, 122, "integrity").blockNumber,
+    },
+    {
+      poolAddress: "0xabc",
+      validationReason: "invalid timestamp",
+      blockNumber: 123,
+    },
   );
 }
 
@@ -136,6 +198,158 @@ assert.deepEqual(
   } finally {
     client.get = originalGet;
   }
+}
+
+{
+  const poolAddress = address(70);
+  const cache = new Map([
+    [
+      poolAddress,
+      {
+        poolId: poolAddress,
+        protocol: "UNISWAP_V3",
+        tokens: [address(71), address(72)],
+        timestamp: 0,
+      },
+    ],
+  ]);
+  const enqueued: string[] = [];
+  const changed = await handleWatcherLogs({
+    logs: [
+      {
+        address: poolAddress,
+        blockNumber: 85949561,
+        transactionHash: "0x104052732cf4c3a99906b3d0ef116b53bbc5346139409babbd5670339d8f7564",
+        topic0: WATCHER_TOPIC0.V3_BURN,
+      },
+    ],
+    decoded: [{ indexed: [], body: [] }],
+    registry: {
+      getPoolMeta(addr: string) {
+        assert.equal(addr, poolAddress);
+        return {
+          pool_address: poolAddress,
+          protocol: "UNISWAP_V3",
+          tokens: [address(71), address(72)],
+          metadata: { fee: "3000", tickSpacing: "60" },
+        };
+      },
+    },
+    cache,
+    closed: () => false,
+    topic0: WATCHER_TOPIC0,
+    refreshBalancer: () => {},
+    refreshCurve: () => {},
+    refreshV3: () => {},
+    enqueueEnrichment: (addr: string) => {
+      enqueued.push(addr);
+    },
+    commitStates: () => {
+      throw new Error("cold V3 liquidity events should refresh state instead of committing placeholders");
+    },
+  });
+
+  assert.deepEqual([...changed], []);
+  assert.deepEqual(enqueued, [poolAddress]);
+}
+
+{
+  const poolAddress = address(80);
+  const watcher: any = new StateWatcher({}, new Map());
+  let attempts = 0;
+  await watcher._enqueueEnrichment(poolAddress, async () => {
+    attempts++;
+    throw new Error("temporary V3 refresh failure");
+  });
+
+  assert.equal(attempts, 1);
+  const retryState = watcher._enrichmentRetryState.get(poolAddress);
+  assert.equal(retryState.attempts, 1);
+  assert.match(retryState.lastReason, /temporary V3 refresh failure/);
+
+  await watcher._enqueueEnrichment(poolAddress, async () => {
+    attempts++;
+  });
+  assert.equal(attempts, 1, "enrichment cooldown should suppress immediate duplicate retries");
+
+  retryState.nextRetryAt = Date.now() - 1;
+  await watcher._enqueueEnrichment(poolAddress, async () => {
+    attempts++;
+  });
+  assert.equal(attempts, 2);
+  assert.equal(watcher._enrichmentRetryState.has(poolAddress), false);
+}
+
+{
+  const cache = new Map();
+  const persisted: any[] = [];
+  const v3State = {
+    poolId: address(50),
+    protocol: "UNISWAP_V3",
+    token0: address(51),
+    token1: address(52),
+    tokens: [address(51), address(52)],
+    sqrtPriceX96: 79228162514264337593543950336n,
+    tick: 0,
+    liquidity: 0n,
+    tickSpacing: 60,
+    ticks: new Map(),
+    initialized: true,
+    fee: 3000n,
+    timestamp: 0,
+  };
+
+  assert.deepEqual(
+    commitWatcherStatesBatch(
+      cache,
+      (states: any[]) => persisted.push(...states),
+      [
+        {
+          addr: address(50),
+          rawLog: { blockNumber: 654, transactionHash: "0xtx", topic0: "0xtopic" },
+          state: v3State,
+        },
+      ],
+    ),
+    [address(50)],
+    "watcher should advance through V3 events whose post-event active liquidity is zero",
+  );
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].block, 654);
+  assert.equal(cache.get(address(50)).liquidity, 0n);
+}
+
+{
+  const cache = new Map();
+  const persistStates = () => {
+    throw new Error("persist should not be called for invalid watcher state");
+  };
+  assert.throws(
+    () =>
+      commitWatcherStatesBatch(cache, persistStates, [
+        {
+          addr: address(42),
+          rawLog: { blockNumber: 321, transactionHash: "0xtx", topic0: "0xtopic" },
+          state: {
+            poolId: address(42),
+            protocol: "UNISWAP_V2",
+            tokens: [address(43)],
+            timestamp: 0,
+            reserve0: 1n,
+            reserve1: 1n,
+            fee: 3n,
+          },
+        },
+      ]),
+    (err: any) => {
+      assert.equal(err.name, "WatcherStateIntegrityError");
+      assert.equal(err.poolAddress, address(42));
+      assert.equal(err.validationReason, "fewer than 2 tokens");
+      assert.equal(err.blockNumber, 321);
+      return true;
+    },
+    "watcher batch validation should emit structured integrity errors",
+  );
 }
 
 console.log("Watcher poll checks passed.");

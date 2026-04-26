@@ -61,9 +61,18 @@ export async function evaluateCandidatePipeline<TAssessment, TCandidate extends 
     ) => TAssessment & { shouldExecute: boolean };
   },
 ) {
+  const tokenRateCache = new Map<string, bigint>();
+  const tokenRateFor = (tokenAddress: string) => {
+    const key = String(tokenAddress ?? "").toLowerCase();
+    const cached = tokenRateCache.get(key);
+    if (cached != null) return cached;
+    const rate = options.getTokenToMaticRate(tokenAddress);
+    tokenRateCache.set(key, rate);
+    return rate;
+  };
   const shortlisted = selectOptimizationCandidates(candidates, options.shortlistLimit, {
     gasPriceWei: options.gasPriceWei,
-    getTokenToMaticRate: options.getTokenToMaticRate,
+    getTokenToMaticRate: tokenRateFor,
   });
   const bestQuickProfit = shortlisted[0]?.result?.profit ?? 0n;
   const profitable: Array<TCandidate & { assessment: TAssessment & { shouldExecute: boolean } }> = [];
@@ -81,7 +90,7 @@ export async function evaluateCandidatePipeline<TAssessment, TCandidate extends 
 
   for (let i = 0; i < shortlisted.length; i++) {
     const { path, result: quickResult } = shortlisted[i];
-    const tokenToMaticRate = options.getTokenToMaticRate(path.startToken);
+    const tokenToMaticRate = tokenRateFor(path.startToken);
     if (tokenToMaticRate <= 0n) {
       assessmentSummary.missingTokenRates++;
       continue;

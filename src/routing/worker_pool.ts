@@ -18,6 +18,7 @@ import { Worker, isMainThread } from "worker_threads";
 import { WORKER_COUNT } from "../config/index.ts";
 import { logger } from "../utils/logger.ts";
 import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 import { routeIdentityFromEdges, routeIdentityFromSerializedPath } from "./route_identity.ts";
 
 const WORKER_URL = new URL("./persistent_worker.ts", import.meta.url);
@@ -97,14 +98,20 @@ function isUsableSlot(slot: WorkerSlot | null | undefined): slot is WorkerSlot {
 }
 
 function buildChunkStateObject(paths: PathLike[], stateCache: WorkerStateMap) {
-  const stateObj: Record<string, any> = {};
-  const seenPools = new Set<string>();
+  return collectChunkPoolState(paths, stateCache).stateObj;
+}
 
+function collectChunkPoolState(paths: PathLike[], stateCache: WorkerStateMap) {
+  const stateObj: Record<string, Record<string, any>> = {};
+  const poolAddresses: string[] = [];
+  const seenPools = new Set<string>();
   for (const path of paths) {
     for (const edge of path.edges) {
-      const poolAddress = edge.poolAddress;
+      const poolAddress = normalizeEvmAddress(edge.poolAddress);
+      if (!poolAddress) continue;
       if (seenPools.has(poolAddress)) continue;
       seenPools.add(poolAddress);
+      poolAddresses.push(poolAddress);
 
       const state = stateCache.get(poolAddress);
       if (state) {
@@ -113,17 +120,11 @@ function buildChunkStateObject(paths: PathLike[], stateCache: WorkerStateMap) {
     }
   }
 
-  return stateObj;
+  return { stateObj, poolAddresses };
 }
 
 function collectChunkPoolAddresses(paths: PathLike[]) {
-  const seenPools = new Set<string>();
-  for (const path of paths) {
-    for (const edge of path.edges) {
-      seenPools.add(edge.poolAddress);
-    }
-  }
-  return [...seenPools];
+  return collectChunkPoolState(paths, new Map()).poolAddresses;
 }
 
 function samePoolAddressSet(left: Set<string>, right: string[]) {
@@ -153,7 +154,7 @@ function buildEvaluationChunks(paths: PathLike[], workerCount: number): PathLike
   const groups = [...byToken.values()]
     .map((group) => ({
       paths: group,
-      pools: new Set<string>(group.flatMap((path) => path.edges.map((edge) => edge.poolAddress))),
+      pools: new Set<string>(collectChunkPoolAddresses(group)),
     }))
     .sort((a, b) => b.paths.length - a.paths.length);
 
@@ -641,10 +642,10 @@ export class WorkerPool {
   _buildStateDelta(paths: PathLike[], stateCache: WorkerStateMap, syncedStateVersions: Map<string, number>) {
     const delta: Record<string, Record<string, any>> = {};
     let count = 0;
-    const poolAddresses = collectChunkPoolAddresses(paths);
+    const { stateObj, poolAddresses } = collectChunkPoolState(paths, stateCache);
 
     for (const poolAddress of poolAddresses) {
-      const state = stateCache.get(poolAddress);
+      const state = stateObj[poolAddress];
       if (!state) continue;
 
       const version = getStateVersion(state);
@@ -841,3 +842,8 @@ export class WorkerPool {
 // ─── Singleton ─────────────────────────────────────────────────
 
 export const workerPool = new WorkerPool(WORKER_COUNT);
+
+export const __workerPoolTest = {
+  collectChunkPoolAddresses,
+  collectChunkPoolState,
+};

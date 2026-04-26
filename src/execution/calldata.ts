@@ -87,6 +87,8 @@ const CALLBACK_PROTOCOL_UNISWAP_V3 = 1;
 const CALLBACK_PROTOCOL_SUSHISWAP_V3 = 2;
 const CALLBACK_PROTOCOL_QUICKSWAP_V3 = 3;
 const CALLBACK_PROTOCOL_KYBER_ELASTIC = 4;
+const BPS_DENOMINATOR = 10_000;
+const MAX_UINT24 = 16_777_215n;
 
 function callbackProtocolId(protocol: any) {
   switch (protocol) {
@@ -109,19 +111,52 @@ function poolTokensFromHop(hop: any) {
     : { token0: getAddress(hop.tokenOut), token1: getAddress(hop.tokenIn) };
 }
 
+function normalizeUint(value: unknown, label: string) {
+  try {
+    const normalized = BigInt(value as any);
+    if (normalized < 0n) throw new Error("negative");
+    return normalized;
+  } catch {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+}
+
+function normalizeUint24(value: unknown, label: string) {
+  const normalized = normalizeUint(value, label);
+  if (normalized > MAX_UINT24) {
+    throw new Error(`${label} must fit uint24`);
+  }
+  return Number(normalized);
+}
+
+function normalizeSlippageBps(value: unknown, label = "slippageBps") {
+  const normalized = Number(value ?? 50);
+  if (!Number.isSafeInteger(normalized) || normalized < 0 || normalized > BPS_DENOMINATOR) {
+    throw new Error(`${label} must be an integer between 0 and 10000`);
+  }
+  return normalized;
+}
+
+function slippageAdjustedAmountOut(amountOut: unknown, slippageBps: unknown, label: string) {
+  const output = normalizeUint(amountOut, `${label} amountOut`);
+  const bps = normalizeSlippageBps(slippageBps, `${label} slippageBps`);
+  return (output * BigInt(BPS_DENOMINATOR - bps)) / BigInt(BPS_DENOMINATOR);
+}
+
 function encodeDynamicApprovalCall(
   executor: string,
   token: string,
   spender: string,
   amount: bigint,
 ) {
+  const approvalAmount = normalizeUint(amount, "approval amount");
   return {
     target: getAddress(executor),
     value: 0n,
     data: encodeFunctionData({
       abi: EXECUTOR_APPROVE_IF_NEEDED_ABI,
       functionName: "approveIfNeeded",
-      args: [getAddress(token), getAddress(spender), amount],
+      args: [getAddress(token), getAddress(spender), approvalAmount],
     }),
   };
 }
@@ -142,13 +177,15 @@ function encodeDynamicApprovalCall(
 export function encodeV2Hop(hop: any, recipient: any) {
   const pair = getAddress(hop.poolAddress);
   const tokenIn = getAddress(hop.tokenIn);
+  const amountIn = normalizeUint(hop.amountIn, "encodeV2Hop amountIn");
+  const amountOut = normalizeUint(hop.amountOut, "encodeV2Hop amountOut");
   const calls = [];
 
   // Call 1: Transfer input tokens to the pair
   const transferData = encodeFunctionData({
     abi: ERC20_TRANSFER_ABI,
     functionName: "transfer",
-    args: [pair, hop.amountIn],
+    args: [pair, amountIn],
   });
 
   calls.push({
@@ -159,8 +196,8 @@ export function encodeV2Hop(hop: any, recipient: any) {
 
   // Call 2: Execute the swap
   // V2 swap: if zeroForOne, we want amount1Out; if !zeroForOne, we want amount0Out
-  const amount0Out = hop.zeroForOne ? 0n : hop.amountOut;
-  const amount1Out = hop.zeroForOne ? hop.amountOut : 0n;
+  const amount0Out = hop.zeroForOne ? 0n : amountOut;
+  const amount1Out = hop.zeroForOne ? amountOut : 0n;
 
   const swapData = encodeFunctionData({
     abi: V2_PAIR_SWAP_ABI,
@@ -196,7 +233,7 @@ export function encodeV3Hop(hop: any, recipient: any) {
   const { token0, token1 } = poolTokensFromHop(hop);
 
   // amountSpecified: positive for exact input
-  const amountSpecified = hop.amountIn;
+  const amountSpecified = normalizeUint(hop.amountIn, "encodeV3Hop amountIn");
 
   // sqrtPriceLimitX96: the price limit for the swap
   const sqrtPriceLimitX96 = hop.zeroForOne
@@ -218,7 +255,7 @@ export function encodeV3Hop(hop: any, recipient: any) {
       protocolId: callbackProtocolId(hop.protocol),
       token0,
       token1,
-      fee: hop.fee ?? 0,
+      fee: normalizeUint24(hop.fee ?? 0, "encodeV3Hop fee"),
     }]
   );
 
@@ -264,12 +301,13 @@ export function encodeCurveHop(hop: any, executor: any, options: any = {}) {
   }
 
   // Apply slippage to minimum output
-  const minDy = (hop.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
+  const amountIn = normalizeUint(hop.amountIn, "encodeCurveHop amountIn");
+  const minDy = slippageAdjustedAmountOut(hop.amountOut, slippageBps, "encodeCurveHop");
 
   const calls = [];
 
   // Call 1: Ensure the pool can pull tokenIn from the executor.
-  calls.push(encodeDynamicApprovalCall(executor, tokenIn, pool, hop.amountIn));
+  calls.push(encodeDynamicApprovalCall(executor, tokenIn, pool, amountIn));
 
   // Call 2: Execute the exchange
   const abi = hop.isCrypto ? CURVE_EXCHANGE_UINT256_ABI : CURVE_EXCHANGE_INT128_ABI;
@@ -282,7 +320,7 @@ export function encodeCurveHop(hop: any, executor: any, options: any = {}) {
     data: encodeFunctionData({
       abi,
       functionName: "exchange",
-      args: [iIdx, jIdx, hop.amountIn, minDy],
+      args: [iIdx, jIdx, amountIn, minDy],
     }),
   });
 
@@ -308,12 +346,13 @@ export function encodeBalancerHop(hop: any, executor: any, options: any = {}) {
   const exec     = getAddress(executor);
 
   // Minimum acceptable output with slippage
-  const limit = (hop.amountOut * BigInt(10_000 - slippageBps)) / 10_000n;
+  const amountIn = normalizeUint(hop.amountIn, "encodeBalancerHop amountIn");
+  const limit = slippageAdjustedAmountOut(hop.amountOut, slippageBps, "encodeBalancerHop");
 
   const calls = [];
 
   // Call 1: Ensure the Vault can pull tokenIn from the executor.
-  calls.push(encodeDynamicApprovalCall(exec, tokenIn, vault, hop.amountIn));
+  calls.push(encodeDynamicApprovalCall(exec, tokenIn, vault, amountIn));
 
   // Call 2: Vault.swap
   calls.push({
@@ -329,7 +368,7 @@ export function encodeBalancerHop(hop: any, executor: any, options: any = {}) {
           kind:     0,          // GIVEN_IN
           assetIn:  tokenIn,
           assetOut: tokenOut,
-          amount:   hop.amountIn,
+          amount:   amountIn,
           userData: "0x",
         },
         // FundManagement

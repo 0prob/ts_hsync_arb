@@ -8,8 +8,12 @@ import {
   normalizeReorgBlock,
 } from "../src/runtime/events.ts";
 
-assert.deepEqual([...normalizeChangedPools([" 0xA ", "", "0xa", 123])], ["0xa"]);
-assert.deepEqual([...normalizeChangedPools("0xB")], ["0xb"]);
+const poolA = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const poolB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const poolC = "0xcccccccccccccccccccccccccccccccccccccccc";
+
+assert.deepEqual([...normalizeChangedPools([` ${poolA.toUpperCase()} `, "", poolA, 123, "0xnotapool"])], [poolA]);
+assert.deepEqual([...normalizeChangedPools(poolB.toUpperCase())], [poolB]);
 assert.deepEqual([...normalizeChangedPools(null)], []);
 assert.equal(normalizeReorgBlock("55"), 55);
 assert.equal(normalizeReorgBlock(55.5), null);
@@ -46,27 +50,27 @@ configureWatcherCallbacks({
   },
 });
 
-watcher.onBatch?.([" 0xA ", "", "0xa", 123]);
+watcher.onBatch?.([` ${poolA.toUpperCase()} `, "", poolA, 123]);
 await Promise.resolve();
 await setImmediatePromise();
 assert.equal(
   received.join("|"),
-  "batch:0xa|schedule:1",
+  `batch:${poolA}|schedule:1`,
   "batch events should normalize, dedupe, and count changed pool identifiers",
 );
 
 received.length = 0;
-watcher.onReorg?.({ reorgBlock: "55", changedAddrs: "0xB" });
+watcher.onReorg?.({ reorgBlock: "55", changedAddrs: poolB.toUpperCase() });
 await Promise.resolve();
 await setImmediatePromise();
 assert.equal(
   received.join("|"),
-  "reorg:55:0xb|schedule:1",
+  `reorg:55:${poolB}|schedule:1`,
   "reorg events should treat a string changedAddrs payload as one pool identifier",
 );
 
 received.length = 0;
-watcher.onReorg?.({ reorgBlock: 55.5, changedAddrs: ["0xc"] });
+watcher.onReorg?.({ reorgBlock: 55.5, changedAddrs: [poolC] });
 await Promise.resolve();
 await setImmediatePromise();
 assert.equal(received.join("|"), "schedule:1");

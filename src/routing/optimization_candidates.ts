@@ -38,6 +38,10 @@ function compareCandidateProfit(a: CandidateEntryLike, b: CandidateEntryLike) {
   return 0;
 }
 
+function isViableQuickCandidate(entry: CandidateEntryLike) {
+  return entry?.result?.profit > 0n;
+}
+
 function scoreForCandidate(
   entry: CandidateEntryLike,
   options: {
@@ -77,6 +81,8 @@ export function selectOptimizationCandidates<T extends CandidateEntryLike>(
 ) {
   const normalizedLimit = normalizeCandidateLimit(limit);
   if (normalizedLimit === 0 || candidates.length === 0) return [];
+  const viableCandidates = candidates.filter(isViableQuickCandidate);
+  if (viableCandidates.length === 0) return [];
 
   const scoreCaches = {
     tokenRates: new Map<string, bigint>(),
@@ -107,18 +113,18 @@ export function selectOptimizationCandidates<T extends CandidateEntryLike>(
     }
   };
 
-  const topByProfit = [...candidates].sort(compareCandidateProfit);
-  const topByRoi = [...candidates].sort((a, b) => {
+  const topByProfit = [...viableCandidates].sort(compareCandidateProfit);
+  const topByRoi = [...viableCandidates].sort((a, b) => {
     const scoredA = scoreForCandidate(a, options, scoreCaches);
     const scoredB = scoreForCandidate(b, options, scoreCaches);
     return (scoredB?.roi ?? -Infinity) - (scoredA?.roi ?? -Infinity);
   });
-  const topByScore = [...candidates].sort((a, b) => {
+  const topByScore = [...viableCandidates].sort((a, b) => {
     const scoredA = scoreForCandidate(a, options, scoreCaches);
     const scoredB = scoreForCandidate(b, options, scoreCaches);
     return (scoredB?.score ?? -Infinity) - (scoredA?.score ?? -Infinity);
   });
-  const topByLogWeight = [...candidates].sort(
+  const topByLogWeight = [...viableCandidates].sort(
     (a, b) => normaliseLogWeight(a.path.logWeight) - normaliseLogWeight(b.path.logWeight)
   );
 

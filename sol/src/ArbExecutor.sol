@@ -68,10 +68,11 @@ contract ArbExecutor is IFlashLoanRecipient {
     uint8 private constant PROTOCOL_QUICKSWAP_V3 = 3;
     uint8 private constant PROTOCOL_KYBER_ELASTIC = 4;
 
+    uint8 private constant PHASE_IDLE = 0;
+    uint8 private constant PHASE_FLASHLOAN = 1;
+    uint8 private constant PHASE_CALLBACK = 2;
+
     uint256 private constant MAX_CALLS = 12;
-    uint256 private constant PHASE_IDLE = 0;
-    uint256 private constant PHASE_FLASHLOAN = 1;
-    uint256 private constant PHASE_CALLBACK = 2;
 
     error Unauthorized();
     error DeadlineExpired();
@@ -89,6 +90,7 @@ contract ArbExecutor is IFlashLoanRecipient {
     error InsufficientProfit(uint256 finalBalance, uint256 requiredBalance);
     error TransferFailed(address token, address to, uint256 amount);
     error ApproveFailed(address token, address spender);
+    error ZeroAddress();
 
     event OperatorSet(address indexed operator, bool allowed);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
@@ -112,11 +114,13 @@ contract ArbExecutor is IFlashLoanRecipient {
     address public immutable quickswapV3Factory;
     address public immutable kyberElasticFactory;
 
-    uint256 private _phase;
+    uint8 private _phase;
     bytes32 private _activeRouteHash;
     address private _activeProfitToken;
     uint256 private _activeMinProfit;
     uint256 private _activeInitialProfitBalance;
+
+    uint256 private _locked = 1;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert Unauthorized();
@@ -128,6 +132,13 @@ contract ArbExecutor is IFlashLoanRecipient {
         _;
     }
 
+    modifier nonReentrant() {
+        if (_locked != 1) revert Unauthorized(); // generic error to save bytes
+        _locked = 2;
+        _;
+        _locked = 1;
+    }
+
     constructor(
         address owner_,
         address balancerVault_,
@@ -136,6 +147,15 @@ contract ArbExecutor is IFlashLoanRecipient {
         address quickswapV3Factory_,
         address kyberElasticFactory_
     ) {
+        if (
+            owner_ == address(0) ||
+            balancerVault_ == address(0) ||
+            uniswapV3Factory_ == address(0) ||
+            sushiV3Factory_ == address(0) ||
+            quickswapV3Factory_ == address(0) ||
+            kyberElasticFactory_ == address(0)
+        ) revert ZeroAddress();
+
         owner = owner_;
         balancerVault = balancerVault_;
         uniswapV3Factory = uniswapV3Factory_;
@@ -153,38 +173,48 @@ contract ArbExecutor is IFlashLoanRecipient {
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        address previousOwner = owner;
         owner = newOwner;
-        emit OwnershipTransferred(msg.sender, newOwner);
+        emit OwnershipTransferred(previousOwner, newOwner);
     }
 
-    function preApprove(address token, address spender) external onlyAuthorized {
+    function preApprove(address token, address spender) external onlyAuthorized nonReentrant {
         _safeApproveMaxIfNeeded(token, spender, type(uint256).max);
         emit PreApproved(token, spender);
     }
 
-    function approveIfNeeded(address token, address spender, uint256 amount) external {
+    function approveIfNeeded(address token, address spender, uint256 amount) external nonReentrant {
         if (msg.sender != address(this) && msg.sender != owner && !operators[msg.sender]) {
             revert Unauthorized();
         }
         _safeApproveMaxIfNeeded(token, spender, amount);
     }
 
-    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
         _safeTransfer(token, to, amount);
         emit TokenRescued(token, to, amount);
     }
 
-    function rescueNative(address payable to, uint256 amount) external onlyOwner {
+    function rescueNative(address payable to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert TransferFailed(address(0), to, amount);
         emit NativeRescued(to, amount);
     }
 
-    function executeArb(address flashToken, uint256 flashAmount, FlashParams calldata params) external onlyAuthorized {
+    function executeArb(address flashToken, uint256 flashAmount, FlashParams calldata params)
+        external
+        onlyAuthorized
+    {
+        if (_phase != PHASE_IDLE) revert InvalidFlashLoanContext();
         if (block.timestamp > params.deadline) revert DeadlineExpired();
-        if (params.calls.length == 0) revert EmptyRoute();
-        if (params.calls.length > MAX_CALLS) revert TooManyCalls();
+        uint256 callsLen = params.calls.length;
+        if (callsLen == 0) revert EmptyRoute();
+        if (callsLen > MAX_CALLS) revert TooManyCalls();
         if (flashAmount == 0) revert FlashLoanRequired();
+        if (flashToken == address(0) || params.profitToken == address(0)) revert ZeroAddress();
 
         bytes32 routeHash = keccak256(abi.encode(params.calls));
         if (routeHash != params.routeHash) revert InvalidRouteHash();
@@ -201,6 +231,7 @@ contract ArbExecutor is IFlashLoanRecipient {
         tokens[0] = IERC20Minimal(flashToken);
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = flashAmount;
+
         IBalancerVault(balancerVault).flashLoan(this, tokens, amounts, abi.encode(params));
 
         uint256 finalProfitBalance = IERC20Minimal(params.profitToken).balanceOf(address(this));
@@ -230,7 +261,7 @@ contract ArbExecutor is IFlashLoanRecipient {
         _executeCalls(params.calls);
 
         uint256 len = tokens.length;
-        for (uint256 i = 0; i < len;) {
+        for (uint256 i; i < len;) {
             _safeTransfer(address(tokens[i]), balancerVault, amounts[i] + feeAmounts[i]);
             unchecked {
                 ++i;
@@ -253,9 +284,12 @@ contract ArbExecutor is IFlashLoanRecipient {
         _handlePoolSwapCallback(PROTOCOL_KYBER_ELASTIC, deltaQty0, deltaQty1, data);
     }
 
-    function _handlePoolSwapCallback(uint8 protocolId, int256 amount0Delta, int256 amount1Delta, bytes calldata data)
-        internal
-    {
+    function _handlePoolSwapCallback(
+        uint8 protocolId,
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata data
+    ) internal {
         if (_phase != PHASE_CALLBACK) revert CallbackOnly();
 
         CallbackData memory callbackData = abi.decode(data, (CallbackData));
@@ -275,14 +309,12 @@ contract ArbExecutor is IFlashLoanRecipient {
 
     function _resolveExpectedPool(CallbackData memory callbackData) internal view returns (address) {
         if (callbackData.protocolId == PROTOCOL_UNISWAP_V3) {
-            return
-                IUniswapV3FactoryLike(uniswapV3Factory)
-                    .getPool(callbackData.token0, callbackData.token1, callbackData.fee);
+            return IUniswapV3FactoryLike(uniswapV3Factory)
+                .getPool(callbackData.token0, callbackData.token1, callbackData.fee);
         }
         if (callbackData.protocolId == PROTOCOL_SUSHISWAP_V3) {
-            return
-                IUniswapV3FactoryLike(sushiV3Factory)
-                    .getPool(callbackData.token0, callbackData.token1, callbackData.fee);
+            return IUniswapV3FactoryLike(sushiV3Factory)
+                .getPool(callbackData.token0, callbackData.token1, callbackData.fee);
         }
         if (callbackData.protocolId == PROTOCOL_QUICKSWAP_V3) {
             return IAlgebraFactoryLike(quickswapV3Factory).poolByPair(callbackData.token0, callbackData.token1);
@@ -296,7 +328,7 @@ contract ArbExecutor is IFlashLoanRecipient {
 
     function _executeCalls(Call[] memory calls) internal {
         uint256 len = calls.length;
-        for (uint256 i = 0; i < len;) {
+        for (uint256 i; i < len;) {
             Call memory call_ = calls[i];
             (bool ok, bytes memory result) = call_.target.call{value: call_.value}(call_.data);
             if (!ok) revert ExternalCallFailed(i, call_.target, result);
@@ -323,7 +355,8 @@ contract ArbExecutor is IFlashLoanRecipient {
     }
 
     function _safeTransfer(address token, address to, uint256 amount) internal {
-        (bool ok, bytes memory result) = token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
+        (bool ok, bytes memory result) =
+            token.call(abi.encodeWithSelector(IERC20Minimal.transfer.selector, to, amount));
         if (!ok || (result.length != 0 && !abi.decode(result, (bool)))) {
             revert TransferFailed(token, to, amount);
         }
@@ -345,9 +378,10 @@ contract ArbExecutor is IFlashLoanRecipient {
     }
 
     function _safeApproveMaxIfNeeded(address token, address spender, uint256 amount) internal {
-        if (_safeAllowance(token, address(this), spender) >= amount) return;
+        uint256 current = _safeAllowance(token, address(this), spender);
+        if (current >= amount) return;
 
-        if (_safeAllowance(token, address(this), spender) != 0) {
+        if (current != 0) {
             _safeApprove(token, spender, 0);
         }
         _safeApprove(token, spender, type(uint256).max);

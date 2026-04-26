@@ -7,12 +7,12 @@ export function getPathHopCount(path: PathLike | null | undefined) {
   if (Array.isArray(path?.edges)) return path.edges.length;
 
   const hopCount = Number(path?.hopCount);
-  if (!Number.isFinite(hopCount) || hopCount <= 0) return 0;
+  if (!Number.isSafeInteger(hopCount) || hopCount <= 0) return 0;
   return hopCount;
 }
 
 function normalizedHopCount(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return null;
+  if (!Number.isSafeInteger(value) || value <= 0) return null;
   return value;
 }
 

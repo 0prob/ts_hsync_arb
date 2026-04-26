@@ -47,11 +47,22 @@ import {
   V2_PROTOCOLS,
   V3_PROTOCOLS,
 } from "../protocols/classification.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 
 const ONE = 10n ** 18n;
-const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const DEFAULT_V2_FEE_NUMERATOR = 997n;
 const DEFAULT_V2_FEE_DENOMINATOR = 1000n;
+
+function normalizeStateAddress(value: unknown) {
+  return normalizeEvmAddress(value);
+}
+
+function normalizeStateTokenList(tokens: unknown) {
+  if (!Array.isArray(tokens)) return [];
+  return tokens
+    .map(normalizeStateAddress)
+    .filter((token): token is string => token != null);
+}
 
 function normalizeTokenDecimalsList(tokens: any[], meta: any = {}) {
   const byAddress = meta?.tokenDecimalsByAddress ?? meta?.decimalsByAddress ?? null;
@@ -128,11 +139,12 @@ export function normalizeV2State(poolAddress: any, protocol: any, tokens: any, r
   // V2 fee: default 997/1000 (0.3%). SushiSwap also 0.3%.
   // Some forks differ — use registry metadata if available.
   const feeNumerator = resolveV2FeeNumerator(meta);
-  const normalizedTokens = Array.isArray(tokens) ? tokens.map((t: any) => String(t).toLowerCase()) : [];
+  const poolId = normalizeStateAddress(poolAddress) ?? "";
+  const normalizedTokens = normalizeStateTokenList(tokens);
   const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
 
   return {
-    poolId: poolAddress.toLowerCase(),
+    poolId,
     protocol,
     token0: (normalizedTokens[0] || "").toLowerCase(),
     token1: (normalizedTokens[1] || "").toLowerCase(),
@@ -159,12 +171,13 @@ export function normalizeV2State(poolAddress: any, protocol: any, tokens: any, r
  * @returns {Object}  Canonical pool state
  */
 export function normalizeV3State(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
-  const normalizedTokens = Array.isArray(tokens) ? tokens.map((t: any) => String(t).toLowerCase()) : [];
+  const poolId = normalizeStateAddress(poolAddress) ?? "";
+  const normalizedTokens = normalizeStateTokenList(tokens);
   const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
   const isAlgebra = rawState.isAlgebra === true || meta?.isAlgebra === true || protocol === "QUICKSWAP_V3";
   const fee = rawState.fee != null ? BigInt(rawState.fee) : resolveV3Fee(meta);
   return {
-    poolId: poolAddress.toLowerCase(),
+    poolId,
     protocol,
     token0: (normalizedTokens[0] || "").toLowerCase(),
     token1: (normalizedTokens[1] || "").toLowerCase(),
@@ -197,18 +210,20 @@ export function normalizeV3State(poolAddress: any, protocol: any, tokens: any, r
  * @returns {Object}  Canonical pool state
  */
 export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
-  const n = tokens.length;
-  const tokenDecimals = normalizeTokenDecimalsList(tokens, meta);
+  const poolId = normalizeStateAddress(poolAddress) ?? "";
+  const normalizedTokens = normalizeStateTokenList(tokens);
+  const n = normalizedTokens.length;
+  const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
   const decimalRates = defaultRatesForDecimals(tokenDecimals);
   const rates = rawState.rates || decimalRates || defaultRates(n);
   const A = rawState.A || BigInt(meta?.A || 100) * 100n; // A in A_PRECISION units
 
   return {
-    poolId: poolAddress.toLowerCase(),
+    poolId,
     protocol,
-    token0: (tokens[0] || "").toLowerCase(),
-    token1: (tokens[1] || "").toLowerCase(),
-    tokens: tokens.map((t: any) => t.toLowerCase()),
+    token0: (normalizedTokens[0] || "").toLowerCase(),
+    token1: (normalizedTokens[1] || "").toLowerCase(),
+    tokens: normalizedTokens,
     fee: rawState.fee || BigInt(meta?.fee || 4_000_000n),  // default 0.04% in 1e10
     balances: rawState.balances || [],
     rates,
@@ -230,7 +245,8 @@ export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any
  * @returns {Object}  Canonical pool state
  */
 export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
-  const normalizedTokens = Array.isArray(tokens) ? tokens.map((t: any) => String(t).toLowerCase()) : [];
+  const poolId = normalizeStateAddress(poolAddress) ?? "";
+  const normalizedTokens = normalizeStateTokenList(tokens);
   const n = normalizedTokens.length;
   const toBigInt = (value: any, fallback = 0n): bigint => {
     if (typeof value === "bigint") return value;
@@ -255,7 +271,7 @@ export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: 
   const tokenDecimals = normalizeTokenDecimalsList(normalizedTokens, meta);
 
   return {
-    poolId: poolAddress.toLowerCase(),
+    poolId,
     balancerPoolId: rawState.poolId ?? meta?.poolId ?? meta?.pool_id ?? null,
     protocol,
     token0: (normalizedTokens[0] || "").toLowerCase(),
@@ -291,7 +307,11 @@ export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: 
 export function normalizePoolState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   if (!rawState) return null;
 
-  const addr = poolAddress.toLowerCase();
+  const addr = normalizeStateAddress(poolAddress);
+  if (!addr) {
+    console.warn(`[normalizer] Rejecting invalid pool address for protocol ${protocol}: ${String(poolAddress)}`);
+    return null;
+  }
   const protocolKey = normalizeProtocolKey(protocol);
   let normalized = null;
 
@@ -329,18 +349,18 @@ export function validatePoolState(state: any) {
   if (!state.protocol) return { valid: false, reason: "missing protocol" };
   if (!state.tokens || state.tokens.length < 2)
     return { valid: false, reason: "fewer than 2 tokens" };
-  if (typeof state.poolId !== "string" || !ADDRESS_RE.test(state.poolId))
+  if (normalizeStateAddress(state.poolId) !== state.poolId)
     return { valid: false, reason: "invalid poolId" };
   const seenTokens = new Set<string>();
   for (const token of state.tokens) {
-    if (typeof token !== "string" || !ADDRESS_RE.test(token)) {
+    const normalizedToken = normalizeStateAddress(token);
+    if (normalizedToken == null || normalizedToken !== token) {
       return { valid: false, reason: `invalid token address: ${token}` };
     }
-    const normalized = token.toLowerCase();
-    if (seenTokens.has(normalized)) {
+    if (seenTokens.has(normalizedToken)) {
       return { valid: false, reason: `duplicate token: ${token}` };
     }
-    seenTokens.add(normalized);
+    seenTokens.add(normalizedToken);
   }
   if (!Number.isFinite(Number(state.timestamp)) || Number(state.timestamp) <= 0)
     return { valid: false, reason: "invalid timestamp" };

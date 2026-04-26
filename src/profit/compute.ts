@@ -50,6 +50,16 @@ function ceilDiv(numerator: bigint, denominator: bigint) {
   return (numerator + denominator - 1n) / denominator;
 }
 
+export function gasCostInTokenUnits(gasCost: bigint, tokenToMaticRate: bigint) {
+  if (gasCost < 0n) {
+    throw new Error("gasCost must be >= 0");
+  }
+  if (tokenToMaticRate <= 0n) {
+    throw new Error("tokenToMaticRate must be > 0");
+  }
+  return ceilDiv(gasCost, tokenToMaticRate);
+}
+
 function bigintToApproxNumber(value: bigint) {
   if (value === 0n) return 0;
 
@@ -122,6 +132,12 @@ export function gasCostWei(gasUnits: number, gasPriceWei: bigint = DEFAULT_GAS_P
  * @returns {bigint}           Slippage-adjusted amountOut
  */
 export function applySlippage(amountOut: bigint, slippageBps: bigint = DEFAULT_SLIPPAGE_BPS) {
+  if (amountOut < 0n) {
+    throw new Error("amountOut must be >= 0");
+  }
+  if (slippageBps < 0n || slippageBps > BPS_DENOM) {
+    throw new Error("slippageBps must be between 0 and 10000");
+  }
   const complement = BPS_DENOM - slippageBps;
   return (amountOut * complement) / BPS_DENOM;
 }
@@ -149,6 +165,15 @@ export function revertRiskPenalty(
   hopCount: number,
   revertRiskBps: bigint = DEFAULT_REVERT_RISK_BPS
 ) {
+  if (grossProfit < 0n) {
+    throw new Error("grossProfit must be >= 0");
+  }
+  if (!Number.isSafeInteger(hopCount) || hopCount < 1) {
+    throw new Error("hopCount must be >= 1");
+  }
+  if (revertRiskBps < 0n || revertRiskBps > BPS_DENOM) {
+    throw new Error("revertRiskBps must be between 0 and 10000");
+  }
   // Increase risk for more hops: +200 bps per extra hop beyond 2
   const extraHops = BigInt(Math.max(0, hopCount - 2));
   const adjustedRisk = revertRiskBps + extraHops * 200n;
@@ -195,13 +220,16 @@ export function revertRiskPenalty(
  */
 export function computeProfit(routeResult: RouteResultLike, options: ProfitOptions = {}): ProfitAssessment {
   const derivedHopCount = getResultHopCount(routeResult);
+  const defaultHopCount = derivedHopCount == null
+    ? routeResult?.hopCount == null ? 2 : 0
+    : derivedHopCount;
   const {
     gasPriceWei = DEFAULT_GAS_PRICE_WEI,
     tokenToMaticRate = null,
     slippageBps = DEFAULT_SLIPPAGE_BPS,
     revertRiskBps = DEFAULT_REVERT_RISK_BPS,
     minNetProfit = DEFAULT_MIN_PROFIT,
-    hopCount = derivedHopCount == null ? 2 : derivedHopCount,
+    hopCount = defaultHopCount,
   } = options;
 
   if (!routeResult) return invalidAssessment({}, "missing route result");
@@ -215,7 +243,7 @@ export function computeProfit(routeResult: RouteResultLike, options: ProfitOptio
   if (slippageBps < 0n || slippageBps > BPS_DENOM) return invalidAssessment(routeResult, "invalid slippageBps");
   if (revertRiskBps < 0n || revertRiskBps > BPS_DENOM) return invalidAssessment(routeResult, "invalid revertRiskBps");
   if (minNetProfit < 0n) return invalidAssessment(routeResult, "minNetProfit < 0");
-  if (!Number.isFinite(hopCount) || hopCount < 1) return invalidAssessment(routeResult, "invalid hopCount");
+  if (!Number.isSafeInteger(hopCount) || hopCount < 1) return invalidAssessment(routeResult, "invalid hopCount");
   if (tokenToMaticRate != null && tokenToMaticRate <= 0n) {
     return invalidAssessment(routeResult, "tokenToMaticRate <= 0");
   }
@@ -247,7 +275,7 @@ export function computeProfit(routeResult: RouteResultLike, options: ProfitOptio
     //   WMATIC (18 dec): rate = 1     → gasCostInTokens = gasCostWei / 1   = gasCostWei
     //   USDC   (6 dec):  rate = 1e12  → gasCostInTokens = gasCostWei / 1e12
     //   WETH   (18 dec): rate = 2500  → gasCostInTokens = gasCostWei / 2500
-    gasCostInTokens = ceilDiv(gasCost, tokenToMaticRate);
+    gasCostInTokens = gasCostInTokenUnits(gasCost, tokenToMaticRate);
     netProfitAfterGas = netProfit - gasCostInTokens;
   }
 
@@ -313,6 +341,7 @@ type RouteResultLike = {
   amountOut: bigint;
   profit: bigint;
   totalGas: number;
+  hopCount?: number;
 };
 
 type ProfitOptions = {

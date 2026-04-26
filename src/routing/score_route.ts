@@ -18,16 +18,13 @@
  */
 
 import { getPathHopCount } from "./path_hops.ts";
+import { gasCostInTokenUnits } from "../profit/compute.ts";
 
 // ─── Gas cost helpers ─────────────────────────────────────────
 
 /** Default MATIC gas price estimate (30 gwei) */
 const DEFAULT_GAS_PRICE_GWEI = 30n;
 const GWEI = 10n ** 9n;
-
-function ceilDiv(numerator: bigint, denominator: bigint) {
-  return (numerator + denominator - 1n) / denominator;
-}
 
 function bigintToApproxNumber(value: bigint, decimals = 0) {
   if (value === 0n) return 0;
@@ -83,7 +80,11 @@ export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
 export function gasCostInStartTokenUnits(gasCostWei: bigint, tokenToMaticRate?: bigint | null) {
   if (tokenToMaticRate == null) return null;
   if (tokenToMaticRate <= 0n) return null;
-  return ceilDiv(gasCostWei, tokenToMaticRate);
+  try {
+    return gasCostInTokenUnits(gasCostWei, tokenToMaticRate);
+  } catch {
+    return null;
+  }
 }
 
 // ─── Route scorer ─────────────────────────────────────────────

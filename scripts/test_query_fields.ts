@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 
-import { BlockField, LogField } from "../src/hypersync/client.ts";
+import { BlockField, JoinMode, LogField } from "../src/hypersync/client.ts";
 import { buildHyperSyncLogQuery } from "../src/hypersync/query_policy.ts";
+import { HYPERSYNC_MAX_BLOCKS_PER_REQUEST } from "../src/config/index.ts";
 
 const topic0 = "0x" + "11".repeat(32);
+const mixedCaseTopic0 = "0x" + "Aa".repeat(32);
 
 {
   const logFields = [
@@ -37,6 +39,63 @@ const topic0 = "0x" + "11".repeat(32);
   assert.equal(blockFields[0], "  Number  ", "field normalization must not mutate caller arrays");
 }
 
+{
+  const query = buildHyperSyncLogQuery({
+    fromBlock: 10,
+    logs: [
+      {
+        address: [
+          "  0x1111111111111111111111111111111111111111  ",
+          "0x1111111111111111111111111111111111111111".toUpperCase(),
+          "not-an-address",
+          "",
+        ],
+        topics: [[mixedCaseTopic0, mixedCaseTopic0.toLowerCase(), "", null as any]],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    query.logs[0].address,
+    ["0x1111111111111111111111111111111111111111"],
+    "address filters should be normalized, deduplicated, and scrubbed before request construction",
+  );
+  assert.deepEqual(
+    query.logs[0].topics,
+    [[mixedCaseTopic0.toLowerCase()]],
+    "topic filters should be lowercased and deduplicated before request construction",
+  );
+  assert.equal(
+    query.maxNumBlocks,
+    HYPERSYNC_MAX_BLOCKS_PER_REQUEST,
+    "shared query construction should bound historical block spans by default",
+  );
+  assert.equal(
+    query.joinMode,
+    JoinMode.JoinNothing,
+    "shared query construction should preserve HyperSync's native numeric JoinMode enum",
+  );
+  assert.equal(
+    typeof query.joinMode,
+    "number",
+    "joinMode must cross the native HyperSync boundary as a number, not an enum name string",
+  );
+}
+
+{
+  const query = buildHyperSyncLogQuery({
+    fromBlock: 10,
+    logs: [{ topics: [[topic0]] }],
+    joinMode: "JoinNothing",
+  });
+
+  assert.equal(
+    query.joinMode,
+    JoinMode.JoinNothing,
+    "legacy string joinMode names should be normalized to HyperSync's native enum value",
+  );
+}
+
 assert.throws(
   () =>
     buildHyperSyncLogQuery({
@@ -68,6 +127,38 @@ assert.throws(
     }),
   /at least one log field/i,
   "blank-only log field selections should fail early",
+);
+
+assert.throws(
+  () =>
+    buildHyperSyncLogQuery({
+      fromBlock: 1,
+      logs: [{ address: ["not-an-address", ""] }],
+    }),
+  /valid address or topic constraint/i,
+  "invalid-only address filters should fail before reaching HyperSync",
+);
+
+assert.throws(
+  () =>
+    buildHyperSyncLogQuery({
+      fromBlock: 1,
+      logs: [{ topics: [[topic0]] }],
+      joinMode: "  ",
+    }),
+  /joinMode must be a valid JoinMode enum value/i,
+  "blank join modes should fail before request construction",
+);
+
+assert.throws(
+  () =>
+    buildHyperSyncLogQuery({
+      fromBlock: 1,
+      logs: [{ topics: [[topic0]] }],
+      joinMode: 99,
+    }),
+  /joinMode must be a valid JoinMode enum value/i,
+  "unknown numeric join modes should fail before request construction",
 );
 
 console.log("HyperSync query field checks passed.");

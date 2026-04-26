@@ -131,7 +131,10 @@ function resolveFlashLoan(route: any) {
   };
 }
 
-export function gasEstimateCacheKeyForRoute(route: any) {
+export function gasEstimateCacheKeyForRoute(
+  route: any,
+  context: { fromAddress?: unknown; executorAddress?: unknown; callCount?: unknown } = {},
+) {
   const startToken = route?.path?.startToken;
   const edges = route?.path?.edges;
   const hopCount = getPathHopCount(route?.path);
@@ -146,7 +149,23 @@ export function gasEstimateCacheKeyForRoute(route: any) {
     throw new Error("gasEstimateCacheKeyForRoute: path hop count must be > 0");
   }
 
-  return routeExecutionCacheKey(startToken, hopCount, edges);
+  const routeKey = routeExecutionCacheKey(startToken, hopCount, edges);
+  const fromAddress = normalizeEvmAddress(context.fromAddress);
+  const executorAddress = normalizeEvmAddress(context.executorAddress);
+  const callCount = Number(context.callCount);
+  const hasContext = context.fromAddress != null || context.executorAddress != null || context.callCount != null;
+  if (!hasContext) return routeKey;
+  if (!fromAddress) {
+    throw new Error("gasEstimateCacheKeyForRoute: valid fromAddress required when cache context is provided");
+  }
+  if (!executorAddress) {
+    throw new Error("gasEstimateCacheKeyForRoute: valid executorAddress required when cache context is provided");
+  }
+  if (!Number.isSafeInteger(callCount) || callCount <= 0) {
+    throw new Error("gasEstimateCacheKeyForRoute: callCount must be a positive integer when cache context is provided");
+  }
+
+  return `gas:${fromAddress}:${executorAddress}:calls=${callCount}:${routeKey}`;
 }
 // ─── Main builder ─────────────────────────────────────────────
 
@@ -177,6 +196,7 @@ export function gasEstimateCacheKeyForRoute(route: any) {
  * @param {number} [options.gasMultiplier]
  * @param {bigint} [options.maxFeeOverride]
  * @param {bigint} [options.priorityFeeOverride]
+ * @param {bigint} [options.maxEstimatedCostWei]
  * @param {{maxFeePerGas: bigint, maxPriorityFeePerGas: bigint, gasLimit: bigint, estimatedCostWei: bigint}} [options.gasParamsOverride]
  * @returns {Promise<BuiltTx>}
  */
@@ -189,6 +209,7 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
     gasMultiplier = DEFAULT_GAS_MULTIPLIER,
     maxFeeOverride,
     priorityFeeOverride,
+    maxEstimatedCostWei,
     gasEstimateCacheKey: gasEstimateCacheKeyOverride,
     gasParamsOverride = null,
   } = options;
@@ -240,12 +261,18 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
 
   // Get gas params (estimate + EIP-1559 fees)
   const gasEstimateKey =
-    gasEstimateCacheKeyOverride ?? gasEstimateCacheKey(skelTx, fromAddress);
+    gasEstimateCacheKeyOverride ??
+    gasEstimateCacheKeyForRoute(route, {
+      fromAddress,
+      executorAddress,
+      callCount: calls.length,
+    });
 
   const gasParams = gasParamsOverride ?? await recommendGasParams(skelTx, fromAddress, {
     gasMultiplier,
     maxFeeOverride,
     priorityFeeOverride,
+    maxEstimatedCostWei,
     gasEstimateCacheKey: gasEstimateKey,
   });
 
@@ -265,6 +292,7 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
     gasLimit: gasParams.gasLimit.toString(),
     estimatedGasCostWei: gasParams.estimatedCostWei.toString(),
     maxGasCostWei: gasParams.maxCostWei?.toString?.(),
+    maxEstimatedGasCostWei: maxEstimatedCostWei?.toString?.(),
   };
 
   return {
@@ -276,6 +304,7 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
     gasLimit: gasParams.gasLimit,
     effectiveGasPriceWei: gasParams.effectiveGasPriceWei,
     maxCostWei: gasParams.maxCostWei,
+    gasEstimateCacheKey: gasEstimateKey,
     meta,
     flashParams,
     calls,

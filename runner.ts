@@ -1,6 +1,6 @@
 
 /**
- * runner.js — Unified Arbitrage & Discovery Runner
+ * runner.ts — Unified Arbitrage & Discovery Runner
  *
  * Architecture (event-driven):
  *   1. Bootstrap  — discover pools, seed stateCache from DB.
@@ -13,12 +13,6 @@
  *                   every HEARTBEAT_INTERVAL_MS even during quiet periods.
  *   5. Background — pool discovery repeats every DISCOVERY_INTERVAL_MS;
  *                   cycle topology rebuilds only when new pools are discovered.
- *
- * Flags:
- *   --loop            Stay alive after first arb scan (event-driven)
- *   --live            Execute found opportunities on-chain
- *   --discovery-only  Run pool discovery only, then exit
- *   --interval <sec>  Override poll/heartbeat interval (legacy; sets heartbeat)
  */
 
 import { RegistryService } from "./src/db/registry.ts";

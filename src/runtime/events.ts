@@ -1,3 +1,5 @@
+import { normalizeEvmAddress } from "../util/pool_record.ts";
+
 export type PoolsChangedEvent = {
   type: "pools_changed";
   changedPools: Set<string>;
@@ -26,9 +28,7 @@ export type RuntimeEvent =
   | WatcherHaltEvent;
 
 function normalizePoolAddressLike(value: unknown) {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
+  return normalizeEvmAddress(value);
 }
 
 export function normalizeChangedPools(value: unknown): Set<string> {
