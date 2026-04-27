@@ -1,18 +1,41 @@
 import assert from "node:assert/strict";
+import React from "react";
+import { renderToString } from "ink";
 
-import { __tuiTest } from "../src/tui/index.tsx";
+import {
+  Dashboard,
+  formatAge,
+  formatDurationMs,
+  formatLastPass,
+  logTone,
+  normalizeLogLine,
+  signalSummary,
+  snapshotBotState,
+} from "../src/tui/App.tsx";
+import { startTui } from "../src/tui/index.tsx";
 import type { BotState } from "../src/tui/types.ts";
 
+const now = new Date("2026-04-25T12:35:06Z").getTime();
 const state: BotState = {
   status: "running",
+  mode: "loop-live",
   passCount: 12,
   consecutiveErrors: 0,
   gasPrice: "31.25",
-  maticPrice: "0.72",
   lastArbMs: new Date("2026-04-25T12:34:56Z").getTime(),
+  stateCacheSize: 1234,
+  cachedPathCount: 56789,
+  lastPassDurationMs: 1450,
+  lastOpportunityCount: 3,
+  lastPathsEvaluated: 321,
+  lastCandidateCount: 22,
+  lastShortlistCount: 10,
+  lastOptimizedCount: 7,
+  lastProfitableCount: 3,
+  lastUpdateMs: new Date("2026-04-25T12:35:01Z").getTime(),
   opportunities: [
     {
-      Route: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -> 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -> 0xcccccccccccccccccccccccccccccccccccccccc",
+      Route: "UNISWAP_V3 -> QUICKSWAP_V2 -> BALANCER",
       Profit: "123.456789 USDC",
       ROI: "1.2345%",
     },
@@ -23,87 +46,55 @@ const state: BotState = {
   ],
 };
 
-const signature = __tuiTest.signatureFor(state, 100);
-assert.equal(signature, __tuiTest.signatureFor(state, 100));
-assert.notEqual(signature, __tuiTest.signatureFor({ ...state, passCount: 13 }, 100));
-assert.notEqual(signature, __tuiTest.signatureFor({ ...state, lastArbMs: state.lastArbMs + 1000 }, 100));
-assert.notEqual(signature, __tuiTest.signatureFor(state, 101));
+const snapshot = snapshotBotState(state);
+assert.notEqual(snapshot, state);
+assert.notEqual(snapshot.opportunities, state.opportunities);
+assert.notEqual(snapshot.logs, state.logs);
+assert.equal(snapshot.opportunities.length, 1);
+assert.equal(snapshot.logs.length, 2);
 
-const longVisiblePrefix = "0x" + "a".repeat(120);
-const hiddenTailA: BotState = {
-  ...state,
-  opportunities: [{ Route: `${longVisiblePrefix}A`, Profit: "1.000000 USDC", ROI: "1.00%" }],
-  logs: [`[INFO] ${longVisiblePrefix}A`],
-};
-const hiddenTailB: BotState = {
-  ...hiddenTailA,
-  opportunities: [{ Route: `${longVisiblePrefix}B`, Profit: "1.000000 USDC", ROI: "1.00%" }],
-  logs: [`[INFO] ${longVisiblePrefix}B`],
-};
-assert.equal(
-  __tuiTest.signatureFor(hiddenTailA, 80),
-  __tuiTest.signatureFor(hiddenTailB, 80),
-  "signature should not redraw when only hidden text tails change",
-);
+assert.equal(formatLastPass(0), "never");
+assert.match(formatLastPass(state.lastArbMs), /^\d{2}:\d{2}:\d{2}$/);
+assert.equal(formatDurationMs(999), "999ms");
+assert.equal(formatDurationMs(1450), "1.4s");
+assert.equal(formatAge(state.lastUpdateMs, now), "5s ago");
+assert.equal(normalizeLogLine(state.logs[0]).includes("topReject=net_profit"), true);
+assert.equal(logTone("[ERROR] bad"), "red");
+assert.equal(logTone("[WARN] slow"), "yellow");
+assert.equal(logTone("[DEBUG] noisy"), "blue");
 
-const narrowFrame = __tuiTest.renderFrame(state, 60, "-");
-const visibleLines = narrowFrame
-  .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-  .split("\n");
+assert.deepEqual(signalSummary(state), {
+  event: "candidate_optimization_summary",
+  topReject: "net_profit 1 < minimum 2:8",
+  missingRates: "2",
+  errors: 0,
+  warnings: 1,
+});
 
-assert.ok(visibleLines.length > 5);
-assert.ok(visibleLines.some((line) => line.includes("last")));
-for (const line of visibleLines) {
-  assert.ok(line.length <= 72, `line exceeded minimum TUI width: ${line}`);
+const rendered = renderToString(React.createElement(Dashboard, { state: snapshot, now }));
+for (const text of [
+  "Polygon Arbitrage Bot",
+  "Live execution monitor",
+  "Overview",
+  "mode",
+  "loop-live",
+  "passes",
+  "eval",
+  "candidates",
+  "optimized",
+  "profitable",
+  "pools",
+  "paths",
+  "last pass",
+  "missingRates",
+  "Top Opportunities",
+  "UNISWAP_V3",
+  "123.456789 USDC",
+  "Recent Logs",
+]) {
+  assert.ok(rendered.includes(text), `Ink dashboard should include ${text}`);
 }
 
-const formattedLogs = __tuiTest.formatLogs(state, 160);
-assert.equal(formattedLogs.length, 2);
-assert.match(formattedLogs[0], /\u001b\[/, "logs should keep severity color");
-assert.match(formattedLogs[0], /topReject=net_profit/, "net-profit reject reasons should scan as one field");
-
-assert.equal(__tuiTest.formatLastPass(0), "never");
-assert.match(__tuiTest.formatLastPass(state.lastArbMs), /^\d{2}:\d{2}:\d{2}$/);
-
-const writes: string[] = [];
-const fakeStream = {
-  write(chunk: unknown) {
-    writes.push(String(chunk));
-    return true;
-  },
-};
-
-const guardedState: BotState = {
-  ...state,
-  logs: [],
-};
-const guard = __tuiTest.installOutputGuard(guardedState, [{ label: "stdout", stream: fakeStream }]);
-
-fakeStream.write("external line one\npartial");
-assert.equal(writes.length, 0, "guard should capture external stdout writes");
-assert.deepEqual(guardedState.logs, ["[STDOUT] external line one"]);
-
-guard.write(fakeStream, "tui frame");
-assert.deepEqual(writes, ["tui frame"], "guard should allow renderer writes through");
-
-guard.restore();
-assert.equal(fakeStream.write("after restore"), true);
-assert.deepEqual(writes, ["tui frame", "after restore"], "restore should put the original writer back");
-assert.equal(guardedState.logs[0], "[STDOUT] partial", "restore should flush partial captured output");
-
-const longLineState: BotState = { ...state, logs: [] };
-const longLineWrites: string[] = [];
-const longLineStream = {
-  write(chunk: unknown) {
-    longLineWrites.push(String(chunk));
-    return true;
-  },
-};
-const longLineGuard = __tuiTest.installOutputGuard(longLineState, [{ label: "stderr", stream: longLineStream }]);
-longLineStream.write(`${"x".repeat(2_000)}\n`);
-longLineGuard.restore();
-assert.equal(longLineWrites.length, 0, "guard should capture long external lines");
-assert.ok(longLineState.logs[0].startsWith("[STDERR] "), "captured stderr should keep its source label");
-assert.ok(longLineState.logs[0].length < 700, "captured external lines should be bounded");
+assert.equal(typeof startTui({ ...state }), "function");
 
 console.log("TUI checks passed.");

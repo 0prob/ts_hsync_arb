@@ -47,6 +47,7 @@ export async function handleWatcherLogs({
   });
   const pendingStateUpdates = new Map<string, { addr: string; state: any; rawLog: any }>();
   const poolMetaByAddress = new Map<string, any>();
+  const refreshingV3Addrs = new Set<string>();
 
   for (let i = 0; i < logs.length; i++) {
     const log = logs[i];
@@ -55,6 +56,7 @@ export async function handleWatcherLogs({
     if (closed()) break;
 
     const addr = log.address.toLowerCase();
+    if (refreshingV3Addrs.has(addr)) continue;
     let pool = poolMetaByAddress.get(addr);
     if (pool === undefined) {
       pool = registry.getPoolMeta(addr) ?? null;
@@ -62,8 +64,8 @@ export async function handleWatcherLogs({
     }
     if (!pool) continue;
 
-    const topic0 = toTopicArray(log)[0];
-    const handler = protocolHandlers.get(topic0);
+    const topic = toTopicArray(log)[0];
+    const handler = protocolHandlers.get(topic);
     if (!handler) continue;
 
     let pending = pendingStateUpdates.get(addr);
@@ -98,6 +100,19 @@ export async function handleWatcherLogs({
         refreshV3,
       })) {
         pending.rawLog = log;
+        if (recoverInvalidV3LiquidityMutation({
+          addr,
+          log,
+          pool,
+          state,
+          topic,
+          topic0,
+          enqueueEnrichment,
+          refreshV3,
+        })) {
+          pendingStateUpdates.delete(addr);
+          refreshingV3Addrs.add(addr);
+        }
       } else if (!hadPending) {
         pendingStateUpdates.delete(addr);
       }
@@ -121,6 +136,49 @@ export async function handleWatcherLogs({
   }
 
   return changedAddrs;
+}
+
+function recoverInvalidV3LiquidityMutation({
+  addr,
+  log,
+  pool,
+  state,
+  topic,
+  topic0,
+  enqueueEnrichment,
+  refreshV3,
+}: any) {
+  if (topic !== topic0.V3_MINT && topic !== topic0.V3_BURN) return false;
+
+  try {
+    validateWatcherStateOrThrow({ ...state, timestamp: Date.now() }, { addr, rawLog: log });
+    return false;
+  } catch (err: any) {
+    if (!isRecoverableV3LiquidityIntegrityError(err)) return false;
+    watcherStateLogger.warn(
+      {
+        poolAddress: addr,
+        blockNumber: Number(log?.blockNumber),
+        transactionHash: log?.transactionHash != null ? String(log.transactionHash) : undefined,
+        topic0: topic,
+        validationReason: err.validationReason,
+      },
+      "Watcher V3 liquidity delta failed integrity; refreshing pool state"
+    );
+    enqueueEnrichment(addr, () => refreshV3(addr, pool, log));
+    return true;
+  }
+}
+
+function isRecoverableV3LiquidityIntegrityError(err: any) {
+  if (err?.name !== "WatcherStateIntegrityError") return false;
+  const reason = String(err?.validationReason ?? err?.message ?? "");
+  return (
+    reason === "V3: negative liquidity" ||
+    reason.startsWith("V3: negative liquidityGross") ||
+    reason.startsWith("V3: invalid liquidityGross") ||
+    reason.startsWith("V3: liquidityNet exceeds gross")
+  );
 }
 
 export function updateV2State(state: any, decoded: any, pool: any = null) {

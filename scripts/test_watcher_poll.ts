@@ -347,6 +347,81 @@ assert.deepEqual(
 }
 
 {
+  const poolAddress = "0xf8ea3244bd500587704398aeb9e9b4e7392492a7";
+  const tokens = [address(73), address(74)];
+  const cache = new Map([
+    [
+      poolAddress,
+      {
+        poolId: poolAddress,
+        protocol: "UNISWAP_V3",
+        token0: tokens[0],
+        token1: tokens[1],
+        tokens,
+        sqrtPriceX96: 79228162514264337593543950336n,
+        tick: 0,
+        liquidity: 100n,
+        tickSpacing: 60,
+        ticks: new Map(),
+        initialized: true,
+        fee: 3000n,
+        timestamp: 1,
+      },
+    ],
+  ]);
+  const enqueued: string[] = [];
+  const refreshed: any[] = [];
+  const burnLog = {
+    address: poolAddress,
+    blockNumber: 86096609,
+    transactionHash: "0xe8639049e0158ed276da09dd8419c4dd97252cbbeed94ff19fdca75bc571ec08",
+    topic0: WATCHER_TOPIC0.V3_BURN,
+  };
+
+  const changed = await handleWatcherLogs({
+    logs: [burnLog],
+    decoded: [
+      {
+        indexed: [{ val: address(75) }, { val: "-60" }, { val: "60" }],
+        body: [{ val: "250" }, { val: "0" }, { val: "0" }],
+      },
+    ],
+    registry: {
+      getPoolMeta(addr: string) {
+        assert.equal(addr, poolAddress);
+        return {
+          pool_address: poolAddress,
+          protocol: "UNISWAP_V3",
+          tokens,
+          metadata: { fee: "3000", tickSpacing: "60" },
+        };
+      },
+    },
+    cache,
+    closed: () => false,
+    topic0: WATCHER_TOPIC0,
+    refreshBalancer: () => {},
+    refreshCurve: () => {},
+    refreshV3: (addr: string, _pool: any, rawLog: any) => {
+      refreshed.push({ addr, rawLog });
+    },
+    enqueueEnrichment: (addr: string, task: any) => {
+      enqueued.push(addr);
+      task();
+    },
+    commitStates: () => {
+      throw new Error("negative V3 liquidity deltas should refresh state instead of committing");
+    },
+  });
+
+  assert.deepEqual([...changed], []);
+  assert.deepEqual(enqueued, [poolAddress]);
+  assert.equal(refreshed[0].addr, poolAddress);
+  assert.equal(refreshed[0].rawLog.transactionHash, burnLog.transactionHash);
+  assert.equal(cache.get(poolAddress).liquidity, 100n);
+}
+
+{
   const poolAddress = address(80);
   const watcher: any = new StateWatcher({}, new Map());
   let attempts = 0;

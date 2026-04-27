@@ -134,6 +134,14 @@ const DISCOVERY_ONLY = parsedArgs.discoveryOnly;
 const TUI_MODE       = parsedArgs.tuiMode;
 const POLL_INTERVAL_SEC = parsedArgs.pollIntervalSec;
 
+function runtimeModeLabel() {
+  if (DISCOVERY_ONLY) return "discovery";
+  if (LOOP_MODE && LIVE_MODE) return "loop-live";
+  if (LOOP_MODE) return "loop-dry";
+  if (LIVE_MODE) return "single-live";
+  return "single-dry";
+}
+
 // ─── Configuration ─────────────────────────────────────────────
 
 const PRIVATE_KEY      = process.env.PRIVATE_KEY || null;
@@ -161,14 +169,24 @@ let stopTui: (() => void) | null = null;
 const runtime = createRuntimeContext({
   routeCacheSize: 1_000,
   initialBotState: {
-  status: 'idle',
-  passCount: 0,
-  consecutiveErrors: 0,
-  gasPrice: '0',
-  maticPrice: 'N/A',
-  lastArbMs: 0,
-  opportunities: [],
-  logs: [],
+    status: 'idle',
+    mode: runtimeModeLabel(),
+    passCount: 0,
+    consecutiveErrors: 0,
+    gasPrice: '0',
+    lastArbMs: 0,
+    stateCacheSize: 0,
+    cachedPathCount: 0,
+    lastPassDurationMs: 0,
+    lastOpportunityCount: 0,
+    lastPathsEvaluated: 0,
+    lastCandidateCount: 0,
+    lastShortlistCount: 0,
+    lastOptimizedCount: 0,
+    lastProfitableCount: 0,
+    lastUpdateMs: 0,
+    opportunities: [],
+    logs: [],
   },
 });
 
@@ -579,8 +597,17 @@ opportunityEngine = createOpportunityEngine({
     routeKeyFromEdges,
     fmtPath,
     fmtProfit: pricingService.fmtProfit,
-    onPathsEvaluated: (count: number) => pathsEvaluated.inc({ pass: runtime.getPassCount() }, count),
-    onCandidateMetrics: ({ topCandidates, optimizedCandidates, profitableRoutes }: { topCandidates: number; optimizedCandidates: number; profitableRoutes: number }) => {
+    onPathsEvaluated: (count: number) => {
+      botState.lastPathsEvaluated = count;
+      botState.lastUpdateMs = Date.now();
+      pathsEvaluated.inc({ pass: runtime.getPassCount() }, count);
+    },
+    onCandidateMetrics: ({ candidateCount, topCandidates, optimizedCandidates, profitableRoutes }: { candidateCount: number; topCandidates: number; optimizedCandidates: number; profitableRoutes: number }) => {
+      botState.lastCandidateCount = candidateCount;
+      botState.lastShortlistCount = topCandidates;
+      botState.lastOptimizedCount = optimizedCandidates;
+      botState.lastProfitableCount = profitableRoutes;
+      botState.lastUpdateMs = Date.now();
       candidateShortlistSize.observe(topCandidates);
       candidateOptimizedCount.observe(optimizedCandidates);
       candidateProfitableCount.observe(profitableRoutes);
@@ -616,10 +643,36 @@ passRunner = createPassRunner({
   getConsecutiveErrors: () => runtime.getConsecutiveErrors(),
   incrementConsecutiveErrors: () => runtime.incrementConsecutiveErrors(),
   resetConsecutiveErrors: () => runtime.resetConsecutiveErrors(),
-  setBotState: ({ passCount, consecutiveErrors, opportunities }) => {
+  setBotState: ({
+    passCount,
+    consecutiveErrors,
+    stateCacheSize,
+    cachedPathCount,
+    lastPassDurationMs,
+    lastOpportunityCount,
+    lastUpdateMs,
+    opportunities,
+  }) => {
     botState.passCount = passCount;
     botState.consecutiveErrors = consecutiveErrors;
+    botState.stateCacheSize = stateCacheSize;
+    botState.cachedPathCount = cachedPathCount;
+    botState.lastPassDurationMs = lastPassDurationMs;
+    botState.lastOpportunityCount = lastOpportunityCount;
+    botState.lastUpdateMs = lastUpdateMs;
     botState.opportunities = opportunities;
+    botState.lastArbMs = Date.now();
+  },
+  setBotErrorState: ({
+    passCount,
+    consecutiveErrors,
+    lastPassDurationMs,
+    lastUpdateMs,
+  }) => {
+    botState.passCount = passCount;
+    botState.consecutiveErrors = consecutiveErrors;
+    botState.lastPassDurationMs = lastPassDurationMs;
+    botState.lastUpdateMs = lastUpdateMs;
     botState.lastArbMs = Date.now();
   },
   log,

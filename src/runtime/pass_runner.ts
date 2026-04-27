@@ -22,7 +22,18 @@ type PassRunnerDeps = {
   setBotState: (update: {
     passCount: number;
     consecutiveErrors: number;
+    stateCacheSize: number;
+    cachedPathCount: number;
+    lastPassDurationMs: number;
+    lastOpportunityCount: number;
+    lastUpdateMs: number;
     opportunities: Array<{ Route: string; Profit: string; ROI: string }>;
+  }) => void;
+  setBotErrorState?: (update: {
+    passCount: number;
+    consecutiveErrors: number;
+    lastPassDurationMs: number;
+    lastUpdateMs: number;
   }) => void;
   log: LoggerFn;
   trackBackgroundTask: (task: Promise<unknown>) => void;
@@ -86,9 +97,15 @@ export function createPassRunner(deps: PassRunnerDeps) {
       deps.refreshPriceOracleIfStale();
 
       const opportunities = await deps.searchOpportunities();
+      const passDurationMs = Date.now() - startedAt;
       deps.setBotState({
         passCount,
         consecutiveErrors: deps.getConsecutiveErrors(),
+        stateCacheSize: deps.getStateCacheSize(),
+        cachedPathCount: deps.getCachedCycleCount(),
+        lastPassDurationMs: passDurationMs,
+        lastOpportunityCount: opportunities.length,
+        lastUpdateMs: Date.now(),
         opportunities: formatDisplayedOpportunities(opportunities, deps),
       });
 
@@ -125,6 +142,12 @@ export function createPassRunner(deps: PassRunnerDeps) {
         err,
       });
       const consecutiveErrors = deps.incrementConsecutiveErrors();
+      deps.setBotErrorState?.({
+        passCount,
+        consecutiveErrors,
+        lastPassDurationMs: Date.now() - startedAt,
+        lastUpdateMs: Date.now(),
+      });
       if (consecutiveErrors >= deps.maxConsecutiveErrors) {
         deps.log(`${deps.maxConsecutiveErrors} consecutive errors — backing off 30s`, "warn");
         await deps.sleep(30_000);

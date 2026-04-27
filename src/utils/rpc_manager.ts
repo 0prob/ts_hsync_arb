@@ -140,6 +140,7 @@ class RpcEndpoint {
         endpoint: rpcManagerShortUrl(this.url),
         method: normalizeRpcMethod(method),
         reason: "rate-limited",
+        error: error instanceof Error ? error.message : error ? String(error) : undefined,
         cooldown_s: Math.max(1, Math.round(cooldownMs / 1000)),
       },
       "RPC endpoint entered cooldown"

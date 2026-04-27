@@ -231,7 +231,7 @@ type SearchDeps = {
   fmtPath: (path: ArbPathLike) => string;
   fmtProfit: (netWei: bigint, tokenAddr: string) => string;
   onPathsEvaluated: (count: number) => void;
-  onCandidateMetrics: (metrics: { topCandidates: number; optimizedCandidates: number; profitableRoutes: number }) => void;
+  onCandidateMetrics: (metrics: { candidateCount: number; topCandidates: number; optimizedCandidates: number; profitableRoutes: number }) => void;
   onArbsFound: (count: number) => void;
   workerCount: number;
 };
@@ -292,7 +292,11 @@ export function createArbSearcher(deps: SearchDeps) {
   return async function findArbs(): Promise<ExecutableCandidate[]> {
     if (deps.topologyDirty() || deps.cachedCycles().length === 0) await deps.refreshCycles();
     const cycles = deps.cachedCycles();
-    if (cycles.length === 0) return [];
+    if (cycles.length === 0) {
+      deps.onPathsEvaluated(0);
+      deps.onCandidateMetrics({ candidateCount: 0, topCandidates: 0, optimizedCandidates: 0, profitableRoutes: 0 });
+      return [];
+    }
 
     const scanSelection = selectFreshUniqueScanPaths(cycles, deps);
     if (scanSelection.duplicatePaths > 0 || scanSelection.stalePaths > 0) {
@@ -308,6 +312,7 @@ export function createArbSearcher(deps: SearchDeps) {
 
     if (scanSelection.paths.length === 0) {
       deps.onPathsEvaluated(0);
+      deps.onCandidateMetrics({ candidateCount: 0, topCandidates: 0, optimizedCandidates: 0, profitableRoutes: 0 });
       deps.log("Skipped arb scan because no cached routes have fresh state", "info", {
         event: "scan_skip_no_fresh_routes",
         cachedPaths: cycles.length,
@@ -338,10 +343,14 @@ export function createArbSearcher(deps: SearchDeps) {
       },
     );
 
-    if (candidates.length === 0) return [];
+    if (candidates.length === 0) {
+      deps.onCandidateMetrics({ candidateCount: 0, topCandidates: 0, optimizedCandidates: 0, profitableRoutes: 0 });
+      return [];
+    }
 
     const feeSnapshot = await deps.getCurrentFeeSnapshot();
     if (!feeSnapshot?.maxFee) {
+      deps.onCandidateMetrics({ candidateCount: candidates.length, topCandidates: 0, optimizedCandidates: 0, profitableRoutes: 0 });
       deps.log("Skipping arb search because the fee snapshot is stale or unavailable", "warn", {
         event: "scan_skip_stale_gas",
       });
@@ -386,6 +395,7 @@ export function createArbSearcher(deps: SearchDeps) {
 
     const eligibleProfitable = deps.filterQuarantinedCandidates(freshProfitable, "find_arbs");
     deps.onCandidateMetrics({
+      candidateCount: candidates.length,
       topCandidates: topCandidates.length,
       optimizedCandidates,
       profitableRoutes: eligibleProfitable.length,

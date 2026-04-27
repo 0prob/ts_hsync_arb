@@ -292,7 +292,6 @@ export function normalizeCurveState(poolAddress: any, protocol: any, tokens: any
 export function normalizeBalancerState(poolAddress: any, protocol: any, tokens: any, rawState: any, meta: any = {}) {
   const poolId = normalizeStateAddress(poolAddress) ?? "";
   const normalizedTokens = normalizeStateTokenList(tokens);
-  const n = normalizedTokens.length;
   const toBigInt = (value: any, fallback = 0n): bigint => {
     if (typeof value === "bigint") return value;
     if (value == null) return fallback;
