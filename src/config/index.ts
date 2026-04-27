@@ -1,6 +1,6 @@
 
 /**
- * src/config/index.js — Centralized configuration
+ * src/config/index.ts — Centralized configuration
  *
  * Single source of truth for all environment variables, constants,
  * and tunable parameters. Every other module imports from here.
@@ -361,6 +361,16 @@ export const ENRICH_CONCURRENCY = _num("ENRICH_CONCURRENCY", "ENRICH_CONCURRENCY
 export const V2_POLL_CONCURRENCY = _num("V2_POLL_CONCURRENCY", "V2_POLL_CONCURRENCY", 10);
 
 /**
+ * Number of V2 getReserves() calls to pack into one Multicall3 request.
+ * This keeps discovery hydration bounded when V2 coverage is large.
+ */
+export const V2_RESERVES_MULTICALL_CHUNK_SIZE = _num(
+  "V2_RESERVES_MULTICALL_CHUNK_SIZE",
+  "V2_RESERVES_MULTICALL_CHUNK_SIZE",
+  128
+);
+
+/**
  * Max concurrent slot0 / liquidity calls during V3 state polling.
  */
 export const V3_POLL_CONCURRENCY = _num("V3_POLL_CONCURRENCY", "V3_POLL_CONCURRENCY", 3);
@@ -426,6 +436,17 @@ export const MAX_SYNC_WARMUP_ONE_HUB_POOLS = _num(
   "MAX_SYNC_WARMUP_ONE_HUB_POOLS",
   "MAX_SYNC_WARMUP_ONE_HUB_POOLS",
   160
+);
+
+/**
+ * Secondary startup warmup budget specifically for one-hub V3 pools.
+ * Defaults to 0 because large V3 catalogs can otherwise make every restart
+ * spend synchronous warmup on a long tail better handled by deferred hydration.
+ */
+export const MAX_SYNC_WARMUP_ONE_HUB_V3_POOLS = _num(
+  "MAX_SYNC_WARMUP_ONE_HUB_V3_POOLS",
+  "MAX_SYNC_WARMUP_ONE_HUB_V3_POOLS",
+  0
 );
 
 /**

@@ -2,6 +2,7 @@ import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 import { createTopologyCache } from "../arb/topology_cache.ts";
 import type { ArbPathLike } from "../arb/assessment.ts";
 import { getPoolTokens, normalizeEvmAddress } from "../util/pool_record.ts";
+import { poolLiquidityWmatic } from "../routing/liquidity.ts";
 import type { RouteCache } from "../routing/route_cache.ts";
 import type { RoutingGraph } from "../routing/graph.ts";
 import { takeTopNBy } from "../util/bounded_priority.ts";
@@ -99,18 +100,6 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     };
   }
 
-  function edgeLiquidityWmatic(edge: SwapEdge, getRateWei: ((token: string) => bigint) | null) {
-    if (!getRateWei) return 0n;
-    const state = edge?.stateRef;
-    if (!state?.reserve0 || !state?.reserve1) return 0n;
-    const token0 = edge.zeroForOne ? edge.tokenIn : edge.tokenOut;
-    const token1 = edge.zeroForOne ? edge.tokenOut : edge.tokenIn;
-    const token0Rate = getRateWei(token0);
-    const token1Rate = getRateWei(token1);
-    if (token0Rate <= 0n || token1Rate <= 0n) return 0n;
-    return state.reserve0 * token0Rate + state.reserve1 * token1Rate;
-  }
-
   function selectHighLiquidityHubTokens(graph: RoutingGraphLike, getRateWei: ((token: string) => bigint) | null) {
     const ranked = [...deps.polygonHubTokens]
       .filter((token) => graph?.hasToken?.(token))
@@ -122,7 +111,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         for (const edge of outgoing) {
           if (seenPools.has(edge.poolAddress)) continue;
           seenPools.add(edge.poolAddress);
-          liquidityScore += edgeLiquidityWmatic(edge, getRateWei);
+          liquidityScore += poolLiquidityWmatic(edge, getRateWei);
         }
 
         return {

@@ -90,6 +90,7 @@ type WarmupDeps = {
   maxSyncWarmupPools: number;
   maxSyncWarmupV3Pools: number;
   maxSyncWarmupOneHubPools: number;
+  maxSyncWarmupOneHubV3Pools: number;
   v2PollConcurrency: number;
   v3PollConcurrency: number;
   enrichConcurrency: number;
@@ -109,6 +110,59 @@ export function isSupportedWarmupProtocol(protocol: string | null | undefined) {
   return SUPPORTED_WARMUP_PROTOCOLS.has(normalizeProtocolKey(protocol));
 }
 
+function hasWarmupTimestamp(state: unknown) {
+  if (!state || typeof state !== "object") return false;
+  const timestamp = Number((state as { timestamp?: unknown }).timestamp);
+  return Number.isFinite(timestamp) && timestamp > 0;
+}
+
+function hasBigIntLikeValue(value: unknown) {
+  if (value == null) return false;
+  try {
+    BigInt(value as any);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasObservedReservePair(state: any, left: string, right: string) {
+  return hasBigIntLikeValue(state?.[left]) && hasBigIntLikeValue(state?.[right]);
+}
+
+function hasObservedBalances(state: any) {
+  return Array.isArray(state?.balances) && Array.isArray(state?.tokens) && state.balances.length === state.tokens.length;
+}
+
+export function isObservedUnroutableWarmupState(
+  state: unknown,
+  verdict: { valid: boolean; reason?: string },
+) {
+  if (!hasWarmupTimestamp(state)) return false;
+  if (verdict.valid) return false;
+
+  const stateObject = state as any;
+  switch (verdict.reason) {
+    case "V2: zero reserves":
+      return hasObservedReservePair(stateObject, "reserve0", "reserve1");
+    case "V3: not initialized":
+      return stateObject.initialized === false && hasBigIntLikeValue(stateObject.sqrtPriceX96);
+    case "V3: zero liquidity":
+      return hasBigIntLikeValue(stateObject.sqrtPriceX96) && hasBigIntLikeValue(stateObject.liquidity);
+    case "Curve: zero balance":
+    case "Balancer: zero balance":
+      return hasObservedBalances(stateObject);
+    case "DODO: zero reserves":
+      return hasObservedReservePair(stateObject, "baseReserve", "quoteReserve");
+    case "DODO: zero targets":
+      return hasObservedReservePair(stateObject, "baseTarget", "quoteTarget");
+    case "WOOFi: zero balance":
+      return hasObservedBalances(stateObject);
+    default:
+      return false;
+  }
+}
+
 export function createWarmupManager(deps: WarmupDeps) {
   function resolveFetchLogContext(options: FetchAndCacheOptions): FetchLogContext {
     return options.logContext ?? {
@@ -124,7 +178,7 @@ export function createWarmupManager(deps: WarmupDeps) {
   function effectiveSyncWarmupV3FullBudget() {
     const cappedByTotalWarmup = Math.min(
       deps.maxSyncWarmupV3Pools,
-      deps.maxSyncWarmupPools + deps.maxSyncWarmupOneHubPools,
+      deps.maxSyncWarmupPools + deps.maxSyncWarmupOneHubPools + deps.maxSyncWarmupOneHubV3Pools,
     );
     return Math.max(0, cappedByTotalWarmup);
   }
@@ -218,57 +272,6 @@ export function createWarmupManager(deps: WarmupDeps) {
   function persistWarmupBatch(states: Array<{ pool_address: string; block: number; data: object }>, persistBlock: number | null) {
     if (persistBlock == null || states.length === 0) return;
     deps.getRegistry()?.batchUpdateStates(states);
-  }
-
-  function hasWarmupTimestamp(state: unknown) {
-    if (!state || typeof state !== "object") return false;
-    const timestamp = Number((state as { timestamp?: unknown }).timestamp);
-    return Number.isFinite(timestamp) && timestamp > 0;
-  }
-
-  function hasBigIntLikeValue(value: unknown) {
-    if (value == null) return false;
-    try {
-      BigInt(value as any);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function hasObservedReservePair(state: any, left: string, right: string) {
-    return hasBigIntLikeValue(state?.[left]) && hasBigIntLikeValue(state?.[right]);
-  }
-
-  function hasObservedBalances(state: any) {
-    return Array.isArray(state?.balances) && Array.isArray(state?.tokens) && state.balances.length === state.tokens.length;
-  }
-
-  function isObservedUnroutableWarmupState(state: unknown, verdict?: { valid: boolean; reason?: string }) {
-    if (!hasWarmupTimestamp(state)) return false;
-    const stateObject = state as any;
-    const validation = verdict ?? deps.validatePoolState(stateObject);
-    if (validation.valid) return false;
-
-    switch (validation.reason) {
-      case "V2: zero reserves":
-        return hasObservedReservePair(stateObject, "reserve0", "reserve1");
-      case "V3: not initialized":
-        return stateObject.initialized === false && hasBigIntLikeValue(stateObject.sqrtPriceX96);
-      case "V3: zero liquidity":
-        return hasBigIntLikeValue(stateObject.sqrtPriceX96) && hasBigIntLikeValue(stateObject.liquidity);
-      case "Curve: zero balance":
-      case "Balancer: zero balance":
-        return hasObservedBalances(stateObject);
-      case "DODO: zero reserves":
-        return hasObservedReservePair(stateObject, "baseReserve", "quoteReserve");
-      case "DODO: zero targets":
-        return hasObservedReservePair(stateObject, "baseTarget", "quoteTarget");
-      case "WOOFi: zero balance":
-        return hasObservedBalances(stateObject);
-      default:
-        return false;
-    }
   }
 
   function normalizeFetchedWarmupState(pool: PoolRecord, raw: unknown) {
@@ -456,6 +459,8 @@ export function createWarmupManager(deps: WarmupDeps) {
               poolMeta.set(pool.pool_address.toLowerCase(), {
                 isAlgebra: true,
                 isKyberElastic: normalizeProtocolKey(pool.protocol) === "KYBERSWAP_ELASTIC" || metadata?.isKyberElastic === true,
+                swapFeeBps: metadata?.swapFeeBps,
+                swapFeeUnits: metadata?.swapFeeUnits,
               });
             }
           }
@@ -812,7 +817,11 @@ export function createWarmupManager(deps: WarmupDeps) {
 
     const prioritizedHubPairPools = takeTopNBy(hubPairPools, deps.maxSyncWarmupPools, compareWarmupPriority);
     const secondaryWarmupBudget = Math.max(0, deps.maxSyncWarmupOneHubPools);
-    const prioritizedOneHubPools = takeTopNBy(oneHubPools, secondaryWarmupBudget, compareWarmupPriority);
+    const secondaryWarmupV3Budget = Math.max(0, deps.maxSyncWarmupOneHubV3Pools);
+    const oneHubV3Pools = oneHubPools.filter((pool: PoolRecord) => WARMUP_V3.has(normalizeProtocolKey(pool.protocol)));
+    const oneHubNonV3Pools = oneHubPools.filter((pool: PoolRecord) => !WARMUP_V3.has(normalizeProtocolKey(pool.protocol)));
+    const prioritizedOneHubPools = takeTopNBy(oneHubNonV3Pools, secondaryWarmupBudget, compareWarmupPriority);
+    const prioritizedOneHubV3Pools = takeTopNBy(oneHubV3Pools, secondaryWarmupV3Budget, compareWarmupPriority);
     const syncWarmupPools = [];
 
     for (const pool of prioritizedHubPairPools) {
@@ -825,6 +834,12 @@ export function createWarmupManager(deps: WarmupDeps) {
       syncWarmupPools.push(pool);
       secondaryWarmupPools++;
     }
+    let secondaryWarmupV3Pools = 0;
+    for (const pool of prioritizedOneHubV3Pools) {
+      if (secondaryWarmupV3Pools >= secondaryWarmupV3Budget) break;
+      syncWarmupPools.push(pool);
+      secondaryWarmupV3Pools++;
+    }
 
     const targetedPools = hubPairPools.length + oneHubPools.length;
     const deferredPools = targetedPools - syncWarmupPools.length;
@@ -835,6 +850,8 @@ export function createWarmupManager(deps: WarmupDeps) {
         reason: "sync_warmup_budget_zero",
         hubPairPools: hubPairPools.length,
         oneHubPools: oneHubPools.length,
+        oneHubV3Pools: oneHubV3Pools.length,
+        maxSyncWarmupOneHubV3Pools: deps.maxSyncWarmupOneHubV3Pools,
       });
       return;
     }
@@ -863,13 +880,16 @@ export function createWarmupManager(deps: WarmupDeps) {
       observedUnroutablePools,
       hubPairPools: hubPairPools.length,
       oneHubPools: oneHubPools.length,
+      oneHubV3Pools: oneHubV3Pools.length,
       syncWarmupPools: syncWarmupPools.length,
       secondaryWarmupPools,
+      secondaryWarmupV3Pools,
       deferredPools,
       maxSyncWarmupPools: deps.maxSyncWarmupPools,
       maxSyncWarmupV3Pools: deps.maxSyncWarmupV3Pools,
       effectiveSyncWarmupV3FullBudget: effectiveSyncWarmupV3FullBudget(),
       maxSyncWarmupOneHubPools: deps.maxSyncWarmupOneHubPools,
+      maxSyncWarmupOneHubV3Pools: deps.maxSyncWarmupOneHubV3Pools,
       protocolBreakdown: {
         v2: v2Count,
         v3: v3Count,
@@ -894,8 +914,10 @@ export function createWarmupManager(deps: WarmupDeps) {
       observedUnroutablePools,
       hubPairPools: hubPairPools.length,
       oneHubPools: oneHubPools.length,
+      oneHubV3Pools: oneHubV3Pools.length,
       syncWarmupPools: syncWarmupPools.length,
       secondaryWarmupPools,
+      secondaryWarmupV3Pools,
       deferredPools,
       routablePools: valid,
       unroutablePools: syncWarmupPools.length - valid,

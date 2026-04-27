@@ -24,7 +24,15 @@ import { toFiniteNumber } from "../util/bigint.ts";
 import { getPoolMetadata, getPoolTokens, hasZeroAddressToken, normalizeEvmAddress } from "../util/pool_record.ts";
 import { PROTOCOLS } from "../protocols/index.ts";
 import { EXTRA_HUB_4_TOKENS, EXTRA_POLYGON_HUB_TOKENS } from "../config/index.ts";
-import { DODO_PROTOCOLS, normalizeProtocolKey, V2_PROTOCOLS, V3_PROTOCOLS, WOOFI_PROTOCOLS } from "../protocols/classification.ts";
+import {
+  BALANCER_PROTOCOLS,
+  CURVE_PROTOCOLS,
+  DODO_PROTOCOLS,
+  normalizeProtocolKey,
+  V2_PROTOCOLS,
+  V3_PROTOCOLS,
+  WOOFI_PROTOCOLS,
+} from "../protocols/classification.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
@@ -40,6 +48,21 @@ function getLiveStateRef(stateMap: any, poolAddress: any) {
   return stateRef && typeof stateRef === "object" ? stateRef : null;
 }
 
+function normalizeGraphKey(value: any) {
+  const normalizedAddress = normalizeEvmAddress(value);
+  if (normalizedAddress) return normalizedAddress;
+  const key = String(value ?? "").trim().toLowerCase();
+  return key || null;
+}
+
+function poolRouteKey(poolAddress: any, tokenIn: any, tokenOut: any) {
+  const pool = normalizeGraphKey(poolAddress);
+  const input = normalizeGraphKey(tokenIn);
+  const output = normalizeGraphKey(tokenOut);
+  if (!pool || !input || !output) return null;
+  return `${pool}:${input}:${output}`;
+}
+
 function getProtocolKind(protocol: any) {
   const protocolKey = normalizeProtocolKey(protocol);
   if (V2_PROTOCOLS.has(protocolKey)) return "v2";
@@ -49,20 +72,52 @@ function getProtocolKind(protocol: any) {
   return "other";
 }
 
-function getFeeBps(protocolKind: any, fee: any, feeDenominator?: any) {
+function toOptionalBigInt(value: any) {
+  if (typeof value === "bigint") return value;
+  if (value == null) return null;
+  if (typeof value === "number" && (!Number.isFinite(value) || !Number.isInteger(value))) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function fractionFeeBps(fee: any, denominator: any) {
+  const rawFee = toOptionalBigInt(fee);
+  const rawDenominator = toOptionalBigInt(denominator);
+  if (rawFee == null || rawDenominator == null || rawDenominator <= 0n || rawFee < 0n || rawFee >= rawDenominator) {
+    return 0;
+  }
+  return Number((rawFee * 10_000n + rawDenominator / 2n) / rawDenominator);
+}
+
+function dodoFeeFromState(stateRef: any) {
+  const fee = toOptionalBigInt(stateRef?.fee);
+  if (fee != null) return fee;
+  const lpFeeRate = toOptionalBigInt(stateRef?.lpFeeRate);
+  const mtFeeRate = toOptionalBigInt(stateRef?.mtFeeRate);
+  if (lpFeeRate == null && mtFeeRate == null) return null;
+  return (lpFeeRate ?? 0n) + (mtFeeRate ?? 0n);
+}
+
+function getFeeBps(protocol: any, protocolKind: any, fee: any, feeDenominator?: any, stateRef?: any, metadata?: any) {
+  const protocolKey = normalizeProtocolKey(protocol);
   if (protocolKind === "v2") {
-    const numerator = toFiniteNumber(fee, 997);
-    const denominator = toFiniteNumber(feeDenominator, 1000);
-    if (denominator <= 0 || numerator <= 0 || numerator >= denominator) return 0;
-    return Math.max(0, Math.round(((denominator - numerator) / denominator) * 10_000));
+    const numerator = toOptionalBigInt(fee) ?? 997n;
+    const denominator = toOptionalBigInt(feeDenominator) ?? 1000n;
+    if (denominator <= 0n || numerator <= 0n || numerator >= denominator) return 0;
+    return Number(((denominator - numerator) * 10_000n + denominator / 2n) / denominator);
   }
   if (protocolKind === "v3") return Math.round(toFiniteNumber(fee, 3000) / 100);
   if (protocolKind === "dodo") {
-    return Math.max(0, Math.round(toFiniteNumber(fee, 0) / 1e18 * 10_000));
+    return fractionFeeBps(dodoFeeFromState(stateRef) ?? fee ?? metadata?.fee, 10n ** 18n);
   }
   if (protocolKind === "woofi") {
-    return Math.max(0, Math.round(toFiniteNumber(fee, 0) / 10));
+    return fractionFeeBps(fee, 100_000n);
   }
+  if (CURVE_PROTOCOLS.has(protocolKey)) return fractionFeeBps(stateRef?.fee ?? fee ?? metadata?.fee, 10n ** 10n);
+  if (BALANCER_PROTOCOLS.has(protocolKey)) return fractionFeeBps(stateRef?.swapFee ?? stateRef?.fee ?? fee ?? metadata?.swapFee ?? metadata?.fee, 10n ** 18n);
   return 0;
 }
 
@@ -97,7 +152,7 @@ function createSwapEdge({
     fee,
     swapFeeBps,
     feeDenominator,
-    feeBps: getFeeBps(protocolKind, fee, feeDenominator),
+    feeBps: getFeeBps(protocol, protocolKind, fee, feeDenominator, stateRef, metadata),
     swapFn,
     stateRef,
     metadata,
@@ -130,6 +185,8 @@ function getRoutablePoolContext(pool: any, stateMap: any) {
   const metadata = getPoolMetadata(pool);
   const isV3 = V3_PROTOCOLS.has(protocol);
   const isDodo = DODO_PROTOCOLS.has(protocol);
+  const isCurve = CURVE_PROTOCOLS.has(protocol);
+  const isBalancer = BALANCER_PROTOCOLS.has(protocol);
   const fee = isV3
     ? stateRef?.fee != null
       ? Number(stateRef.fee)
@@ -139,12 +196,30 @@ function getRoutablePoolContext(pool: any, stateMap: any) {
     : isDodo
       ? stateRef?.fee != null
         ? Number(stateRef.fee)
-        : undefined
-    : stateRef?.fee != null
-      ? Number(stateRef.fee)
-      : metadata?.feeNumerator !== undefined
-        ? Number(metadata.feeNumerator)
-        : undefined;
+        : metadata?.fee != null
+          ? Number(metadata.fee)
+          : undefined
+      : isCurve
+        ? stateRef?.fee != null
+          ? Number(stateRef.fee)
+          : metadata?.fee != null
+            ? Number(metadata.fee)
+            : undefined
+        : isBalancer
+          ? stateRef?.swapFee != null
+            ? Number(stateRef.swapFee)
+            : stateRef?.fee != null
+              ? Number(stateRef.fee)
+              : metadata?.swapFee != null
+                ? Number(metadata.swapFee)
+                : metadata?.fee != null
+                  ? Number(metadata.fee)
+                  : undefined
+          : stateRef?.fee != null
+            ? Number(stateRef.fee)
+            : metadata?.feeNumerator !== undefined
+              ? Number(metadata.feeNumerator)
+              : undefined;
   const swapFeeBps = isV3 && protocol === "KYBERSWAP_ELASTIC"
     ? stateRef?.swapFeeBps != null
       ? Number(stateRef.swapFeeBps)
@@ -379,24 +454,32 @@ export class RoutingGraph {
    * @param {SwapEdge} edge
    */
   addEdge(edge: any) {
-    const key = edge.tokenIn;
+    const poolAddress = normalizeGraphKey(edge.poolAddress);
+    const tokenIn = normalizeGraphKey(edge.tokenIn);
+    const tokenOut = normalizeGraphKey(edge.tokenOut);
+    if (!poolAddress || !tokenIn || !tokenOut) return false;
+
+    edge.poolAddress = poolAddress;
+    edge.tokenIn = tokenIn;
+    edge.tokenOut = tokenOut;
+
+    const key = tokenIn;
     if (!this.adjacency.has(key)) {
       this.adjacency.set(key, []);
     }
     this.adjacency.get(key)!.push(edge);
-    this.tokens.add(edge.tokenIn);
-    this.tokens.add(edge.tokenOut);
+    this.tokens.add(tokenIn);
+    this.tokens.add(tokenOut);
     this.edgeCount++;
 
     // Index by pool for fast stateRef updates
-    if (!this._edgesByPool.has(edge.poolAddress)) {
-      this._edgesByPool.set(edge.poolAddress, []);
+    if (!this._edgesByPool.has(poolAddress)) {
+      this._edgesByPool.set(poolAddress, []);
     }
-    this._edgesByPool.get(edge.poolAddress)!.push(edge);
-    this._edgeByPoolRoute.set(
-      `${edge.poolAddress}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`,
-      edge
-    );
+    this._edgesByPool.get(poolAddress)!.push(edge);
+    const keyByRoute = poolRouteKey(poolAddress, tokenIn, tokenOut);
+    if (keyByRoute) this._edgeByPoolRoute.set(keyByRoute, edge);
+    return true;
   }
 
   /**
@@ -408,9 +491,8 @@ export class RoutingGraph {
    * @returns {SwapEdge|undefined}
    */
   getPoolEdge(poolAddress: any, tokenIn: any, tokenOut: any) {
-    return this._edgeByPoolRoute.get(
-      `${poolAddress.toLowerCase()}:${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`
-    );
+    const key = poolRouteKey(poolAddress, tokenIn, tokenOut);
+    return key ? this._edgeByPoolRoute.get(key) : undefined;
   }
 
   /**
@@ -420,7 +502,8 @@ export class RoutingGraph {
    * @returns {SwapEdge[]}
    */
   getEdges(tokenAddress: any) {
-    return this.adjacency.get(tokenAddress) || [];
+    const token = normalizeGraphKey(tokenAddress);
+    return token ? this.adjacency.get(token) || [] : [];
   }
 
   /**
@@ -431,7 +514,10 @@ export class RoutingGraph {
    * @returns {SwapEdge[]}
    */
   getEdgesBetween(tokenIn: any, tokenOut: any) {
-    return this.getEdges(tokenIn).filter((e) => e.tokenOut === tokenOut);
+    const normalizedTokenOut = normalizeGraphKey(tokenOut);
+    return normalizedTokenOut
+      ? this.getEdges(tokenIn).filter((e) => e.tokenOut === normalizedTokenOut)
+      : [];
   }
 
   /**
@@ -452,7 +538,8 @@ export class RoutingGraph {
    * @returns {boolean}
    */
   hasToken(tokenAddress: any) {
-    return this.tokens.has(tokenAddress);
+    const token = normalizeGraphKey(tokenAddress);
+    return token ? this.tokens.has(token) : false;
   }
 
   /**
@@ -528,11 +615,14 @@ export class RoutingGraph {
   }
 
   _tokenHasReferences(tokenAddress: any) {
-    const outgoing = this.adjacency.get(tokenAddress);
+    const token = normalizeGraphKey(tokenAddress);
+    if (!token) return false;
+
+    const outgoing = this.adjacency.get(token);
     if (outgoing && outgoing.length > 0) return true;
 
     for (const edges of this.adjacency.values()) {
-      if (edges.some((edge) => edge.tokenOut === tokenAddress)) return true;
+      if (edges.some((edge) => edge.tokenOut === token)) return true;
     }
 
     return false;
@@ -567,9 +657,8 @@ export class RoutingGraph {
 
     this._edgesByPool.delete(poolAddress);
     for (const edge of edges) {
-      this._edgeByPoolRoute.delete(
-        `${poolAddress}:${edge.tokenIn.toLowerCase()}:${edge.tokenOut.toLowerCase()}`
-      );
+      const key = poolRouteKey(poolAddress, edge.tokenIn, edge.tokenOut);
+      if (key) this._edgeByPoolRoute.delete(key);
     }
 
     for (const edge of edges) {

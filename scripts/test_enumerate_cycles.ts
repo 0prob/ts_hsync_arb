@@ -45,6 +45,51 @@ function v2Edge(poolAddress: string, tokenIn: string, tokenOut: string, reserveO
   };
 }
 
+function balancerEdge(poolAddress: string, tokenIn: string, tokenOut: string, balances: bigint[]) {
+  const tokens = [tokenIn, tokenOut];
+  return {
+    protocol: "BALANCER_V2",
+    protocolKind: "other",
+    poolAddress,
+    tokenIn,
+    tokenOut,
+    tokenInIdx: 0,
+    tokenOutIdx: 1,
+    zeroForOne: true,
+    feeBps: 30,
+    stateRef: {
+      protocol: "BALANCER_V2",
+      tokens,
+      balances,
+      weights: [5n * 10n ** 17n, 5n * 10n ** 17n],
+      swapFee: 3_000_000_000_000_000n,
+      timestamp: Date.now(),
+    },
+  };
+}
+
+function v3Edge(poolAddress: string, tokenIn: string, tokenOut: string, liquidity: bigint) {
+  const tokens = [tokenIn, tokenOut];
+  return {
+    protocol: "UNISWAP_V3",
+    protocolKind: "v3",
+    poolAddress,
+    tokenIn,
+    tokenOut,
+    zeroForOne: true,
+    fee: 3000,
+    feeBps: 30,
+    stateRef: {
+      protocol: "UNISWAP_V3",
+      tokens,
+      initialized: true,
+      sqrtPriceX96: 2n ** 96n,
+      liquidity,
+      timestamp: Date.now(),
+    },
+  };
+}
+
 function addTwoHopCycle(graph: TestGraph, poolPrefix: string, startToken: string, midToken: string, reserveOut = 1_000_000n) {
   graph.addEdge(v2Edge(`${poolPrefix}-f`, startToken, midToken, reserveOut));
   graph.addEdge(v2Edge(`${poolPrefix}-r`, midToken, startToken, reserveOut));
@@ -100,6 +145,52 @@ function addTwoHopCycle(graph: TestGraph, poolPrefix: string, startToken: string
     1,
     "dual enumeration should apply normalized hub budget before filling from the full phase",
   );
+}
+
+{
+  const graph = new TestGraph();
+  graph.addEdge(balancerEdge("0xbalancer", "a", "b", [1n, 1n]));
+  graph.addEdge(v2Edge("0xreturn", "b", "a"));
+
+  const baseOptions = {
+    startTokens: new Set(["a"]),
+    hubTokensOnly: false,
+    include2Hop: true,
+    include3Hop: false,
+    include4Hop: false,
+    maxPathsPerToken: 10,
+    maxTotalPaths: 10,
+    dedup: false,
+    getRateWei: () => 1n,
+  };
+
+  assert.equal(enumerateCycles(graph, { ...baseOptions, minLiquidityWmatic: 0n }).length, 1);
+  assert.equal(
+    enumerateCycles(graph, { ...baseOptions, minLiquidityWmatic: 10n }).length,
+    0,
+    "liquidity pruning should apply to balance-based protocol pools, not only V2 reserves",
+  );
+}
+
+{
+  const graph = new TestGraph();
+  graph.addEdge(v3Edge("0xv3", "a", "b", 1n));
+  graph.addEdge(v2Edge("0xreturn", "b", "a"));
+
+  const paths = enumerateCycles(graph, {
+    startTokens: new Set(["a"]),
+    hubTokensOnly: false,
+    include2Hop: true,
+    include3Hop: false,
+    include4Hop: false,
+    maxPathsPerToken: 10,
+    maxTotalPaths: 10,
+    minLiquidityWmatic: 10n,
+    getRateWei: () => 1n,
+    dedup: false,
+  });
+
+  assert.equal(paths.length, 0, "liquidity pruning should apply to V3 active liquidity estimates");
 }
 
 console.log("Enumeration checks passed.");

@@ -1,6 +1,6 @@
 
 /**
- * src/enrichment/rpc.js — Shared viem public client with multi-RPC switching
+ * src/enrichment/rpc.ts — Shared viem public client with multi-RPC switching
  *
  * Provides:
  *   - publicClient: dynamic proxy that always routes to the best RPC endpoint
@@ -176,7 +176,12 @@ export async function readContractWithRetry(params: any) {
  */
 export async function multicallWithRetry(params: any) {
   return executeWithRpcRetry(
-    (client: any) => client.multicall(params),
+    async (client: any) => {
+      const results = await client.multicall(params);
+      const batchFailure = multicallBatchTransportFailure(params, results);
+      if (batchFailure) throw batchFailure;
+      return results;
+    },
     {
       method: "eth_call",
       onRateLimitMessage: (shortUrl: any, _endpoint: any, _attempt: any, reason = "rate-limited") =>
@@ -185,6 +190,25 @@ export async function multicallWithRetry(params: any) {
         `    RPC multicall error on ${shortUrl}, retrying in ${delayMs}ms...`,
     }
   );
+}
+
+function multicallBatchTransportFailure(params: any, results: any) {
+  if (!params?.allowFailure || !Array.isArray(results)) return null;
+  const expectedResults = Array.isArray(params.contracts) ? params.contracts.length : null;
+  const failures = results.filter((result: any) => result?.status === "failure" && result?.error);
+  if (failures.length === 0) return null;
+
+  const everyReturnedResultFailed = failures.length === results.length;
+  const resultCountMismatch = expectedResults != null && results.length !== expectedResults;
+  if (!everyReturnedResultFailed && !resultCountMismatch) return null;
+
+  const retryableFailures = failures.filter((result: any) =>
+    isRetryableError(result.error) ||
+    isEndpointCapabilityError(result.error) ||
+    isRateLimitError(result.error)
+  );
+  if (retryableFailures.length !== failures.length) return null;
+  return retryableFailures[0]?.error ?? null;
 }
 
 /**

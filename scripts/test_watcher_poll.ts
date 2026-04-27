@@ -12,6 +12,10 @@ import {
   watcherProgressMeta,
   watcherShardArchiveHeightMeta,
 } from "../src/state/watcher.ts";
+import {
+  HYPERSYNC_MAX_ADDRESS_FILTER,
+  HYPERSYNC_MAX_FILTERS_PER_REQUEST,
+} from "../src/config/index.ts";
 import { commitWatcherStatesBatch, handleWatcherLogs, toTopicArray } from "../src/state/watcher_state_ops.ts";
 
 function address(index: number) {
@@ -169,6 +173,95 @@ assert.deepEqual(
     assert.equal(result.archiveHeight, 101);
     assert.equal(result.data.logs.length, 0);
     assert.equal(callCount, 2);
+  } finally {
+    client.get = originalGet;
+  }
+}
+
+{
+  const originalGet = client.get;
+  const cache = new Map();
+  const addressCount = HYPERSYNC_MAX_ADDRESS_FILTER * HYPERSYNC_MAX_FILTERS_PER_REQUEST + 1;
+  for (let i = 1; i <= addressCount; i++) {
+    cache.set(address(i), {});
+  }
+
+  const watcher: any = new StateWatcher({}, cache);
+  watcher._lastBlock = 99;
+  watcher._running = true;
+  watcher._sleep = async () => {};
+  watcher._watchedAddresses = [...cache.keys()];
+  watcher._watchedAddressSet = new Set(watcher._watchedAddresses);
+  assert.ok(watcher._buildQueries().length > 1, "test fixture should force multiple watcher shard requests");
+
+  let callCount = 0;
+  client.get = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return {
+        nextBlock: 102,
+        archiveHeight: 102,
+        rollbackGuard: {
+          blockNumber: 101,
+          hash: "0x" + "11".repeat(32),
+          firstBlockNumber: 91,
+          firstParentHash: "0x" + "aa".repeat(32),
+        },
+        data: {
+          logs: [
+            {
+              address: address(1),
+              blockNumber: 100,
+              transactionHash: "0x" + "01".repeat(32),
+              transactionIndex: 0,
+              logIndex: 0,
+            },
+            {
+              address: address(1),
+              blockNumber: 101,
+              transactionHash: "0x" + "02".repeat(32),
+              transactionIndex: 0,
+              logIndex: 1,
+            },
+          ],
+        },
+      };
+    }
+    return {
+      nextBlock: 101,
+      archiveHeight: 101,
+      rollbackGuard: {
+        blockNumber: 100,
+        hash: "0x" + "22".repeat(32),
+        firstBlockNumber: 90,
+        firstParentHash: "0x" + "bb".repeat(32),
+      },
+      data: {
+        logs: [
+          {
+            address: address(2),
+            blockNumber: 100,
+            transactionHash: "0x" + "03".repeat(32),
+            transactionIndex: 0,
+            logIndex: 2,
+          },
+        ],
+      },
+    };
+  };
+
+  try {
+    const result = await watcher._pollOnce();
+    assert.equal(result.nextBlock, 101);
+    assert.equal(result.archiveHeight, 101);
+    assert.equal(result.rollbackGuard.block_number, 100);
+    assert.equal(result.rollbackGuard.hash, "0x" + "22".repeat(32));
+    assert.equal(result.rollbackGuard.first_block_number, 90);
+    assert.deepEqual(
+      result.data.logs.map((log: any) => log.blockNumber),
+      [100, 100],
+      "watcher should defer logs beyond the slowest shard cursor",
+    );
   } finally {
     client.get = originalGet;
   }

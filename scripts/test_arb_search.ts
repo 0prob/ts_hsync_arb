@@ -190,3 +190,105 @@ console.log("Arb search normalization checks passed.");
   assert.equal(found.length, 1);
   assert.equal(found[0].result.amountIn, 3n);
 }
+
+{
+  const tokenA = "0x1111111111111111111111111111111111111111";
+  const tokenB = "0x2222222222222222222222222222222222222222";
+  const freshPool = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const stalePool = "0xcccccccccccccccccccccccccccccccccccccccc";
+  const freshPath = {
+    startToken: tokenA,
+    hopCount: 2,
+    logWeight: 0,
+    edges: [
+      {
+        poolAddress: freshPool,
+        tokenIn: tokenA,
+        tokenOut: tokenB,
+        protocol: "QUICKSWAP_V2",
+        zeroForOne: true,
+      },
+    ],
+  };
+  const duplicateFreshPath = {
+    ...freshPath,
+    logWeight: 10,
+  };
+  const stalePath = {
+    startToken: tokenA,
+    hopCount: 2,
+    logWeight: 0,
+    edges: [
+      {
+        poolAddress: stalePool,
+        tokenIn: tokenA,
+        tokenOut: tokenB,
+        protocol: "QUICKSWAP_V2",
+        zeroForOne: true,
+      },
+    ],
+  };
+
+  let evaluatedPaths = 0;
+  let pathsEvaluatedMetric = 0;
+  const logs: any[] = [];
+  const search = createArbSearcher({
+    cachedCycles: () => [freshPath, duplicateFreshPath, stalePath],
+    topologyDirty: () => false,
+    refreshCycles: async () => {},
+    passCount: () => 1,
+    maxPathsToOptimize: 10,
+    minProfitWei: 1n,
+    stateCache: new Map(),
+    log: (_msg, _level, meta) => {
+      logs.push(meta);
+    },
+    getCurrentFeeSnapshot: async () => {
+      throw new Error("gas snapshot should not be needed when no candidates are found");
+    },
+    getFreshTokenToMaticRate: () => 1n,
+    getRouteFreshness: (path: any) =>
+      path.edges[0].poolAddress === stalePool
+        ? { ok: false, reason: "stale_pool_state" }
+        : { ok: true },
+    getProbeAmountsForToken: () => [1n],
+    evaluatePathsParallel: async (paths) => {
+      evaluatedPaths += paths.length;
+      assert.deepEqual(paths.map((path: any) => path.edges[0].poolAddress), [freshPool]);
+      return [];
+    },
+    optimizeInputAmount: () => null,
+    evaluateCandidatePipeline: async () => {
+      throw new Error("candidate pipeline should not run when simulation finds no candidates");
+    },
+    partitionFreshCandidates: (candidates) => ({ fresh: candidates, stale: [] }),
+    filterQuarantinedCandidates: (candidates) => candidates,
+    routeCacheUpdate: () => {},
+    routeKeyFromEdges: (startToken, edges) => `${startToken}:${edges.map((edge) => edge.poolAddress).join(">")}`,
+    fmtPath: () => "test-route",
+    fmtProfit: (profit) => String(profit),
+    onPathsEvaluated: (count) => {
+      pathsEvaluatedMetric += count;
+    },
+    onCandidateMetrics: () => {},
+    onArbsFound: () => {},
+    workerCount: 1,
+  });
+
+  const found = await search();
+
+  assert.equal(found.length, 0);
+  assert.equal(evaluatedPaths, 1, "arb scan should not simulate duplicate or stale routes");
+  assert.equal(pathsEvaluatedMetric, 1);
+  assert.deepEqual(
+    logs.find((meta) => meta?.event === "scan_prune_routes"),
+    {
+      event: "scan_prune_routes",
+      cachedPaths: 3,
+      duplicatePaths: 1,
+      stalePaths: 1,
+      scanPaths: 1,
+      staleReasons: ["stale_pool_state:1"],
+    },
+  );
+}

@@ -1,6 +1,6 @@
 
 /**
- * src/state/uniswap_v2.js — Uniswap V2 / QuickSwap / SushiSwap pool state fetcher
+ * src/state/uniswap_v2.ts — Uniswap V2 / QuickSwap / SushiSwap pool state fetcher
  *
  * Fetches getReserves() for constant-product AMM pools.
  * Uses retry/backoff and concurrency throttling.
@@ -8,10 +8,11 @@
 
 import {
   isNoDataReadContractError,
+  multicallWithRetry,
   readContractWithRetry,
   throttledMap,
 } from "../enrichment/rpc.ts";
-import { ENRICH_CONCURRENCY } from "../config/index.ts";
+import { ENRICH_CONCURRENCY, V2_RESERVES_MULTICALL_CHUNK_SIZE } from "../config/index.ts";
 
 // ─── ABI fragment ─────────────────────────────────────────────
 
@@ -28,6 +29,36 @@ const GET_RESERVES_ABI = [
     stateMutability: "view",
   },
 ];
+
+type V2ReserveFetchDeps = {
+  multicall?: typeof multicallWithRetry;
+};
+
+function normalizeV2PoolAddress(value: any) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function chunk<T>(items: T[], size: number) {
+  const normalizedSize = Math.max(1, Math.floor(Number(size) || 1));
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += normalizedSize) {
+    chunks.push(items.slice(i, i + normalizedSize));
+  }
+  return chunks;
+}
+
+function normalizeV2MulticallResult(poolAddress: string, result: any) {
+  if (!result || result.status !== "success") return null;
+  const reserves = result.result;
+  if (!Array.isArray(reserves) || reserves.length < 3) return null;
+  return {
+    address: poolAddress,
+    reserve0: BigInt(reserves[0]),
+    reserve1: BigInt(reserves[1]),
+    blockTimestampLast: Number(reserves[2]),
+    fetchedAt: Date.now(),
+  };
+}
 
 // ─── Core State Fetcher ───────────────────────────────────────
 
@@ -70,30 +101,76 @@ export async function fetchMultipleV2States(
   poolAddresses: any,
   concurrency = ENRICH_CONCURRENCY
 ) {
+  return fetchMultipleV2StatesWithDeps(poolAddresses, concurrency);
+}
+
+export async function fetchMultipleV2StatesWithDeps(
+  poolAddresses: any,
+  concurrency = ENRICH_CONCURRENCY,
+  deps: V2ReserveFetchDeps = {},
+) {
   const states: Map<string, any> & { noDataFailures?: Set<string> } = new Map();
   const noDataFailures = new Set<string>();
+  const addresses = Array.isArray(poolAddresses)
+    ? [...new Set(poolAddresses.map(normalizeV2PoolAddress).filter(Boolean))]
+    : [];
+  if (addresses.length === 0) {
+    states.noDataFailures = noDataFailures;
+    return states;
+  }
 
-  const results = await throttledMap(
-    poolAddresses,
-    async (addr: any) => {
+  const multicall = deps.multicall ?? multicallWithRetry;
+  const chunkSize = Math.max(1, Math.floor(V2_RESERVES_MULTICALL_CHUNK_SIZE));
+  const batches = chunk(addresses, chunkSize);
+  const batchConcurrency = Math.max(1, Math.min(Math.floor(Number(concurrency) || 1), 3, batches.length));
+  let failedCalls = 0;
+  let failedBatches = 0;
+
+  await throttledMap(
+    batches,
+    async (batch) => {
+      const contracts = batch.map((addr) => ({
+        address: addr,
+        abi: GET_RESERVES_ABI,
+        functionName: "getReserves",
+      }));
+
+      let results: any[];
       try {
-        const state = await fetchV2PoolState(addr);
-        return { addr, state, error: null };
+        results = await multicall({
+          contracts,
+          allowFailure: true,
+        });
       } catch (error: any) {
-        if (isNoDataReadContractError(error)) {
-          noDataFailures.add(addr.toLowerCase());
+        failedBatches++;
+        failedCalls += batch.length;
+        console.warn(`  Failed to fetch V2 reserve multicall batch (${batch.length} pools): ${error.message}`);
+        return;
+      }
+
+      for (let i = 0; i < batch.length; i++) {
+        const addr = batch[i];
+        const result = results[i];
+        const state = normalizeV2MulticallResult(addr, result);
+        if (state) {
+          states.set(addr, state);
+          continue;
         }
-        console.warn(`  Failed to fetch V2 state for ${addr}: ${error.message}`);
-        return { addr, state: null, error };
+
+        failedCalls++;
+        if (isNoDataReadContractError(result?.error)) {
+          noDataFailures.add(addr);
+        }
       }
     },
-    concurrency
+    batchConcurrency
   );
 
-  for (const { addr, state } of results) {
-    if (state) {
-      states.set(addr.toLowerCase(), state);
-    }
+  if (failedCalls > 0) {
+    console.warn(
+      `  Failed to fetch V2 reserves for ${failedCalls}/${addresses.length} pool(s)` +
+        (failedBatches > 0 ? ` across ${failedBatches} failed multicall batch(es).` : ".")
+    );
   }
 
   states.noDataFailures = noDataFailures;

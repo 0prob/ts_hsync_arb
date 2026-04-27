@@ -17,13 +17,14 @@
  * Paths with logWeight === 0 (state unknown) are placed last.
  *
  * Liquidity floor ($5k USD):
- *   When minLiquidityWmatic > 0 and getRateWei is provided, V2 pools whose
- *   total TVL (both sides in WMATIC-wei) < threshold are pruned.
+ *   When minLiquidityWmatic > 0 and getRateWei is provided, pools whose
+ *   estimated TVL in WMATIC-wei is known and below threshold are pruned.
  *   $5 000 at $0.70/WMATIC ≈ 7_143n * 10n**18n.
  */
 
 import { findArbPaths, deduplicatePaths } from "./finder.ts";
 import { POLYGON_HUB_TOKENS, HUB_4_TOKENS } from "./graph.ts";
+import { poolLiquidityWmatic } from "./liquidity.ts";
 import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 import { takeTopNBy } from "../util/bounded_priority.ts";
 
@@ -46,21 +47,11 @@ const DEFAULTS = {
 };
 
 
-// ─── Liquidity pruning ────────────────────────────────────────
-
-function v2LiquidityWmatic(edge: any, getRateWei: any) {
-  const s = edge.stateRef;
-  if (!s?.reserve0 || !s?.reserve1) return 0n;
-  const t0 = edge.zeroForOne ? edge.tokenIn  : edge.tokenOut;
-  const t1 = edge.zeroForOne ? edge.tokenOut : edge.tokenIn;
-  return s.reserve0 * getRateWei(t0) + s.reserve1 * getRateWei(t1);
-}
-
 function pruneByLiquidity(paths: any, minWmatic: any, getRateWei: any) {
   if (minWmatic <= 0n || !getRateWei) return paths;
   return paths.filter((path: any) => {
     for (const edge of path.edges) {
-      const liq = v2LiquidityWmatic(edge, getRateWei);
+      const liq = poolLiquidityWmatic(edge, getRateWei);
       if (liq > 0n && liq < minWmatic) return false;
     }
     return true;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { getCurveAmountIn, getCurveAmountOut, simulateCurveSwap } from "../src/math/curve.ts";
+import { buildGraph } from "../src/routing/graph.ts";
 import { simulateHop } from "../src/routing/simulator.ts";
 import { normalizeCurveState, validatePoolState } from "../src/state/normalizer.ts";
 
@@ -41,6 +42,24 @@ const stableState = {
 }
 
 {
+  const graph = buildGraph(
+    [
+      {
+        pool_address: pool,
+        protocol: "CURVE_STABLE_FACTORY",
+        tokens: [tokenA, tokenB, tokenC],
+        metadata: { fee: "4000000" },
+        status: "active",
+      },
+    ],
+    new Map([[pool, stableState]]),
+  );
+  assert.equal(
+    graph.getPoolEdge(pool, tokenA, tokenB)?.feeBps,
+    4,
+    "Curve graph edges should expose 1e10-denominated swap fees in basis points",
+  );
+
   const edge = {
     protocol: "CURVE_STABLE_FACTORY",
     poolAddress: pool,

@@ -2,6 +2,7 @@ import { readContractWithRetry, throttledMap } from "../enrichment/rpc.ts";
 import { ENRICH_CONCURRENCY } from "../config/index.ts";
 import { hydrateNewTokens } from "../enrichment/token_hydrator.ts";
 import { logger } from "../utils/logger.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const discoveryLogger: any = logger.child({ component: "discovery_curve_factory" });
@@ -84,6 +85,25 @@ function discoverStartIndex(existingPools: any[], poolCount: number) {
   return Math.min(poolCount, maxIndexed + 1);
 }
 
+export function discoverFactoryIndexesToScan(existingPools: any[], poolCount: number) {
+  const normalizedPoolCount = Number(poolCount);
+  if (!Number.isSafeInteger(normalizedPoolCount) || normalizedPoolCount <= 0) return [];
+
+  const discoveredIndexes = new Set<number>();
+  for (const pool of Array.isArray(existingPools) ? existingPools : []) {
+    const index = metadataFactoryIndex(pool?.metadata);
+    if (index != null && index < normalizedPoolCount) {
+      discoveredIndexes.add(index);
+    }
+  }
+
+  const indexes: number[] = [];
+  for (let index = 0; index < normalizedPoolCount; index++) {
+    if (!discoveredIndexes.has(index)) indexes.push(index);
+  }
+  return indexes;
+}
+
 export async function discoverCurveListedFactory({
   protocolKey,
   protocolName,
@@ -103,7 +123,9 @@ export async function discoverCurveListedFactory({
         status: "active",
       }));
   const existingByAddress = new Map<string, any>(
-    existingPools.map((pool: any) => [String(pool.pool_address ?? pool.address).toLowerCase(), pool])
+    existingPools
+      .map((pool: any) => [normalizeEvmAddress(pool.pool_address ?? pool.address), pool] as const)
+      .filter((entry: readonly [string | null, any]): entry is readonly [string, any] => entry[0] != null)
   );
 
   const poolCount = Number(
@@ -119,32 +141,44 @@ export async function discoverCurveListedFactory({
     return { discovered: 0, checkpointBlock, rollbackGuard: null, hydrationPromise: null };
   }
 
-  const startIndex = discoverStartIndex(existingPools, poolCount);
-  const scanCount = Math.max(0, poolCount - startIndex);
+  const indexes = discoverFactoryIndexesToScan(existingPools, poolCount);
+  const startIndex = indexes.length > 0 ? indexes[0] : Math.min(poolCount, discoverStartIndex(existingPools, poolCount));
+  const scanCount = indexes.length;
+  const missingBelowTip = indexes.some((index) => index < Math.max(0, poolCount - 1));
 
   console.log(
     `\n[${protocolName}] Enumerating ${scanCount} new factory-listed pool slot(s)` +
-      (startIndex > 0 ? ` from index ${startIndex}` : ` across ${poolCount} pool slot(s)`) +
+      (missingBelowTip
+        ? ` across ${poolCount} pool slot(s) to repair missing index gap(s)`
+        : startIndex > 0
+          ? ` from index ${startIndex}`
+          : ` across ${poolCount} pool slot(s)`) +
       `...`
   );
   discoveryLogger.info(
-    { protocol: protocolKey, poolCount, existingPools: existingPools.length, startIndex, scanCount },
+    {
+      protocol: protocolKey,
+      poolCount,
+      existingPools: existingPools.length,
+      startIndex,
+      scanCount,
+      missingIndexRepair: missingBelowTip,
+    },
     "[discovery] Enumerating Curve factory-listed pools",
   );
 
-  const indexes = Array.from({ length: scanCount }, (_, i) => startIndex + i);
   const listedPoolEntries = await throttledMap(
     indexes,
     async (index: number) => {
       try {
-        const poolAddress = String(
+        const poolAddress = normalizeEvmAddress(
           await readContractWithRetry({
             address: factoryAddress,
             abi: POOL_LIST_ABI,
             functionName: "pool_list",
             args: [BigInt(index)],
           })
-        ).toLowerCase();
+        );
 
         if (!poolAddress || poolAddress === ZERO) {
           return null;
@@ -180,9 +214,9 @@ export async function discoverCurveListedFactory({
           args: [poolAddress],
         });
 
-        const tokens = (rawTokens as any[])
-          .map((token: any) => String(token).toLowerCase())
-          .filter((token: string) => token && token !== ZERO);
+        const tokens = (Array.isArray(rawTokens) ? rawTokens : [])
+          .map((token: any) => normalizeEvmAddress(token))
+          .filter((token): token is string => token != null && token !== ZERO);
 
         if (tokens.length < 2) return null;
 
@@ -230,6 +264,7 @@ export async function discoverCurveListedFactory({
       enumeratedPools: poolCount,
       scanStartIndex: startIndex,
       scannedSlots: scanCount,
+      missingIndexRepair: missingBelowTip,
       insertedPools: newPools.length,
       refreshedPools: poolBatch.length - newPools.length,
       checkpointBlock,

@@ -1,6 +1,6 @@
 
 /**
- * src/state/watcher.js — HyperSync Event Watcher
+ * src/state/watcher.ts — HyperSync Event Watcher
  *
  * Replaces RPC polling with a live HyperSync loop built on `client.get()`.
  *
@@ -16,7 +16,7 @@ import {
   buildHyperSyncLogQuery,
   DEFAULT_HYPERSYNC_BLOCK_FIELDS,
 } from "../hypersync/query_policy.ts";
-import { compareHyperSyncLogs, hyperSyncLogIdentityKey } from "../hypersync/logs.ts";
+import { compareHyperSyncLogs, hyperSyncLogIdentityKey, normalizeHyperSyncLogMeta } from "../hypersync/logs.ts";
 import { topic0ForSignature } from "../hypersync/topics.ts";
 import { detectReorg } from "../reorg/detect.ts";
 import { fetchAndNormalizeBalancerPool } from "./poll_balancer.ts";
@@ -107,17 +107,28 @@ const LOG_FIELDS = [
 ];
 export const watcherLogger: any = logger.child({ component: "watcher" });
 
+function rollbackGuardHeadBlock(guard: any) {
+  const numeric = Number(guard?.block_number ?? guard?.blockNumber);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
+function rollbackGuardHeadHash(guard: any) {
+  const hash = String(guard?.block_hash ?? guard?.blockHash ?? guard?.hash ?? "").trim();
+  return hash.length > 0 ? hash : null;
+}
+
 function compareRollbackGuards(a: any, b: any) {
-  const aHeadBlock = Number(a?.block_number ?? a?.blockNumber);
-  const bHeadBlock = Number(b?.block_number ?? b?.blockNumber);
-  const aHeadHash = String(a?.block_hash ?? a?.blockHash ?? a?.hash ?? "");
-  const bHeadHash = String(b?.block_hash ?? b?.blockHash ?? b?.hash ?? "");
+  const aHeadBlock = rollbackGuardHeadBlock(a);
+  const bHeadBlock = rollbackGuardHeadBlock(b);
+  const aHeadHash = rollbackGuardHeadHash(a);
+  const bHeadHash = rollbackGuardHeadHash(b);
   if (
-    Number.isFinite(aHeadBlock) &&
-    Number.isFinite(bHeadBlock) &&
+    aHeadBlock != null &&
+    bHeadBlock != null &&
     aHeadHash &&
     bHeadHash &&
-    (aHeadBlock !== bHeadBlock || aHeadHash !== bHeadHash)
+    aHeadBlock === bHeadBlock &&
+    aHeadHash !== bHeadHash
   ) {
     return false;
   }
@@ -131,7 +142,8 @@ function compareRollbackGuards(a: any, b: any) {
     Number.isFinite(bFirstBlock) &&
     aFirstParent &&
     bFirstParent &&
-    (aFirstBlock !== bFirstBlock || aFirstParent !== bFirstParent)
+    aFirstBlock === bFirstBlock &&
+    aFirstParent !== bFirstParent
   ) {
     return false;
   }
@@ -183,13 +195,25 @@ export function watcherShardArchiveHeightMeta(archiveHeights: Iterable<number>) 
 function mergeRollbackGuards(base: any, next: any) {
   if (!base) return next;
   if (!next) return base;
-  const merged = { ...base, ...next } as Record<string, unknown>;
-  const headBlock = next?.block_number ?? next?.blockNumber ?? base?.block_number ?? base?.blockNumber;
-  const headHash = next?.block_hash ?? next?.blockHash ?? next?.hash ?? base?.block_hash ?? base?.blockHash ?? base?.hash;
+  const baseHeadBlock = rollbackGuardHeadBlock(base);
+  const nextHeadBlock = rollbackGuardHeadBlock(next);
+  const primary =
+    baseHeadBlock != null &&
+    nextHeadBlock != null &&
+    nextHeadBlock < baseHeadBlock
+      ? next
+      : baseHeadBlock == null && nextHeadBlock != null
+        ? next
+        : base;
+  const secondary = primary === base ? next : base;
+  const merged = { ...secondary, ...primary } as Record<string, unknown>;
+  const headBlock = primary?.block_number ?? primary?.blockNumber ?? secondary?.block_number ?? secondary?.blockNumber;
+  const headHash =
+    primary?.block_hash ?? primary?.blockHash ?? primary?.hash ?? secondary?.block_hash ?? secondary?.blockHash ?? secondary?.hash;
   const firstBlock =
-    next?.first_block_number ?? next?.firstBlockNumber ?? base?.first_block_number ?? base?.firstBlockNumber;
+    primary?.first_block_number ?? primary?.firstBlockNumber ?? secondary?.first_block_number ?? secondary?.firstBlockNumber;
   const firstParent =
-    next?.first_parent_hash ?? next?.firstParentHash ?? base?.first_parent_hash ?? base?.firstParentHash;
+    primary?.first_parent_hash ?? primary?.firstParentHash ?? secondary?.first_parent_hash ?? secondary?.firstParentHash;
 
   if (headBlock != null) merged.block_number = headBlock;
   if (headHash != null) {
@@ -205,6 +229,12 @@ function mergeRollbackGuards(base: any, next: any) {
   delete merged.firstParentHash;
 
   return merged;
+}
+
+function watcherLogIsBeforeNextBlock(log: any, nextBlock: number | null) {
+  if (nextBlock == null) return true;
+  const blockNumber = normalizeHyperSyncLogMeta(log).blockNumber;
+  return blockNumber == null || blockNumber < nextBlock;
 }
 
 export function sortWatcherLogs(logs: any[]) {
@@ -675,21 +705,7 @@ export class StateWatcher {
           .filter((result): result is PromiseFulfilledResult<any> => result.status === "fulfilled")
           .map((result) => result.value);
 
-        for (const res of responses) {
-          if (res.rollbackGuard) {
-            if (!rollbackGuard) {
-              rollbackGuard = res.rollbackGuard;
-            } else if (!compareRollbackGuards(rollbackGuard, res.rollbackGuard)) {
-              throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
-            } else {
-              rollbackGuard = mergeRollbackGuards(rollbackGuard, res.rollbackGuard);
-            }
-          }
-
-          if (Array.isArray(res.data?.logs) && res.data.logs.length > 0) {
-            logs.push(...res.data.logs);
-          }
-
+        const responseMeta = responses.map((res) => {
           let shardNextBlock;
           try {
             shardNextBlock = parseWatcherBlock("shard nextBlock cursor", res.nextBlock);
@@ -702,6 +718,25 @@ export class StateWatcher {
           if (shardArchiveHeight != null) {
             archiveHeight = Math.min(archiveHeight, shardArchiveHeight);
             shardArchiveHeights.add(shardArchiveHeight);
+          }
+          return { res };
+        });
+
+        const mergedNextBlock = Number.isFinite(nextBlock) ? nextBlock : null;
+
+        for (const { res } of responseMeta) {
+          if (res.rollbackGuard) {
+            if (!rollbackGuard) {
+              rollbackGuard = res.rollbackGuard;
+            } else if (!compareRollbackGuards(rollbackGuard, res.rollbackGuard)) {
+              throw new Error("Watcher shard responses returned mismatched rollback guards; refusing to merge inconsistent chain views.");
+            } else {
+              rollbackGuard = mergeRollbackGuards(rollbackGuard, res.rollbackGuard);
+            }
+          }
+
+          if (Array.isArray(res.data?.logs) && res.data.logs.length > 0) {
+            logs.push(...res.data.logs.filter((log: any) => watcherLogIsBeforeNextBlock(log, mergedNextBlock)));
           }
         }
 
@@ -1088,6 +1123,8 @@ export class StateWatcher {
     const rawState = await fetchV3PoolState(addr, {
       isAlgebra: protocol === "QUICKSWAP_V3" || metadata?.isAlgebra === true,
       isKyberElastic: protocol === "KYBERSWAP_ELASTIC" || metadata?.isKyberElastic === true,
+      swapFeeBps: metadata?.swapFeeBps,
+      swapFeeUnits: metadata?.swapFeeUnits,
       hydrationMode: "nearby",
     });
     const normalized = normalizeV3State(addr, protocol, tokens, rawState, metadata);

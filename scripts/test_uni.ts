@@ -5,6 +5,7 @@ import { buildGraph, deserializeTopology, serializeTopology } from "../src/routi
 import { edgeSpotLogWeight } from "../src/routing/finder.ts";
 import { simulateHop } from "../src/routing/simulator.ts";
 import { normalizePoolState, validatePoolState } from "../src/state/normalizer.ts";
+import { fetchMultipleV2StatesWithDeps } from "../src/state/uniswap_v2.ts";
 import { updateV2State } from "../src/state/watcher_state_ops.ts";
 
 const pool = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -114,6 +115,22 @@ const tokenB = "0x2222222222222222222222222222222222222222";
   assert.equal(edge.fee, 9970);
   assert.equal(edge.feeDenominator, 10000);
   assert.equal(edge.feeBps, 30);
+  assert.equal(
+    graph.getPoolEdge(pool.toUpperCase(), tokenA.toUpperCase(), tokenB.toUpperCase()),
+    edge,
+    "routing graph pool-edge lookup should normalize checksummed or uppercase addresses",
+  );
+  assert.equal(
+    graph.getEdges(tokenA.toUpperCase()).length,
+    graph.getEdges(tokenA).length,
+    "routing graph adjacency lookup should normalize token addresses",
+  );
+  assert.equal(
+    graph.getEdgesBetween(tokenA.toUpperCase(), tokenB.toUpperCase())[0],
+    edge,
+    "routing graph edge-pair lookup should normalize both token addresses",
+  );
+  assert.equal(graph.hasToken(tokenA.toUpperCase()), true);
 
   const workerGraph = deserializeTopology(serializeTopology(graph));
   const workerEdge = workerGraph.getPoolEdge(pool, tokenA, tokenB);
@@ -150,6 +167,36 @@ const tokenB = "0x2222222222222222222222222222222222222222";
   assert.equal(state.fee, 9970n);
   assert.equal(state.feeDenominator, 10000n);
   assert.equal(validatePoolState(state).valid, true);
+}
+
+{
+  const pool2 = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const emptyPool = "0xcccccccccccccccccccccccccccccccccccccccc";
+  const seenBatchSizes: number[] = [];
+  const states = await fetchMultipleV2StatesWithDeps(
+    [pool, pool2, emptyPool, pool],
+    10,
+    {
+      multicall: async ({ contracts }: any) => {
+        seenBatchSizes.push(contracts.length);
+        return contracts.map((contract: any, index: number) => {
+          if (contract.address === emptyPool) {
+            return { status: "failure", error: new Error('execution reverted: returned no data ("0x")') };
+          }
+          return {
+            status: "success",
+            result: [BigInt(index + 1), BigInt(index + 2), 1234],
+          };
+        });
+      },
+    },
+  );
+
+  assert.equal(seenBatchSizes.length, 1, "V2 reserve hydration should batch pools through multicall");
+  assert.equal(seenBatchSizes[0], 3, "V2 reserve hydration should dedupe duplicate pool addresses");
+  assert.equal(states.size, 2);
+  assert.equal(states.get(pool)?.reserve0, 1n);
+  assert.deepEqual([...(states.noDataFailures ?? [])], [emptyPool]);
 }
 
 console.log("Uni V2 checks passed.");

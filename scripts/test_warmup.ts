@@ -6,6 +6,7 @@ import { getPoolMetadata, getPoolTokens } from "../src/util/pool_record.ts";
 
 const tokenA = "0x1111111111111111111111111111111111111111";
 const tokenB = "0x2222222222222222222222222222222222222222";
+const tokenC = "0x3333333333333333333333333333333333333333";
 const observedV3Pool = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const missingV3Pool = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const zeroV2Pool = "0xcccccccccccccccccccccccccccccccccccccccc";
@@ -19,10 +20,19 @@ type Pool = {
 };
 
 function pool(pool_address: string, protocol: string, metadata: Record<string, unknown> = {}): Pool {
+  return poolWithTokens(pool_address, protocol, [tokenA, tokenB], metadata);
+}
+
+function poolWithTokens(
+  pool_address: string,
+  protocol: string,
+  tokens: string[],
+  metadata: Record<string, unknown> = {},
+): Pool {
   return {
     pool_address,
     protocol,
-    tokens: [tokenA, tokenB],
+    tokens,
     metadata,
     status: "active",
   };
@@ -61,10 +71,13 @@ function zeroReserveV2Raw(fetchedAt = 1) {
 function createHarness(options: {
   pools: Pool[];
   stateCache?: Map<string, Record<string, any>>;
+  maxSyncWarmupOneHubPools?: number;
+  maxSyncWarmupOneHubV3Pools?: number;
   fetchV2?: (addresses: string[]) => Promise<any>;
   fetchV3?: (
     addresses: string[],
     onProgress: (completed: number, total: number, addr?: string, rawState?: unknown | null) => void,
+    poolMeta: Map<string, Record<string, unknown>>,
   ) => Promise<any>;
 }): {
   manager: ReturnType<typeof createWarmupManager>;
@@ -102,9 +115,9 @@ function createHarness(options: {
       if (!options.fetchV2) throw new Error(`unexpected V2 fetch: ${addresses.join(",")}`);
       return options.fetchV2(addresses);
     },
-    fetchMultipleV3States: async (addresses, _concurrency, _poolMeta, onProgress) => {
+    fetchMultipleV3States: async (addresses, _concurrency, poolMeta, onProgress) => {
       if (!options.fetchV3) throw new Error(`unexpected V3 fetch: ${addresses.join(",")}`);
-      return options.fetchV3(addresses, onProgress);
+      return options.fetchV3(addresses, onProgress, poolMeta);
     },
     fetchAndNormalizeBalancerPool: async () => {
       throw new Error("unexpected Balancer fetch");
@@ -123,13 +136,42 @@ function createHarness(options: {
     hub4Tokens: new Set([tokenA, tokenB]),
     maxSyncWarmupPools: 10,
     maxSyncWarmupV3Pools: 10,
-    maxSyncWarmupOneHubPools: 0,
+    maxSyncWarmupOneHubPools: options.maxSyncWarmupOneHubPools ?? 0,
+    maxSyncWarmupOneHubV3Pools: options.maxSyncWarmupOneHubV3Pools ?? 0,
     v2PollConcurrency: 4,
     v3PollConcurrency: 4,
     enrichConcurrency: 4,
   });
 
   return { manager, logs, stateUpdates, stateCache };
+}
+
+{
+  let v3FetchCalls = 0;
+  const oneHubV3Pool = "0xdddddddddddddddddddddddddddddddddddddddd";
+  const { manager, logs } = createHarness({
+    pools: [
+      poolWithTokens(oneHubV3Pool, "UNISWAP_V3", [tokenA, tokenC], {
+        fee: "3000",
+        tickSpacing: "60",
+      }),
+    ],
+    maxSyncWarmupOneHubPools: 10,
+    maxSyncWarmupOneHubV3Pools: 0,
+    fetchV3: async () => {
+      v3FetchCalls++;
+      throw new Error("one-hub V3 should not run during startup warmup by default");
+    },
+  });
+
+  await manager.warmupStateCache();
+
+  assert.equal(v3FetchCalls, 0);
+  assert.equal(
+    logs.some((entry) => entry.meta?.event === "warmup_start"),
+    false,
+    "one-hub V3 backlog should not keep startup warmup running by default",
+  );
 }
 
 {
@@ -177,6 +219,49 @@ function createHarness(options: {
     1,
     "startup logs should expose observed unroutable pools skipped by warmup",
   );
+}
+
+{
+  const kyberPool = "0xdddddddddddddddddddddddddddddddddddddddd";
+  const capturedMeta: Array<Map<string, Record<string, unknown>>> = [];
+  const { manager } = createHarness({
+    pools: [
+      pool(kyberPool, "KYBERSWAP_ELASTIC", {
+        fee: "4000",
+        swapFeeBps: "40",
+        tickSpacing: "8",
+        isKyberElastic: true,
+      }),
+    ],
+    fetchV3: async (addresses, onProgress, poolMeta) => {
+      capturedMeta.push(poolMeta);
+      const states = new Map() as any;
+      states.noDataFailures = new Set<string>();
+      for (const addr of addresses) {
+        const raw = {
+          ...validV3Raw(50),
+          fee: 4000n,
+          swapFeeBps: 40n,
+          isKyberElastic: true,
+          tickSpacing: 8,
+        };
+        states.set(addr.toLowerCase(), raw);
+        onProgress(1, addresses.length, addr, raw);
+      }
+      return states;
+    },
+  });
+
+  await manager.fetchAndCacheStates([pool(kyberPool, "KYBERSWAP_ELASTIC", {
+    fee: "4000",
+    swapFeeBps: "40",
+    tickSpacing: "8",
+    isKyberElastic: true,
+  })]);
+
+  const kyberMeta = capturedMeta[0]?.get(kyberPool);
+  assert.equal(kyberMeta?.isKyberElastic, true);
+  assert.equal(kyberMeta?.swapFeeBps, "40");
 }
 
 {

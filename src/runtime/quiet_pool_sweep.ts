@@ -1,5 +1,6 @@
 import { takeTopNBy } from "../util/bounded_priority.ts";
 import { getPoolTokens } from "../util/pool_record.ts";
+import { isObservedUnroutableWarmupState } from "../bootstrap/warmup.ts";
 
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
@@ -21,7 +22,7 @@ type QuietPoolSweepDeps = {
   stateCache: StateCache;
   log: LoggerFn;
   isHydratablePool: (pool: PoolRecord) => boolean;
-  validatePoolState: (state: PoolState | undefined) => { valid: boolean };
+  validatePoolState: (state: PoolState | undefined) => { valid: boolean; reason?: string };
   fetchAndCacheStates: (pools: PoolRecord[], options: Record<string, unknown>) => Promise<unknown>;
   admitPools: (poolAddresses: Set<string>) => number;
   refreshCycles: (force?: boolean) => Promise<unknown>;
@@ -95,9 +96,16 @@ export function createQuietPoolSweepCoordinator(deps: QuietPoolSweepDeps) {
     let unsupportedPools = 0;
     let coolingDownPools = 0;
     let inFlightPools = 0;
+    let observedUnroutablePools = 0;
     for (const pool of activePools) {
       const addr = pool.pool_address.toLowerCase();
-      if (deps.validatePoolState(deps.stateCache.get(addr)).valid) continue;
+      const state = deps.stateCache.get(addr);
+      const verdict = deps.validatePoolState(state);
+      if (verdict.valid) continue;
+      if (isObservedUnroutableWarmupState(state, verdict)) {
+        observedUnroutablePools++;
+        continue;
+      }
       if (!deps.isHydratablePool(pool)) {
         unsupportedPools++;
         continue;
@@ -122,6 +130,7 @@ export function createQuietPoolSweepCoordinator(deps: QuietPoolSweepDeps) {
       skippedUnsupportedPools: unsupportedPools,
       skippedCoolingDownPools: coolingDownPools,
       skippedInFlightPools: inFlightPools,
+      skippedObservedUnroutablePools: observedUnroutablePools,
     };
   }
 
@@ -143,13 +152,15 @@ export function createQuietPoolSweepCoordinator(deps: QuietPoolSweepDeps) {
         if (
           selection.skippedUnsupportedPools > 0 ||
           selection.skippedCoolingDownPools > 0 ||
-          selection.skippedInFlightPools > 0
+          selection.skippedInFlightPools > 0 ||
+          selection.skippedObservedUnroutablePools > 0
         ) {
           deps.log("[runner] Quiet-pool sweep skipped all currently invalid pools.", "debug", {
             event: "quiet_pool_sweep_skipped",
             unsupportedPools: selection.skippedUnsupportedPools,
             coolingDownPools: selection.skippedCoolingDownPools,
             inFlightPools: selection.skippedInFlightPools,
+            observedUnroutablePools: selection.skippedObservedUnroutablePools,
           });
         }
         return;
@@ -162,6 +173,7 @@ export function createQuietPoolSweepCoordinator(deps: QuietPoolSweepDeps) {
         unsupportedPools: selection.skippedUnsupportedPools,
         coolingDownPools: selection.skippedCoolingDownPools,
         inFlightPools: selection.skippedInFlightPools,
+        observedUnroutablePools: selection.skippedObservedUnroutablePools,
       });
 
       const warmupStats = await deps.fetchAndCacheStates(pending, {
@@ -175,26 +187,43 @@ export function createQuietPoolSweepCoordinator(deps: QuietPoolSweepDeps) {
 
       const hydratedAddrs = new Set<string>();
       let failedPools = 0;
+      let observedUnroutablePools = 0;
+      const validationReasons: Record<string, number> = {};
       for (const pool of pending) {
         const addr = pool.pool_address.toLowerCase();
-        if (deps.validatePoolState(deps.stateCache.get(addr)).valid) {
+        const state = deps.stateCache.get(addr);
+        const verdict = deps.validatePoolState(state);
+        if (verdict.valid) {
           hydratedAddrs.add(addr);
           clearDeferredHydrationRetry(addr);
+        } else if (isObservedUnroutableWarmupState(state, verdict)) {
+          observedUnroutablePools++;
+          clearDeferredHydrationRetry(addr);
+          const reason = verdict.reason ?? "observed_unroutable";
+          validationReasons[reason] = (validationReasons[reason] ?? 0) + 1;
         } else {
           failedPools++;
-          recordDeferredHydrationFailure(addr, "state_not_routable_after_quiet_sweep");
+          const reason = verdict.reason ?? "state_not_routable_after_quiet_sweep";
+          validationReasons[reason] = (validationReasons[reason] ?? 0) + 1;
+          recordDeferredHydrationFailure(addr, reason);
         }
       }
 
       const admitted = deps.admitPools(hydratedAddrs);
-      deps.log(`[runner] Quiet-pool sweep complete: ${hydratedAddrs.size}/${pending.length} routable.`, "info", {
-        event: "quiet_pool_sweep_complete",
-        pendingPools: pending.length,
-        routablePools: hydratedAddrs.size,
-        failedPools,
-        admittedPools: admitted,
-        warmupStats,
-      });
+      deps.log(
+        `[runner] Quiet-pool sweep complete: ${hydratedAddrs.size}/${pending.length} routable, ${observedUnroutablePools} observed unroutable.`,
+        "info",
+        {
+          event: "quiet_pool_sweep_complete",
+          pendingPools: pending.length,
+          routablePools: hydratedAddrs.size,
+          observedUnroutablePools,
+          failedPools,
+          admittedPools: admitted,
+          validationReasons,
+          warmupStats,
+        },
+      );
 
       if (admitted > 0) {
         await deps.refreshCycles(true);

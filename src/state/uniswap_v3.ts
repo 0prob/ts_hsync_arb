@@ -1,6 +1,6 @@
 
 /**
- * src/state/uniswap_v3.js — Uniswap V3 / Algebra pool state fetcher
+ * src/state/uniswap_v3.ts — Uniswap V3 / Algebra pool state fetcher
  *
  * Fetches the full on-chain state needed for deterministic swap simulation:
  *   - slot0 / globalState (sqrtPriceX96, tick)
@@ -255,6 +255,8 @@ type V3PoolState = PoolCoreState & {
 type V3PoolMeta = {
   isAlgebra?: boolean;
   isKyberElastic?: boolean;
+  swapFeeBps?: number | string | bigint | null;
+  swapFeeUnits?: number | string | bigint | null;
 };
 
 type V3HydrationMode = "full" | "nearby" | "none";
@@ -308,6 +310,13 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+function normalizeOptionalSwapFeeBps(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isSafeInteger(n) || n < 0 || n > 10_000) return null;
+  return n;
+}
+
 // ─── Core State Fetcher ───────────────────────────────────────
 
 /**
@@ -327,43 +336,44 @@ function chunk<T>(items: T[], size: number): T[][] {
  */
 export async function fetchPoolCore(
   poolAddress: string,
-  { isAlgebra = false, isKyberElastic = false }: V3PoolMeta = {}
+  { isAlgebra = false, isKyberElastic = false, swapFeeBps, swapFeeUnits }: V3PoolMeta = {}
 ): Promise<PoolCoreState> {
   if (isKyberElastic) {
-    const [poolStateResult, liquidityStateResult, swapFeeBpsResult, tickDistanceResult] =
-      await Promise.all([
-        readContractWithRetry({
-          address: poolAddress,
-          abi: KYBER_POOL_STATE_ABI,
-          functionName: "getPoolState",
-        }),
-        readContractWithRetry({
-          address: poolAddress,
-          abi: KYBER_LIQUIDITY_STATE_ABI,
-          functionName: "getLiquidityState",
-        }),
-        readContractWithRetry({
-          address: poolAddress,
-          abi: KYBER_SWAP_FEE_BPS_ABI,
-          functionName: "swapFeeBps",
-        }),
-        readContractWithRetry({
-          address: poolAddress,
-          abi: KYBER_TICK_DISTANCE_ABI,
-          functionName: "tickDistance",
-        }),
-      ]);
+    const providedSwapFeeBps =
+      normalizeOptionalSwapFeeBps(swapFeeBps) ?? normalizeOptionalSwapFeeBps(swapFeeUnits);
+    const [poolStateResult, liquidityStateResult, tickDistanceResult] = await Promise.all([
+      readContractWithRetry({
+        address: poolAddress,
+        abi: KYBER_POOL_STATE_ABI,
+        functionName: "getPoolState",
+      }),
+      readContractWithRetry({
+        address: poolAddress,
+        abi: KYBER_LIQUIDITY_STATE_ABI,
+        functionName: "getLiquidityState",
+      }),
+      readContractWithRetry({
+        address: poolAddress,
+        abi: KYBER_TICK_DISTANCE_ABI,
+        functionName: "tickDistance",
+      }),
+    ]);
+    const swapFeeBpsResult = providedSwapFeeBps ?? await readContractWithRetry({
+      address: poolAddress,
+      abi: KYBER_SWAP_FEE_BPS_ABI,
+      functionName: "swapFeeBps",
+    });
 
     const baseLiquidity = BigInt(liquidityStateResult[0]);
     const reinvestLiquidity = BigInt(liquidityStateResult[1]);
-    const swapFeeBps = Number(swapFeeBpsResult);
+    const normalizedSwapFeeBps = Number(swapFeeBpsResult);
 
     return {
       sqrtPriceX96: BigInt(poolStateResult[0]),
       tick: Number(poolStateResult[1]),
       liquidity: baseLiquidity + reinvestLiquidity,
-      fee: swapFeeBps * 100,
-      swapFeeBps,
+      fee: normalizedSwapFeeBps * 100,
+      swapFeeBps: normalizedSwapFeeBps,
       tickSpacing: Number(tickDistanceResult),
       nearestCurrentTick: Number(poolStateResult[2]),
     };
@@ -711,13 +721,20 @@ export async function fetchV3PoolState(
   {
     isAlgebra = false,
     isKyberElastic = false,
+    swapFeeBps,
+    swapFeeUnits,
     hydrationMode = "full",
     nearWordRadius = 2,
   }: V3PoolMeta & V3FetchOptions = {}
 ): Promise<V3PoolState> {
   // Step 1: Core state (dispatches to Algebra or Uniswap V3 interface)
   const useAlgebraInterface = isAlgebra === true;
-  const core = await fetchPoolCore(poolAddress, { isAlgebra: useAlgebraInterface, isKyberElastic });
+  const core = await fetchPoolCore(poolAddress, {
+    isAlgebra: useAlgebraInterface,
+    isKyberElastic,
+    swapFeeBps,
+    swapFeeUnits,
+  });
 
   // Skip pools that are uninitialized (sqrtPriceX96 == 0)
   if (core.sqrtPriceX96 === 0n) {
@@ -807,6 +824,8 @@ export async function fetchMultipleV3States(
         const state = await fetchV3PoolState(addr, {
           isAlgebra: meta.isAlgebra || false,
           isKyberElastic: meta.isKyberElastic || false,
+          swapFeeBps: meta.swapFeeBps,
+          swapFeeUnits: meta.swapFeeUnits,
           hydrationMode: fetchOptions.hydrationMode,
           nearWordRadius: fetchOptions.nearWordRadius,
         });

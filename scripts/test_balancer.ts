@@ -164,6 +164,24 @@ function weightedState(overrides: Record<string, unknown> = {}) {
 {
   const state = weightedState();
   const stateCache = new Map([[pool, state]]);
+  const graph = buildGraph(
+    [
+      {
+        pool_address: pool,
+        protocol: "BALANCER_WEIGHTED",
+        tokens: [tokenA, tokenB, tokenC],
+        metadata: { poolType: "WeightedPool" },
+        status: "active",
+      },
+    ],
+    stateCache,
+  );
+  assert.equal(
+    graph.getPoolEdge(pool, tokenA, tokenB)?.feeBps,
+    30,
+    "Balancer weighted graph edges should expose swapFee in basis points",
+  );
+
   const direct = getBalancerAmountOut(10n * ONE, state, 2, 0);
   const simulated = simulateHop(
     {
@@ -258,6 +276,7 @@ function weightedState(overrides: Record<string, unknown> = {}) {
   assert.equal(graph.getEdgesBetween(tokenA, tokenB).length, 1, "real stable token pair should be routed");
   assert.equal(graph.getEdgesBetween(tokenA, tokenB)[0]?.tokenInIdx, 0);
   assert.equal(graph.getEdgesBetween(tokenA, tokenB)[0]?.tokenOutIdx, 1);
+  assert.equal(graph.getEdgesBetween(tokenA, tokenB)[0]?.feeBps, 10);
 }
 
 console.log("Balancer checks passed.");

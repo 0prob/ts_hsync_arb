@@ -1,4 +1,4 @@
-import { getPoolTokens } from "../util/pool_record.ts";
+import { getPoolTokens, normalizeEvmAddress } from "../util/pool_record.ts";
 
 type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 type LoggerFn = (msg: string, level?: LogLevel, meta?: unknown) => void;
@@ -41,7 +41,8 @@ type DiscoveryRefreshDeps = {
 export function seedNewPoolsIntoStateCache(pools: PoolRecord[], stateCache: StateCache) {
   const newPools: PoolRecord[] = [];
   for (const pool of pools) {
-    const poolAddress = pool.pool_address.toLowerCase();
+    const poolAddress = normalizeEvmAddress(pool.pool_address);
+    if (!poolAddress) continue;
     if (stateCache.has(poolAddress)) continue;
     stateCache.set(poolAddress, {
       poolId: poolAddress,
@@ -49,7 +50,7 @@ export function seedNewPoolsIntoStateCache(pools: PoolRecord[], stateCache: Stat
       tokens: getPoolTokens(pool),
       timestamp: 0,
     });
-    newPools.push(pool);
+    newPools.push({ ...pool, pool_address: poolAddress });
   }
   return newPools;
 }

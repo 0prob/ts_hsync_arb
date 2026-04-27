@@ -76,6 +76,7 @@ export function createArbScheduler(deps: {
 
       if (!deps.isRunning()) {
         arbDirty = false;
+        flushIdleWaiters();
         return;
       }
 

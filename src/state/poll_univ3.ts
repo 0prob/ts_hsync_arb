@@ -1,6 +1,6 @@
 
 /**
- * src/state/poll_univ3.js — Continuous V3 tick + liquidity state poller
+ * src/state/poll_univ3.ts — Continuous V3 tick + liquidity state poller
  *
  * Fetches slot0, liquidity, tick bitmap, and initialized tick data for all
  * active V3 pools (Uniswap V3, QuickSwap V3, SushiSwap V3, KyberSwap Elastic)
@@ -73,9 +73,12 @@ export class PollUniv3 extends TimedPoller {
     for (const pool of pools) {
       if (isAlgebraPool(pool)) {
         const protocol = normalizeProtocolKey(pool.protocol);
+        const metadata = parsePoolMetadata(pool.metadata);
         poolMeta.set(pool.pool_address.toLowerCase(), {
           isAlgebra: true,
-          isKyberElastic: protocol === "KYBERSWAP_ELASTIC" || parsePoolMetadata(pool.metadata).isKyberElastic === true,
+          isKyberElastic: protocol === "KYBERSWAP_ELASTIC" || metadata.isKyberElastic === true,
+          swapFeeBps: metadata.swapFeeBps,
+          swapFeeUnits: metadata.swapFeeUnits,
         });
       }
     }

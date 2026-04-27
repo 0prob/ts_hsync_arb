@@ -442,6 +442,26 @@ type DiscoverPoolsDeps = {
   protocolConcurrency?: number;
 };
 
+function discoveryProtocolCoverage(
+  registry: RegistryService,
+  discoveryEntries: Array<[string, DiscoveryProtocol]>,
+  protocolResults: Array<{ key: string; result: any; error: any }>,
+) {
+  const resultByProtocol = new Map(protocolResults.map((entry) => [entry.key, entry]));
+  return discoveryEntries.map(([key, protocol]) => {
+    const result = resultByProtocol.get(key);
+    return {
+      protocol: key,
+      name: protocol.name,
+      activePools: registry.getPoolCountForProtocol(key, "active"),
+      totalPools: registry.getPoolCountForProtocol(key),
+      checkpointBlock: registry.getCheckpoint(key)?.last_block ?? null,
+      discovered: Number(result?.result?.discovered ?? 0),
+      error: result?.error ? String(result.error?.message ?? result.error) : null,
+    };
+  });
+}
+
 // ─── Public entry point ────────────────────────────────────────
 
 export async function discoverPoolsWithDeps(deps: DiscoverPoolsDeps = {}) {
@@ -541,13 +561,33 @@ export async function discoverPoolsWithDeps(deps: DiscoverPoolsDeps = {}) {
       await Promise.allSettled(pendingHydrations);
     }
 
+    const protocolCoverage = discoveryProtocolCoverage(registry, discoveryEntries, protocolResults);
+    const populatedProtocols = protocolCoverage.filter((entry) => entry.activePools > 0);
+    discoveryLogger.info(
+      {
+        protocols: protocolCoverage,
+        populatedProtocols: populatedProtocols.length,
+        emptyProtocols: protocolCoverage.length - populatedProtocols.length,
+      },
+      "[discovery] Registry protocol coverage",
+    );
+    if (protocolCoverage.length > 1 && populatedProtocols.length === 1) {
+      discoveryLogger.warn(
+        {
+          populatedProtocol: populatedProtocols[0]?.protocol ?? null,
+          protocols: protocolCoverage,
+        },
+        "[discovery] Only one discoverable protocol has active pools in the registry",
+      );
+    }
+
     const totalPools = registry.getPoolCount();
     const activePools = registry.getActivePoolCount();
     console.log(`\n=== Discovery Complete ===`);
     console.log(`New pools discovered this run: ${totalDiscovered}`);
     console.log(`Total pools in registry: ${totalPools} (${activePools} active)`);
 
-    return { totalDiscovered, totalPools, activePools };
+    return { totalDiscovered, totalPools, activePools, protocolCoverage };
   } finally {
     if (shouldCloseRegistry) {
       registry.close();

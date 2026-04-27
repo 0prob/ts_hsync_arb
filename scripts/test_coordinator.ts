@@ -45,6 +45,29 @@ await scheduler.waitForIdle();
 assert.equal(runCount, 2, "scheduler must not run passes after runtime stop");
 assert.deepEqual(recordedChangedPools, [2, 0], "stopped scheduler must not record new activity");
 
+{
+  let queuedSchedulerRunning = true;
+  let queuedRunCount = 0;
+  const queuedScheduler = createArbScheduler({
+    isRunning: () => queuedSchedulerRunning,
+    recordArbActivity: () => {},
+    getAdaptiveDebounceMs: () => 5,
+    runPass: async () => {
+      queuedRunCount++;
+    },
+  });
+
+  queuedScheduler.scheduleArb();
+  const idle = queuedScheduler.waitForIdle();
+  queuedSchedulerRunning = false;
+  await idle;
+  assert.equal(
+    queuedRunCount,
+    0,
+    "queued scheduler should skip the pass when runtime stops before debounce fires",
+  );
+}
+
 class ShutdownExit extends Error {
   constructor(readonly code: number) {
     super(`exit:${code}`);

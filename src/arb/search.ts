@@ -33,6 +33,12 @@ type CandidatePipelineResult = {
     rejectReasons: Record<string, number>;
   };
 };
+type ScanPathSelection = {
+  paths: ArbPathLike[];
+  duplicatePaths: number;
+  stalePaths: number;
+  staleReasons: string[];
+};
 
 function toBigIntInput(value: RawRouteResult[string]) {
   return typeof value === "string" || typeof value === "number" || typeof value === "bigint" || typeof value === "boolean"
@@ -82,6 +88,47 @@ function normalizeExplicitHopCount(value: RawRouteResult[string]) {
 function normalizeProbeAmounts(values: bigint[]) {
   return [...new Set(values.filter((amount) => typeof amount === "bigint" && amount > 0n).map(String))]
     .map((amount) => BigInt(amount));
+}
+
+function selectFreshUniqueScanPaths(
+  paths: ArbPathLike[],
+  deps: Pick<SearchDeps, "routeKeyFromEdges" | "getRouteFreshness">,
+): ScanPathSelection {
+  const uniqueByRoute = new Map<string, ArbPathLike>();
+  let duplicatePaths = 0;
+
+  for (const path of paths) {
+    const key = deps.routeKeyFromEdges(path.startToken, path.edges);
+    if (uniqueByRoute.has(key)) {
+      duplicatePaths++;
+      continue;
+    }
+    uniqueByRoute.set(key, path);
+  }
+
+  const staleReasons = new Map<string, number>();
+  const freshPaths: ArbPathLike[] = [];
+  let stalePaths = 0;
+  for (const path of uniqueByRoute.values()) {
+    const freshness = deps.getRouteFreshness(path);
+    if (freshness.ok) {
+      freshPaths.push(path);
+      continue;
+    }
+    stalePaths++;
+    const reason = freshness.reason ?? "unknown";
+    staleReasons.set(reason, (staleReasons.get(reason) ?? 0) + 1);
+  }
+
+  return {
+    paths: freshPaths,
+    duplicatePaths,
+    stalePaths,
+    staleReasons: [...staleReasons.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([reason, count]) => `${reason}:${count}`)
+      .slice(0, 5),
+  };
 }
 
 export function toRouteResultLike(result: RawRouteResult): RouteResultLike {
@@ -247,17 +294,44 @@ export function createArbSearcher(deps: SearchDeps) {
     const cycles = deps.cachedCycles();
     if (cycles.length === 0) return [];
 
-    const { candidates, totalProbeRuns, totalPathEvaluations } = await evaluateCandidatesMultiProbe(cycles);
+    const scanSelection = selectFreshUniqueScanPaths(cycles, deps);
+    if (scanSelection.duplicatePaths > 0 || scanSelection.stalePaths > 0) {
+      deps.log("[runner] Pruned routes before simulation", "debug", {
+        event: "scan_prune_routes",
+        cachedPaths: cycles.length,
+        duplicatePaths: scanSelection.duplicatePaths,
+        stalePaths: scanSelection.stalePaths,
+        scanPaths: scanSelection.paths.length,
+        staleReasons: scanSelection.staleReasons,
+      });
+    }
+
+    if (scanSelection.paths.length === 0) {
+      deps.onPathsEvaluated(0);
+      deps.log("Skipped arb scan because no cached routes have fresh state", "info", {
+        event: "scan_skip_no_fresh_routes",
+        cachedPaths: cycles.length,
+        duplicatePaths: scanSelection.duplicatePaths,
+        stalePaths: scanSelection.stalePaths,
+        staleReasons: scanSelection.staleReasons,
+      });
+      return [];
+    }
+
+    const { candidates, totalProbeRuns, totalPathEvaluations } = await evaluateCandidatesMultiProbe(scanSelection.paths);
     deps.onPathsEvaluated(totalPathEvaluations);
 
     deps.log(
       candidates.length === 0
-        ? `Scanned ${cycles.length} paths — no candidates above fee threshold`
-        : `Scanned ${cycles.length} paths → ${candidates.length} candidates`,
+        ? `Scanned ${scanSelection.paths.length} paths — no candidates above fee threshold`
+        : `Scanned ${scanSelection.paths.length} paths → ${candidates.length} candidates`,
       "info",
       {
         event: "scan_summary",
-        paths: cycles.length,
+        paths: scanSelection.paths.length,
+        cachedPaths: cycles.length,
+        duplicatePaths: scanSelection.duplicatePaths,
+        stalePaths: scanSelection.stalePaths,
         totalProbeRuns,
         totalPathEvaluations,
         candidates: candidates.length,
