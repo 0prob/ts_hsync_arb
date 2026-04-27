@@ -9,7 +9,7 @@
  *     Returns profitable paths sorted by profit desc.
  *
  *   ENUMERATE { id, adjacency, startTokens, options }
- *     Reconstruct a lightweight topology-only graph from `adjacency`
+ *     Reconstruct a lightweight graph from `adjacency`
  *     (output of serializeTopology) and run findArbPaths on `startTokens`.
  *     Returns serialisable path descriptors (pool arrays, no functions).
  *     The main thread then looks up full edges from the live graph.

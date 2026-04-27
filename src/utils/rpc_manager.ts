@@ -76,6 +76,7 @@ const ERROR_COOLDOWN_BASE_MS = 5_000;
 const ERROR_COOLDOWN_MAX_MS = 60_000;
 const METHOD_UNAVAILABLE_COOLDOWN_MS = 86_400_000; // 24 h
 const IN_FLIGHT_LATENCY_PENALTY_MS = 250;
+const DEFAULT_RPC_METHOD = "unknown";
 
 class RpcEndpoint {
   url: string;
@@ -83,6 +84,7 @@ class RpcEndpoint {
   consecutiveErrors: number;
   rateLimitedUntil: number;
   errorCooldownUntil: number;
+  methodUnavailableUntil: Map<string, number>;
   inFlight: number;
   _backoffMs: number;
   client: ReturnType<typeof createPublicClient>;
@@ -93,6 +95,7 @@ class RpcEndpoint {
     this.consecutiveErrors = 0;
     this.rateLimitedUntil = 0;     // epoch ms
     this.errorCooldownUntil = 0;   // epoch ms for transport/5xx failures
+    this.methodUnavailableUntil = new Map();
     this.inFlight = 0;             // active retry-managed requests pinned here
     this._backoffMs = INITIAL_BACKOFF_MS;
 
@@ -115,33 +118,56 @@ class RpcEndpoint {
     return Date.now() < this.errorCooldownUntil;
   }
 
+  /** True while this endpoint is known not to support the requested method. */
+  isMethodUnavailable(method: string) {
+    const key = normalizeRpcMethod(method);
+    const until = this.methodUnavailableUntil.get(key) ?? 0;
+    if (Date.now() < until) return true;
+    if (until > 0) this.methodUnavailableUntil.delete(key);
+    return false;
+  }
+
   /**
    * Record a 429 / rate-limit event. Applies exponential backoff and logs it.
    */
-  markRateLimited(error: unknown = null) {
-    const methodUnavailable = _isMethodUnavailableError(error);
-    const cooldownMs = methodUnavailable
-        ? METHOD_UNAVAILABLE_COOLDOWN_MS
-      : this._backoffMs;
+  markRateLimited(error: unknown = null, method = DEFAULT_RPC_METHOD) {
+    const cooldownMs = this._backoffMs;
 
     this.rateLimitedUntil = Date.now() + cooldownMs;
-    const reason = methodUnavailable
-      ? "unsupported for contract reads"
-      : "rate-limited";
     logger.warn(
       {
         event: "rpc_endpoint_backoff",
         endpoint: rpcManagerShortUrl(this.url),
-        reason,
+        method: normalizeRpcMethod(method),
+        reason: "rate-limited",
         cooldown_s: Math.max(1, Math.round(cooldownMs / 1000)),
       },
       "RPC endpoint entered cooldown"
     );
-    if (!methodUnavailable) {
-      this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
-    }
-    recordRpcSwitch(methodUnavailable ? "unsupported_method" : "rate_limited");
-    recordRpcError("unknown");
+    this._backoffMs = Math.min(this._backoffMs * 2, MAX_BACKOFF_MS);
+    recordRpcSwitch("rate_limited");
+    recordRpcError(normalizeRpcMethod(method));
+  }
+
+  /**
+   * Record an endpoint capability failure for a specific JSON-RPC method.
+   * This avoids poisoning the endpoint for unrelated calls such as
+   * eth_blockNumber when only eth_feeHistory or eth_call is unsupported.
+   */
+  markMethodUnavailable(method: string) {
+    const key = normalizeRpcMethod(method);
+    this.methodUnavailableUntil.set(key, Date.now() + METHOD_UNAVAILABLE_COOLDOWN_MS);
+    logger.warn(
+      {
+        event: "rpc_method_unavailable",
+        endpoint: rpcManagerShortUrl(this.url),
+        method: key,
+        cooldown_s: Math.round(METHOD_UNAVAILABLE_COOLDOWN_MS / 1000),
+      },
+      "RPC endpoint method entered capability cooldown"
+    );
+    recordRpcSwitch("unsupported_method");
+    recordRpcError(key);
   }
 
   /**
@@ -157,7 +183,7 @@ class RpcEndpoint {
   /**
    * Record a non-rate-limit error (network, timeout, 5xx).
    */
-  markError(options: { extendActiveCooldown?: boolean } = {}) {
+  markError(options: { extendActiveCooldown?: boolean; method?: string } = {}) {
     const extendActiveCooldown = options.extendActiveCooldown ?? true;
     if (!extendActiveCooldown && this.isCoolingDown()) {
       this.latencyMs = Infinity;
@@ -172,7 +198,7 @@ class RpcEndpoint {
     );
     this.errorCooldownUntil = Date.now() + cooldownMs;
     recordRpcSwitch("error");
-    recordRpcError("unknown");
+    recordRpcError(normalizeRpcMethod(options.method));
   }
 
   /**
@@ -233,8 +259,9 @@ class RpcManager {
    * passes the probe (eth_blockNumber) but fails on other calls (e.g. an
    * endpoint that returns invalid JSON for eth_getBlockByNumber).
    */
-  getBestEndpoint() {
-    const healthy = this.endpoints.filter(
+  getBestEndpoint(method = DEFAULT_RPC_METHOD) {
+    const candidates = this._methodAvailableEndpoints(method);
+    const healthy = candidates.filter(
       (ep) => !ep.isRateLimited() && !ep.isCoolingDown()
     );
 
@@ -247,7 +274,7 @@ class RpcManager {
 
     // All healthy candidates exhausted — pick the non-rate-limited endpoint
     // whose transport-error cooldown expires soonest.
-    const available = this.endpoints.filter((ep) => !ep.isRateLimited());
+    const available = candidates.filter((ep) => !ep.isRateLimited());
     if (available.length > 0) {
       return this._selectEndpoint(
         available,
@@ -257,14 +284,14 @@ class RpcManager {
 
     // All rate-limited — return the one whose cooldown expires soonest
     return this._selectEndpoint(
-      this.endpoints,
+      candidates.length > 0 ? candidates : this.endpoints,
       (ep) => [ep.rateLimitedUntil, ep.inFlight, ep.latencyMs]
     );
   }
 
   /** Convenience: return the viem PublicClient for the best endpoint. */
-  getBestClient() {
-    return this.getBestEndpoint().client;
+  getBestClient(method = DEFAULT_RPC_METHOD) {
+    return this.getBestEndpoint(method).client;
   }
 
   /**
@@ -272,10 +299,12 @@ class RpcManager {
    * (neither rate-limited nor in error cooldown). Returns 0 if any endpoint
    * is already healthy — callers can skip the wait in that case.
    */
-  msUntilAnyEndpointAvailable() {
+  msUntilAnyEndpointAvailable(method = DEFAULT_RPC_METHOD) {
     const now = Date.now();
-    if (this.endpoints.some((ep) => !ep.isRateLimited() && !ep.isCoolingDown())) return 0;
-    const soonest = this.endpoints.reduce((min, ep) => {
+    const candidates = this._methodAvailableEndpoints(method);
+    if (candidates.length === 0) return 0;
+    if (candidates.some((ep) => !ep.isRateLimited() && !ep.isCoolingDown())) return 0;
+    const soonest = candidates.reduce((min, ep) => {
       const avail = Math.max(ep.rateLimitedUntil, ep.errorCooldownUntil);
       return Math.min(min, avail);
     }, Infinity);
@@ -287,8 +316,8 @@ class RpcManager {
    * This reduces herd behavior where many concurrent requests pick the same
    * low-latency endpoint before the first 429 updates its cooldown state.
    */
-  checkoutBestEndpoint() {
-    const ep = this.getBestEndpoint();
+  checkoutBestEndpoint(method = DEFAULT_RPC_METHOD) {
+    const ep = this.getBestEndpoint(method);
     ep.inFlight++;
     return ep;
   }
@@ -297,18 +326,27 @@ class RpcManager {
    * Find an endpoint by URL and mark it as rate-limited.
    * @param {string} url
    */
-  markRateLimited(url: string, error: unknown = null) {
+  markRateLimited(url: string, error: unknown = null, method = DEFAULT_RPC_METHOD) {
     const ep = this.endpoints.find((e) => e.url === url);
-    if (ep) ep.markRateLimited(error);
+    if (ep) ep.markRateLimited(error, method);
+  }
+
+  /**
+   * Find an endpoint by URL and mark a method as unsupported there.
+   * @param {string} url
+   */
+  markMethodUnavailable(url: string, method = DEFAULT_RPC_METHOD) {
+    const ep = this.endpoints.find((e) => e.url === url);
+    if (ep) ep.markMethodUnavailable(method);
   }
 
   /**
    * Find an endpoint by URL and mark a non-RL error.
    * @param {string} url
    */
-  markError(url: string) {
+  markError(url: string, method = DEFAULT_RPC_METHOD) {
     const ep = this.endpoints.find((e) => e.url === url);
-    if (ep) ep.markError();
+    if (ep) ep.markError({ method });
   }
 
   /**
@@ -329,6 +367,15 @@ class RpcManager {
     if (ep) {
       ep.inFlight = Math.max(0, ep.inFlight - 1);
     }
+  }
+
+  methodUnavailableCount(method = DEFAULT_RPC_METHOD) {
+    const key = normalizeRpcMethod(method);
+    return this.endpoints.filter((ep) => this._isMethodUnavailable(ep, key)).length;
+  }
+
+  areAllEndpointsMethodUnavailable(method = DEFAULT_RPC_METHOD) {
+    return this.endpoints.length > 0 && this.methodUnavailableCount(method) >= this.endpoints.length;
   }
 
   /**
@@ -457,6 +504,18 @@ class RpcManager {
       ep.inFlight,
     ];
   }
+
+  _methodAvailableEndpoints(method: string) {
+    const key = normalizeRpcMethod(method);
+    return this.endpoints.filter((ep) => !this._isMethodUnavailable(ep, key));
+  }
+
+  _isMethodUnavailable(ep: RpcEndpoint, method: string) {
+    if (typeof ep.isMethodUnavailable === "function") {
+      return ep.isMethodUnavailable(method);
+    }
+    return false;
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -467,6 +526,39 @@ function rpcManagerShortUrl(url: string): string {
     return u.hostname + (u.pathname !== "/" ? u.pathname.slice(0, 20) : "");
   } catch {
     return url.slice(0, 40);
+  }
+}
+
+function normalizeRpcMethod(method: unknown) {
+  const value = String(method ?? "").trim();
+  return value || DEFAULT_RPC_METHOD;
+}
+
+function rpcMethodFromClientProperty(prop: string) {
+  switch (prop) {
+    case "call":
+    case "multicall":
+    case "readContract":
+      return "eth_call";
+    case "estimateGas":
+      return "eth_estimateGas";
+    case "getBlock":
+      return "eth_getBlockByNumber";
+    case "getBlockNumber":
+      return "eth_blockNumber";
+    case "getFeeHistory":
+      return "eth_feeHistory";
+    case "getGasPrice":
+      return "eth_gasPrice";
+    case "getTransaction":
+      return "eth_getTransactionByHash";
+    case "getTransactionCount":
+      return "eth_getTransactionCount";
+    case "getTransactionReceipt":
+    case "waitForTransactionReceipt":
+      return "eth_getTransactionReceipt";
+    default:
+      return normalizeRpcMethod(prop);
   }
 }
 
@@ -487,12 +579,18 @@ export const dynamicPublicClient = new Proxy(
   {},
   {
     get(_target, prop) {
-      const client = rpcManager.getBestClient() as Record<string | symbol, unknown>;
+      const methodName = rpcMethodFromClientProperty(String(prop));
+      const client = rpcManager.getBestClient(methodName) as Record<string | symbol, unknown>;
       const value = client[prop];
       // Bind methods to their original client so `this` works correctly
       if (typeof value !== "function") return value;
       return async (...args: unknown[]) => {
-        const endpoint = rpcManager.checkoutBestEndpoint();
+        if (rpcManager.areAllEndpointsMethodUnavailable(methodName)) {
+          throw new Error(
+            `RPC method unsupported by all configured endpoints (${rpcManager.endpoints.length}) for ${methodName}`
+          );
+        }
+        const endpoint = rpcManager.checkoutBestEndpoint(methodName);
         const boundClient = endpoint.client as Record<string | symbol, unknown>;
         const method = boundClient[prop];
 
@@ -501,10 +599,12 @@ export const dynamicPublicClient = new Proxy(
           rpcManager.markSuccess(endpoint.url);
           return result;
         } catch (error) {
-          if (isRateLimitError(error) || isEndpointCapabilityError(error)) {
-            rpcManager.markRateLimited(endpoint.url, error);
+          if (isEndpointCapabilityError(error)) {
+            rpcManager.markMethodUnavailable(endpoint.url, methodName);
+          } else if (isRateLimitError(error)) {
+            rpcManager.markRateLimited(endpoint.url, error, methodName);
           } else if (isRetryableError(error)) {
-            rpcManager.markError(endpoint.url);
+            rpcManager.markError(endpoint.url, methodName);
           }
           throw error;
         } finally {
@@ -578,8 +678,4 @@ export function isRetryableError(error: unknown): boolean {
     return true;
   }
   return false;
-}
-
-function _isMethodUnavailableError(error: unknown): boolean {
-  return isEndpointCapabilityError(error);
 }

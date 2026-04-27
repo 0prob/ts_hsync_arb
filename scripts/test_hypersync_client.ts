@@ -10,18 +10,51 @@ import {
     normalizeHypersyncClientConfig({
       url: "  https://polygon.hypersync.xyz  ",
       apiToken: "  token-value  ",
+      httpReqTimeoutMillis: "45000",
+      maxNumRetries: "4",
+      retryBackoffMs: "750",
+      retryBaseMs: "250",
+      retryCeilingMs: "3000",
+    } as any),
+    {
+      url: "https://polygon.hypersync.xyz",
+      apiToken: "token-value",
+      httpReqTimeoutMillis: 45_000,
+      maxNumRetries: 4,
+      retryBackoffMs: 750,
+      retryBaseMs: 250,
+      retryCeilingMs: 3_000,
+    },
+    "client config should be trimmed and preserve native HyperSync retry tuning",
+  );
+
+  assert.deepEqual(
+    normalizeHypersyncClientConfig({
+      url: "  https://polygon.hypersync.xyz  ",
+      apiToken: "  token-value  ",
     }),
     {
       url: "https://polygon.hypersync.xyz",
       apiToken: "token-value",
     },
-    "client config should be trimmed before native construction",
+    "client config should omit unset native tuning fields",
   );
 
   assert.throws(
     () => normalizeHypersyncClientConfig({ url: "ftp://polygon.hypersync.xyz", apiToken: "" }),
     /valid HTTP\(S\) URL/i,
     "client config should reject non-HTTP HyperSync URLs",
+  );
+
+  assert.throws(
+    () => normalizeHypersyncClientConfig({
+      url: "https://polygon.hypersync.xyz",
+      apiToken: "",
+      retryBaseMs: 5_000,
+      retryCeilingMs: 1_000,
+    }),
+    /retryCeilingMs must be >= retryBaseMs/i,
+    "client config should reject inverted native retry bounds",
   );
 }
 

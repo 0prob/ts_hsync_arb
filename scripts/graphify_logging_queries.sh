@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_PATH="${1:-src}"
+FOCUS_PATH="${1:-src}"
+UPDATE_PATH="${GRAPHIFY_UPDATE_PATH:-.}"
 
 cd "$ROOT_DIR"
 
@@ -11,7 +12,7 @@ run() {
   "$@"
 }
 
-run graphify update "$TARGET_PATH"
+run graphify update "$UPDATE_PATH"
 
 # Logging architecture and ownership.
 run graphify query "Trace the logging architecture across logger, runnerLogger, rootLogger, log, metrics, rpc_manager, validation_job, StateWatcher, sendTx, and the TUI. Identify where logs are structured versus plain strings, where context is added or dropped, and which modules act as logging bridges."

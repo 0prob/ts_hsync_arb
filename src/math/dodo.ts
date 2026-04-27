@@ -19,7 +19,8 @@ function sqrt(value: bigint) {
   if (value < 0n) throw new Error("DODOMath: sqrt undefined for negative");
   if (value < 2n) return value;
 
-  let x0 = value / 2n;
+  const initialShift = BigInt((value.toString(2).length + 1) >> 1);
+  let x0 = 1n << initialShift;
   let x1 = (x0 + value / x0) / 2n;
   while (x1 < x0) {
     x0 = x1;

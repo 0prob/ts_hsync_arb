@@ -193,6 +193,7 @@ export function getBalancerAmountOut(amountIn: bigint, poolState: any, inIdx: nu
   const fee = toBigInt(swapFee);
 
   if (balIn <= 0n || balOut <= 0n || wIn <= 0n || wOut <= 0n) return 0n;
+  if (fee < 0n || fee >= ONE) return 0n;
   if (amountIn > (balIn * MAX_IN_RATIO) / ONE) return 0n;
 
   // amountIn after fee: amountIn * (1 - swapFee)
@@ -249,6 +250,7 @@ export function getBalancerAmountIn(amountOut: bigint, poolState: any, inIdx: nu
   const fee = toBigInt(swapFee);
 
   if (balIn <= 0n || balOut <= 0n || wIn <= 0n || wOut <= 0n) return 0n;
+  if (fee < 0n || fee >= ONE) return 0n;
   if (amountOut >= balOut) return 0n; // Not enough liquidity
   if (amountOut > (balOut * MAX_OUT_RATIO) / ONE) return 0n;
 

@@ -49,6 +49,12 @@ function resolvePaginationTarget(query: HyperSyncLogQuery, nextBlock: number, ar
   return nextBlock;
 }
 
+function clampNextBlockToExclusiveTarget(query: HyperSyncLogQuery, nextBlock: number) {
+  if (query.toBlock == null) return nextBlock;
+  const targetEnd = Number(query.toBlock);
+  return Number.isFinite(targetEnd) && nextBlock > targetEnd ? targetEnd : nextBlock;
+}
+
 function isTerminalBoundedCursor(
   query: HyperSyncLogQuery,
   pageFromBlock: number,
@@ -151,7 +157,8 @@ export async function fetchAllLogsWithClient<TLog>(
       allLogs.push(...pageLogs);
     }
 
-    const nextBlock = parseBlockInteger("response nextBlock cursor", res.nextBlock);
+    const responseNextBlock = parseBlockInteger("response nextBlock cursor", res.nextBlock);
+    const nextBlock = clampNextBlockToExclusiveTarget(currentQuery, responseNextBlock);
     options.onProgress?.({
       pages,
       logs: allLogs.length,
@@ -159,7 +166,7 @@ export async function fetchAllLogsWithClient<TLog>(
       nextBlock,
       archiveHeight,
     });
-    if (isTerminalBoundedCursor(currentQuery, pageFromBlock, nextBlock, pageLogs.length)) {
+    if (isTerminalBoundedCursor(currentQuery, pageFromBlock, responseNextBlock, pageLogs.length)) {
       lastNextBlock = Number(currentQuery.toBlock);
       break;
     }
@@ -169,9 +176,9 @@ export async function fetchAllLogsWithClient<TLog>(
       );
     }
     const targetEnd = resolvePaginationTarget(currentQuery, nextBlock, archiveHeight);
-    if (nextBlock < pageFromBlock) {
+    if (responseNextBlock < pageFromBlock) {
       throw new Error(
-        `HyperSync nextBlock cursor regressed from ${pageFromBlock} to ${nextBlock}; refusing to paginate.`,
+        `HyperSync nextBlock cursor regressed from ${pageFromBlock} to ${responseNextBlock}; refusing to paginate.`,
       );
     }
     if (nextBlock === pageFromBlock) {

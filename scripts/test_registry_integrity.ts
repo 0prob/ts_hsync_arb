@@ -98,6 +98,58 @@ const token1 = "0xcccccccccccccccccccccccccccccccccccccccc";
       "0xgoodbatch",
       "valid pool rows should survive mixed-validity batch upserts",
     );
+    const normalizedStatusAddress = "0xdadadadadadadadadadadadadadadadadadadada";
+    registry.upsertPool({
+      pool_address: normalizedStatusAddress,
+      protocol: "UNISWAP_V2",
+      tokens: [token0, token1],
+      block: "14",
+      tx: "0xstatus",
+      metadata: {},
+      status: " DISABLED ",
+      removed_block: 99,
+    });
+    const normalizedStatusPool = registry.getPool(normalizedStatusAddress);
+    assert.equal(normalizedStatusPool?.status, "disabled", "pool status should be trimmed and normalized");
+    assert.equal(
+      normalizedStatusPool?.removed_block,
+      null,
+      "non-removed pool upserts should not retain removed_block values",
+    );
+    assert.throws(
+      () => registry.upsertPool({
+        pool_address: "0xabababababababababababababababababababab",
+        protocol: "UNISWAP_V2",
+        tokens: [token0, token1],
+        block: 15,
+        tx: "0xbadstatus",
+        metadata: {},
+        status: "paused",
+      }),
+      /invalid pool status/i,
+      "pool upserts should reject unknown status values",
+    );
+    const malformedPoolSummary = registry.batchUpsertPools([
+      {
+        pool_address: "0xacacacacacacacacacacacacacacacacacacacac",
+        protocol: "UNISWAP_V2",
+        tokens: [token0, token1],
+        block: -1,
+        tx: "0xbadblock",
+        metadata: {},
+      },
+      {
+        pool_address: "0xadadadadadadadadadadadadadadadadadadadad",
+        protocol: "UNISWAP_V2",
+        tokens: [token0, token1],
+        block: 16,
+        tx: "0xbadstatus",
+        metadata: {},
+        status: "paused",
+      },
+    ]);
+    assert.equal(malformedPoolSummary?.skipped, 2, "batchUpsertPools should skip invalid block/status rows");
+    assert.equal(malformedPoolSummary?.upserted, 0, "fully malformed pool batches should not write rows");
 
     const stateBatchSummary = registry.batchUpdateStates([
       {
@@ -152,7 +204,7 @@ const token1 = "0xcccccccccccccccccccccccccccccccccccccccc";
     registry.upsertPool({
       pool_address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
       protocol: "UNISWAP_V2",
-      tokens: [token0, "not-a-token", token1, "0x0000000000000000000000000000000000000000"],
+      tokens: [token0, "not-a-token", token1, token0.toUpperCase(), "0x0000000000000000000000000000000000000000"],
       block: 12,
       tx: "0xfiltered",
       metadata: {},
@@ -197,7 +249,45 @@ const token1 = "0xcccccccccccccccccccccccccccccccccccccccc";
     assert.deepEqual(
       registry.getPool("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")?.tokens,
       [token0, token1],
-      "pool token parsing should drop malformed and zero token addresses",
+      "pool token parsing should drop malformed, zero, and duplicate token addresses",
+    );
+    assert.deepEqual(
+      registry.validatePoolMetadata({
+        pool_address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        protocol: "UNISWAP_V2",
+        tokens: [token0, token0],
+        metadata: {},
+      }),
+      [`0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee: duplicate token ${token0}`],
+      "direct metadata validation should still flag duplicate token payloads before write normalization",
+    );
+    const quickswapV3Pool = {
+      pool_address: "0x9797979797979797979797979797979797979797",
+      protocol: "QUICKSWAP_V3",
+      tokens: [token0, token1],
+      block: 17,
+      tx: "0xalgebra",
+      metadata: { fee: null, tickSpacing: null, isAlgebra: true },
+      status: "active",
+    };
+    registry.upsertPool(quickswapV3Pool);
+    assert.deepEqual(
+      registry.validatePoolMetadata(quickswapV3Pool),
+      [],
+      "Algebra/QuickSwap V3 registry metadata should not require factory-emitted fee or tickSpacing",
+    );
+    assert.deepEqual(
+      registry.validatePoolMetadata({
+        ...quickswapV3Pool,
+        pool_address: "0x9898989898989898989898989898989898989898",
+        protocol: "UNISWAP_V3",
+        metadata: {},
+      }),
+      [
+        "0x9898989898989898989898989898989898989898: V3 pool missing fee",
+        "0x9898989898989898989898989898989898989898: V3 pool missing tickSpacing",
+      ],
+      "standard V3 registry metadata should still require static fee and tickSpacing",
     );
 
     assert.throws(
@@ -266,6 +356,23 @@ const token1 = "0xcccccccccccccccccccccccccccccccccccccccc";
       "AAA",
       "valid token metadata rows should survive mixed-validity batch upserts",
     );
+    registry.getTokenMeta("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    registry.upsertTokenMeta("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 6);
+    assert.deepEqual(
+      registry.getTokenMeta("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+      {
+        address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        decimals: 6,
+        symbol: "AAA",
+        name: null,
+      },
+      "decimals-only token metadata writes should update cached decimals without dropping cached text metadata",
+    );
+    assert.equal(
+      (registry as any)._tokenDecimalsCache.get("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+      6,
+      "decimals-only token metadata writes should keep the decimals cache hot",
+    );
     assert.equal(
       registry.getTokenMeta("0x1234"),
       null,
@@ -275,6 +382,22 @@ const token1 = "0xcccccccccccccccccccccccccccccccccccccccc";
       () => registry.upsertPoolFee("0x1234", 30),
       /Pool address is required/i,
       "pool fee writes should reject malformed pool addresses",
+    );
+    assert.throws(
+      () => registry.upsertPoolFee(poolAddress, 10_001),
+      /Invalid pool fee bps/i,
+      "pool fee writes should reject impossible fee bps values",
+    );
+    registry.upsertPoolFee(poolAddress, "30", 3000n, " quickswap_v2 ");
+    assert.deepEqual(
+      registry.getPoolFee(poolAddress),
+      { feeBps: 30, feeRaw: "3000" },
+      "pool fee writes should normalize fee bps and raw fee payloads",
+    );
+    assert.equal(
+      registry.db.prepare(`SELECT protocol FROM pool_fees WHERE address = ?`).get(poolAddress)?.protocol,
+      "QUICKSWAP_V2",
+      "pool fee writes should normalize protocol keys",
     );
     assert.equal(
       registry.getPoolFee("0x1234"),

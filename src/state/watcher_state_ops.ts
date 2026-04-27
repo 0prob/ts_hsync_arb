@@ -5,7 +5,14 @@
 
 import { mergeStateIntoCache, reloadCacheFromRegistry } from "./cache_utils.ts";
 import { createWatcherProtocolHandlers } from "./watcher_protocol_handlers.ts";
-import { resolveV2FeeDenominator, resolveV2FeeNumerator, resolveV3Fee, V3_PROTOCOLS, validatePoolState } from "./normalizer.ts";
+import {
+  DODO_PROTOCOLS,
+  resolveV2FeeDenominator,
+  resolveV2FeeNumerator,
+  resolveV3Fee,
+  V3_PROTOCOLS,
+  validatePoolState,
+} from "./normalizer.ts";
 import { logger } from "../utils/logger.ts";
 import { parsePoolMetadataValue } from "../util/pool_record.ts";
 import { topicArrayFromHyperSyncLog } from "../hypersync/logs.ts";
@@ -220,7 +227,7 @@ function watcherStateIntegrityError(reason: string, context: any = {}) {
 function validateWatcherStateOrThrow(state: any, context: any = {}) {
   const verdict = validatePoolState(state);
   if (!verdict.valid) {
-    if (verdict.reason === "V3: zero liquidity" && allowsZeroLiquidityWatcherState(state)) {
+    if (allowsObservedUnroutableWatcherState(state, verdict.reason)) {
       return;
     }
     throw watcherStateIntegrityError(verdict.reason ?? "invalid watcher state", context);
@@ -240,11 +247,48 @@ function validateWatcherStateOrThrow(state: any, context: any = {}) {
   }
 }
 
+function allowsObservedUnroutableWatcherState(state: any, reason: string | undefined) {
+  if (reason === "V3: zero liquidity") {
+    return allowsZeroLiquidityWatcherState(state);
+  }
+  if (reason === "DODO: zero reserves" || reason === "DODO: zero targets") {
+    return allowsObservedDodoWatcherState(state);
+  }
+  return false;
+}
+
 function allowsZeroLiquidityWatcherState(state: any) {
   if (!V3_PROTOCOLS.has(state?.protocol) || state?.liquidity !== 0n) return false;
 
   const rerun = validatePoolState({ ...state, liquidity: 1n });
   return rerun.valid;
+}
+
+function allowsObservedDodoWatcherState(state: any) {
+  if (!DODO_PROTOCOLS.has(state?.protocol)) return false;
+
+  const fields = ["baseReserve", "quoteReserve", "baseTarget", "quoteTarget"];
+  const observed = fields.map((field) => toObservedBigInt(state?.[field]));
+  if (observed.some((value) => value == null || value < 0n)) return false;
+  if (!observed.some((value) => value === 0n)) return false;
+
+  const rerun = { ...state };
+  for (const field of fields) {
+    if (toObservedBigInt(rerun[field]) === 0n) {
+      rerun[field] = 1n;
+    }
+  }
+  return validatePoolState(rerun).valid;
+}
+
+function toObservedBigInt(value: any) {
+  if (typeof value === "bigint") return value;
+  if (value == null) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
 }
 
 export function mergeWatcherState(cache: any, addr: any, nextState: any) {

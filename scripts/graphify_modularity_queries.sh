@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_PATH="${1:-src}"
+FOCUS_PATH="${1:-src}"
+UPDATE_PATH="${GRAPHIFY_UPDATE_PATH:-.}"
 
 cd "$ROOT_DIR"
 
@@ -11,7 +12,7 @@ run() {
   "$@"
 }
 
-run graphify update "$TARGET_PATH"
+run graphify update "$UPDATE_PATH"
 
 # Architectural ownership and oversized modules.
 run graphify query "Map the current module boundaries across runner.ts, discovery, db, routing, state, profit, execution, tui, util, and protocols. Identify which files act as orchestration hubs, which files are mostly pure helpers, and which files are overloaded because they mix scheduling, I/O, state mutation, math, formatting, caching, and policy decisions."

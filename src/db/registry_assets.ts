@@ -4,6 +4,7 @@
  */
 
 import { normalizeEvmAddress } from "../util/pool_record.ts";
+import { normalizeProtocolKey } from "../protocols/classification.ts";
 
 function assetStmt(db: any, key: any, sql: any) {
   return db.statement(key, sql);
@@ -21,6 +22,14 @@ function normalizeTokenText(value: any) {
   if (value == null) return null;
   const trimmed = String(value).trim();
   return trimmed || null;
+}
+
+function normalizePoolFeeBps(feeBps: any) {
+  const normalized = Number(feeBps);
+  if (!Number.isSafeInteger(normalized) || normalized < 0 || normalized > 10_000) {
+    throw new Error(`Invalid pool fee bps: ${feeBps}`);
+  }
+  return normalized;
 }
 
 export function normalizeTokenDecimals(decimals: any) {
@@ -142,6 +151,9 @@ export function upsertPoolFee(db: any, poolAddress: any, feeBps: any, feeRaw = n
   if (!normalizedAddress) {
     throw new Error("Pool address is required");
   }
+  const normalizedFeeBps = normalizePoolFeeBps(feeBps);
+  const normalizedProtocol = protocol == null ? null : normalizeProtocolKey(protocol);
+  const normalizedFeeRaw = feeRaw == null ? null : String(feeRaw);
 
   assetStmt(
     db,
@@ -154,7 +166,7 @@ export function upsertPoolFee(db: any, poolAddress: any, feeBps: any, feeRaw = n
          protocol   = COALESCE(excluded.protocol, pool_fees.protocol),
          updated_at = excluded.updated_at`
   )
-    .run(normalizedAddress, feeBps, feeRaw, protocol);
+    .run(normalizedAddress, normalizedFeeBps, normalizedFeeRaw, normalizedProtocol);
 }
 
 export function getPoolFee(db: any, poolAddress: any) {

@@ -136,6 +136,32 @@ function weightedState(overrides: Record<string, unknown> = {}) {
 }
 
 {
+  const negativeFeeState = weightedState({ swapFee: -1n });
+  const fullFeeState = weightedState({ swapFee: ONE });
+
+  assert.equal(
+    getBalancerAmountOut(1n * ONE, negativeFeeState, 0, 1),
+    0n,
+    "Balancer weighted exact-input math should reject negative swap fees",
+  );
+  assert.equal(
+    getBalancerAmountOut(1n * ONE, fullFeeState, 0, 1),
+    0n,
+    "Balancer weighted exact-input math should reject fees >= 100%",
+  );
+  assert.equal(
+    getBalancerAmountIn(1n * ONE, negativeFeeState, 0, 1),
+    0n,
+    "Balancer weighted exact-output math should reject negative swap fees",
+  );
+  assert.equal(
+    getBalancerAmountIn(1n * ONE, fullFeeState, 0, 1),
+    0n,
+    "Balancer weighted exact-output math should reject fees >= 100%",
+  );
+}
+
+{
   const state = weightedState();
   const stateCache = new Map([[pool, state]]);
   const direct = getBalancerAmountOut(10n * ONE, state, 2, 0);

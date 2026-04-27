@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_PATH="${1:-src}"
+FOCUS_PATH="${1:-src}"
+UPDATE_PATH="${GRAPHIFY_UPDATE_PATH:-.}"
 
 cd "$ROOT_DIR"
 
@@ -11,7 +12,7 @@ run() {
   "$@"
 }
 
-run graphify update "$TARGET_PATH"
+run graphify update "$UPDATE_PATH"
 
 # Top 10 likely bugs / misconfigurations.
 run graphify query "Analyze the full codebase and rank the top 10 most likely real bugs, behavioral regressions, invariant violations, or production misconfigurations. Prioritize issues that can cause wrong trades, stale state, false profitability, broken startup or recovery, watcher drift, nonce or gas problems, cache misuse, or silent operator confusion. For each candidate, name the most likely file/function owners and why the failure mode is credible."

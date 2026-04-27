@@ -21,7 +21,7 @@
 import { simulateV3Swap } from "../math/uniswap_v3.ts";
 import { getWoofiEdgeFeeBps, getWoofiFeeRate } from "../math/woofi.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
-import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/pool_record.ts";
+import { getPoolMetadata, getPoolTokens, hasZeroAddressToken, normalizeEvmAddress } from "../util/pool_record.ts";
 import { PROTOCOLS } from "../protocols/index.ts";
 import { EXTRA_HUB_4_TOKENS, EXTRA_POLYGON_HUB_TOKENS } from "../config/index.ts";
 import { DODO_PROTOCOLS, normalizeProtocolKey, V2_PROTOCOLS, V3_PROTOCOLS, WOOFI_PROTOCOLS } from "../protocols/classification.ts";
@@ -34,7 +34,9 @@ function protocolSupportsRouting(protocol: string) {
 }
 
 function getLiveStateRef(stateMap: any, poolAddress: any) {
-  const stateRef = stateMap.get(poolAddress);
+  const normalizedPoolAddress = normalizeEvmAddress(poolAddress);
+  if (!normalizedPoolAddress || typeof stateMap?.get !== "function") return null;
+  const stateRef = stateMap.get(normalizedPoolAddress) ?? stateMap.get(poolAddress);
   return stateRef && typeof stateRef === "object" ? stateRef : null;
 }
 
@@ -102,17 +104,27 @@ function createSwapEdge({
   };
 }
 
+function normalizeTokenListForRouting(tokens: unknown) {
+  if (!Array.isArray(tokens)) return [];
+  return [
+    ...new Set(
+      tokens
+        .map((token) => normalizeEvmAddress(token))
+        .filter((token): token is string => token != null),
+    ),
+  ];
+}
+
 function getRoutablePoolContext(pool: any, stateMap: any) {
   if (pool.status !== "active") return null;
   const protocol = normalizeProtocolKey(pool.protocol);
   if (!protocolSupportsRouting(protocol)) return null;
 
-  const poolAddress = pool.pool_address.toLowerCase();
+  const poolAddress = normalizeEvmAddress(pool.pool_address);
+  if (!poolAddress) return null;
   const stateRef = getLiveStateRef(stateMap, poolAddress);
-  const stateTokens = Array.isArray(stateRef?.tokens) && stateRef.tokens.length >= 2
-    ? stateRef.tokens
-    : null;
-  const tokens = stateTokens ?? getPoolTokens(pool);
+  const stateTokens = normalizeTokenListForRouting(stateRef?.tokens);
+  const tokens = stateTokens.length >= 2 ? stateTokens : getPoolTokens(pool);
   if (!tokens || tokens.length < 2 || hasZeroAddressToken(tokens)) return null;
 
   const metadata = getPoolMetadata(pool);
@@ -206,6 +218,125 @@ function addPoolEdges(
   }
 
   return true;
+}
+
+function buildPoolEdgeSnapshot(
+  pool: any,
+  stateMap: any,
+  shouldInclude: (context: NonNullable<ReturnType<typeof getRoutablePoolContext>>) => boolean = () => true
+) {
+  const poolAddress = normalizeEvmAddress(pool?.pool_address);
+  if (!poolAddress) return { poolAddress: null, edges: [] as any[] };
+
+  const graph = new RoutingGraph();
+  addPoolEdges(graph, pool, stateMap, shouldInclude);
+  return {
+    poolAddress,
+    edges: graph._edgesByPool.get(poolAddress) ?? [],
+  };
+}
+
+function edgeTopologySignature(edge: any) {
+  return [
+    edge.protocol,
+    edge.tokenIn,
+    edge.tokenOut,
+    edge.tokenInIdx ?? null,
+    edge.tokenOutIdx ?? null,
+    edge.zeroForOne,
+    edge.fee ?? null,
+    edge.swapFeeBps ?? null,
+    edge.feeDenominator ?? null,
+    edge.feeBps ?? null,
+  ].join("|");
+}
+
+function samePoolTopology(left: any[], right: any[]) {
+  if (left.length !== right.length) return false;
+  const leftKeys = left.map(edgeTopologySignature).sort();
+  const rightKeys = right.map(edgeTopologySignature).sort();
+  return leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function serializeTopologyStateRef(state: any) {
+  if (!state || typeof state !== "object") return null;
+  const protocol = normalizeProtocolKey(state.protocol);
+  const common = {
+    poolId: state.poolId,
+    protocol,
+    tokens: Array.isArray(state.tokens) ? state.tokens : undefined,
+  };
+
+  if (V2_PROTOCOLS.has(protocol)) {
+    return {
+      ...common,
+      reserve0: state.reserve0,
+      reserve1: state.reserve1,
+      fee: state.fee,
+      feeDenominator: state.feeDenominator,
+    };
+  }
+
+  if (V3_PROTOCOLS.has(protocol)) {
+    return {
+      ...common,
+      initialized: state.initialized,
+      sqrtPriceX96: state.sqrtPriceX96,
+      liquidity: state.liquidity,
+    };
+  }
+
+  if (protocol.startsWith("CURVE_")) {
+    return {
+      ...common,
+      balances: state.balances,
+      rates: state.rates,
+      A: state.A,
+      fee: state.fee,
+    };
+  }
+
+  if (protocol.startsWith("BALANCER_")) {
+    return {
+      ...common,
+      balances: state.balances,
+      weights: state.weights,
+      swapFee: state.swapFee,
+      isStable: state.isStable,
+      amp: state.amp,
+      ampPrecision: state.ampPrecision,
+      scalingFactors: state.scalingFactors,
+    };
+  }
+
+  if (DODO_PROTOCOLS.has(protocol)) {
+    return {
+      ...common,
+      baseToken: state.baseToken,
+      quoteToken: state.quoteToken,
+      baseReserve: state.baseReserve,
+      quoteReserve: state.quoteReserve,
+      baseTarget: state.baseTarget,
+      quoteTarget: state.quoteTarget,
+      i: state.i,
+      k: state.k,
+      rState: state.rState,
+      lpFeeRate: state.lpFeeRate,
+      mtFeeRate: state.mtFeeRate,
+    };
+  }
+
+  if (WOOFI_PROTOCOLS.has(protocol)) {
+    return {
+      ...common,
+      quoteToken: state.quoteToken,
+      quoteReserve: state.quoteReserve,
+      baseTokenStates: state.baseTokenStates,
+      balances: state.balances,
+    };
+  }
+
+  return common;
 }
 
 // ─── Edge definition ──────────────────────────────────────────
@@ -334,10 +465,48 @@ export class RoutingGraph {
    * @param {Map<string,Object>}  stateMap  Live stateCache (stateRef assignment)
    */
   addPool(pool: any, stateMap = new Map()) {
-    const poolAddress = pool.pool_address.toLowerCase();
+    const poolAddress = normalizeEvmAddress(pool.pool_address);
+    if (!poolAddress) return;
     // Skip if this pool is already in the graph
     if (this._edgesByPool.has(poolAddress)) return;
     addPoolEdges(this, pool, stateMap, (context) => !!context?.stateRef);
+  }
+
+  upsertPool(pool: any, stateMap = new Map()) {
+    const { poolAddress, edges } = buildPoolEdgeSnapshot(
+      pool,
+      stateMap,
+      (context) => !!context?.stateRef,
+    );
+    if (!poolAddress) return "skipped";
+
+    const currentEdges = this._edgesByPool.get(poolAddress) ?? [];
+    if (edges.length === 0) {
+      if (currentEdges.length > 0) {
+        this.removePool(poolAddress);
+        return "removed";
+      }
+      return "skipped";
+    }
+
+    if (currentEdges.length === 0) {
+      for (const edge of edges) this.addEdge(edge);
+      return "added";
+    }
+
+    if (samePoolTopology(currentEdges, edges)) {
+      for (const edge of edges) {
+        const current = this.getPoolEdge(edge.poolAddress, edge.tokenIn, edge.tokenOut);
+        if (!current) continue;
+        current.stateRef = edge.stateRef;
+        current.metadata = edge.metadata;
+      }
+      return "unchanged";
+    }
+
+    this.removePool(poolAddress);
+    for (const edge of edges) this.addEdge(edge);
+    return "updated";
   }
 
   /**
@@ -349,7 +518,9 @@ export class RoutingGraph {
    * @param {Object} newState     New state object
    */
   updateEdgeState(poolAddress: any, newState: any) {
-    const edges = this._edgesByPool.get(poolAddress);
+    const normalizedPoolAddress = normalizeEvmAddress(poolAddress);
+    if (!normalizedPoolAddress) return;
+    const edges = this._edgesByPool.get(normalizedPoolAddress);
     if (!edges) return;
     for (const edge of edges) {
       edge.stateRef = newState;
@@ -377,6 +548,8 @@ export class RoutingGraph {
    * @returns {number}            Number of removed directed edges
    */
   removePool(poolAddress: any) {
+    poolAddress = normalizeEvmAddress(poolAddress);
+    if (!poolAddress) return 0;
     const edges = this._edgesByPool.get(poolAddress);
     if (!edges || edges.length === 0) return 0;
 
@@ -556,9 +729,9 @@ export const HUB_4_TOKENS = new Set([
 /**
  * Serialise a graph's topology to a plain transferable object.
  *
- * Strips non-serialisable fields (stateRef, swapFn, metadata) so the result
- * can cross worker-thread boundaries via structured-clone without errors.
- * Workers rebuild a lightweight RoutingGraph from this for path enumeration.
+ * Strips non-serialisable fields (swapFn, metadata) but keeps a compact
+ * structured-clone-safe stateRef so workers can still prune and rank paths
+ * before applying per-token caps.
  *
  * @param {RoutingGraph} graph
  * @returns {Object.<string, Array>}  token → lightweight edge array
@@ -566,8 +739,9 @@ export const HUB_4_TOKENS = new Set([
 export function serializeTopology(graph: any) {
   const adjacency: Record<string, any[]> = {};
   for (const [token, edges] of graph.adjacency) {
-    adjacency[token] = edges.map(({ protocol, protocolKind, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee, swapFeeBps, feeDenominator, feeBps }: any) => ({
+    adjacency[token] = edges.map(({ protocol, protocolKind, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee, swapFeeBps, feeDenominator, feeBps, stateRef }: any) => ({
       protocol, protocolKind, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee: fee ?? null, swapFeeBps: swapFeeBps ?? null, feeDenominator: feeDenominator ?? null, feeBps: feeBps ?? null,
+      stateRef: serializeTopologyStateRef(stateRef),
     }));
   }
   return adjacency;
@@ -584,7 +758,7 @@ export function deserializeTopology(adjacency: any) {
   const graph = new RoutingGraph();
   for (const edges of Object.values(adjacency) as any[]) {
     for (const e of edges) {
-      graph.addEdge({ ...e, fee: e.fee ?? undefined, feeDenominator: e.feeDenominator ?? undefined, feeBps: e.feeBps ?? undefined, swapFn: null, stateRef: null, metadata: null });
+      graph.addEdge({ ...e, fee: e.fee ?? undefined, feeDenominator: e.feeDenominator ?? undefined, feeBps: e.feeBps ?? undefined, swapFn: null, stateRef: e.stateRef ?? null, metadata: null });
     }
   }
   return graph;

@@ -300,8 +300,15 @@ function shouldPruneEdge(edge: any, opts: any = {}) {
 
   if (edge.protocol.startsWith("BALANCER_")) {
     if (!Array.isArray(state.balances) || state.balances.length < 2) return false;
-    if (!Array.isArray(state.weights) || state.weights.length < 2) return false;
     if (state.balances.some((b: any) => b <= 0n)) return true;
+    if (state.isStable === true || state.amp != null) {
+      if (state.amp == null || state.amp <= 0n) return true;
+      if (!Array.isArray(state.scalingFactors) || state.scalingFactors.length !== state.balances.length) return true;
+      if (state.scalingFactors.some((factor: any) => factor <= 0n)) return true;
+      return false;
+    }
+    if (!Array.isArray(state.weights) || state.weights.length < 2) return false;
+    if (state.weights.some((weight: any) => weight <= 0n)) return true;
     return false;
   }
 

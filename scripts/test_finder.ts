@@ -145,4 +145,35 @@ function v2Edge(poolAddress: string, tokenIn: string, tokenOut: string, reserveI
   assert.equal(badCurveWeight, null, "quote-based log weights should fail closed when protocol simulation rejects state");
 }
 
+{
+  const graph = new TestGraph();
+  graph.addEdge({
+    protocol: "BALANCER_V2",
+    protocolKind: "other",
+    poolAddress: "0xstable",
+    tokenIn: "a",
+    tokenOut: "b",
+    tokenInIdx: 0,
+    tokenOutIdx: 1,
+    zeroForOne: true,
+    stateRef: {
+      protocol: "BALANCER_V2",
+      tokens: ["a", "b"],
+      balances: [0n, 1_000_000n],
+      scalingFactors: [1_000_000_000_000_000_000n, 1_000_000_000_000_000_000n],
+      amp: 1_000_000n,
+      ampPrecision: 1_000n,
+      swapFee: 1_000_000_000_000_000n,
+      isStable: true,
+    },
+  });
+  graph.addEdge(v2Edge("0xreturn", "b", "a"));
+
+  assert.equal(
+    find2HopPaths(graph, "a", { maxPaths: 10 }).length,
+    0,
+    "Balancer stable edges with invalid balances should be pruned before path emission",
+  );
+}
+
 console.log("Finder checks passed.");

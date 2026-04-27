@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_PATH="${1:-src}"
+FOCUS_PATH="${1:-src}"
+UPDATE_PATH="${GRAPHIFY_UPDATE_PATH:-.}"
 
 cd "$ROOT_DIR"
 
@@ -11,7 +12,7 @@ run() {
   "$@"
 }
 
-run graphify update "$TARGET_PATH"
+run graphify update "$UPDATE_PATH"
 
 # Gas accounting and fee selection.
 run graphify query "Trace gas calculations end to end from simulateHop and simulateRoute through gasCostWei, computeProfit, gasEstimateCacheKeyForRoute, estimateGas, recommendGasParams, scalePriorityFeeByProfitMargin, buildArbTx, sendTx, and sendTxBundle. Highlight every unit boundary, cache boundary, fallback, override, and place where gas is estimated, scaled, converted, or compared."

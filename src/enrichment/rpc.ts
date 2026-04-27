@@ -42,6 +42,7 @@ export const publicClient = dynamicPublicClient;
 export async function executeWithRpcRetry(fn: any, options: any = {}) {
   const {
     retries = RPC_MAX_RETRIES,
+    method = "unknown",
     onRateLimitMessage = null,
     onRetryMessage = null,
   } = options;
@@ -49,20 +50,27 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
   let lastError;
   const capabilityFailedUrls = new Set<string>();
   const maxAttempts = Math.max(1, rpcManager.endpoints.length + retries);
+  const rpcMethod = String(method || "unknown");
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (rpcManager.areAllEndpointsMethodUnavailable(rpcMethod)) {
+      throw new Error(
+        `RPC method unsupported by all configured endpoints (${rpcManager.endpoints.length}) for ${rpcMethod}`
+      );
+    }
+
     // If every endpoint is currently rate-limited or cooling down, wait for
     // the soonest one to recover before issuing the call. Without this, we
     // burn all retry slots instantly on rapid-fire 429s and then throw even
     // though a healthy endpoint would be available in a few seconds, or wake
     // early and keep extending endpoint cooldowns under concurrent warmup.
-    const waitMs = rpcManager.msUntilAnyEndpointAvailable();
+    const waitMs = rpcManager.msUntilAnyEndpointAvailable(rpcMethod);
     if (waitMs > 0) {
       const jitterMs = Math.floor(Math.random() * 250);
       await new Promise((resolve) => setTimeout(resolve, waitMs + 50 + jitterMs));
     }
 
-    const endpoint = rpcManager.checkoutBestEndpoint();
+    const endpoint = rpcManager.checkoutBestEndpoint(rpcMethod);
     const client = endpoint.client;
 
     try {
@@ -74,15 +82,18 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
 
       if (isEndpointCapabilityError(error)) {
         capabilityFailedUrls.add(endpoint.url);
-        rpcManager.markRateLimited(endpoint.url, error);
+        rpcManager.markMethodUnavailable(endpoint.url, rpcMethod);
         if (attempt === 0 && onRateLimitMessage) {
           console.warn(
             onRateLimitMessage(rpcShortUrl(endpoint.url), endpoint, attempt, "unsupported for contract reads")
           );
         }
-        if (capabilityFailedUrls.size >= rpcManager.endpoints.length) {
+        if (
+          capabilityFailedUrls.size >= rpcManager.endpoints.length ||
+          rpcManager.areAllEndpointsMethodUnavailable(rpcMethod)
+        ) {
           throw new Error(
-            `RPC method unsupported by all configured endpoints (${capabilityFailedUrls.size}): ${
+            `RPC method unsupported by all configured endpoints (${rpcManager.endpoints.length}) for ${rpcMethod}: ${
               (error as { message?: string })?.message ?? String(error)
             }`
           );
@@ -91,7 +102,7 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
       }
 
       if (isRateLimitError(error)) {
-        rpcManager.markRateLimited(endpoint.url, error);
+        rpcManager.markRateLimited(endpoint.url, error, rpcMethod);
         if (attempt === 0 && onRateLimitMessage) {
           console.warn(
             onRateLimitMessage(rpcShortUrl(endpoint.url), endpoint, attempt, "rate-limited")
@@ -104,12 +115,12 @@ export async function executeWithRpcRetry(fn: any, options: any = {}) {
         throw error;
       }
       if (attempt === maxAttempts - 1) {
-        rpcManager.markError(endpoint.url);
+        rpcManager.markError(endpoint.url, rpcMethod);
         throw error;
       }
 
-      rpcManager.markError(endpoint.url);
-      if (rpcManager.msUntilAnyEndpointAvailable() === 0) {
+      rpcManager.markError(endpoint.url, rpcMethod);
+      if (rpcManager.msUntilAnyEndpointAvailable(rpcMethod) === 0) {
         continue;
       }
 
@@ -147,6 +158,7 @@ export async function readContractWithRetry(params: any) {
   return executeWithRpcRetry(
     (client: any) => client.readContract(params),
     {
+      method: "eth_call",
       onRateLimitMessage: (shortUrl: any, _endpoint: any, _attempt: any, reason = "rate-limited") =>
         `    RPC ${reason} on ${shortUrl}, switching endpoint...`,
       onRetryMessage: (shortUrl: any, delayMs: any) =>
@@ -166,6 +178,7 @@ export async function multicallWithRetry(params: any) {
   return executeWithRpcRetry(
     (client: any) => client.multicall(params),
     {
+      method: "eth_call",
       onRateLimitMessage: (shortUrl: any, _endpoint: any, _attempt: any, reason = "rate-limited") =>
         `    RPC ${reason} on ${shortUrl} during multicall, switching endpoint...`,
       onRetryMessage: (shortUrl: any, delayMs: any) =>

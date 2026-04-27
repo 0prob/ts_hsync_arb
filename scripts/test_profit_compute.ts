@@ -7,7 +7,11 @@ import {
   isProfitable,
   revertRiskPenalty,
 } from "../src/profit/compute.ts";
-import { gasCostInStartTokenUnits } from "../src/routing/score_route.ts";
+import {
+  estimateGasCostWei,
+  gasCostInStartTokenUnits,
+  scoreRoute,
+} from "../src/routing/score_route.ts";
 
 const routeResult = {
   amountIn: 1_000_000n,
@@ -79,6 +83,12 @@ const routeResult = {
 }
 
 assert.equal(gasCostInTokenUnits(10n, 3n), 4n);
+assert.equal(estimateGasCostWei(Number.MAX_SAFE_INTEGER + 1, 1n), null);
+assert.equal(
+  scoreRoute({ hopCount: 0, edges: [] }, routeResult, { gasPriceWei: 1n }),
+  null,
+  "route scoring should reject impossible zero-hop profitable results",
+);
 assert.throws(() => gasCostInTokenUnits(10n, 0n), /tokenToMaticRate must be > 0/);
 assert.throws(() => applySlippage(100n, -1n), /slippageBps/);
 assert.throws(() => applySlippage(-1n, 0n), /amountOut/);

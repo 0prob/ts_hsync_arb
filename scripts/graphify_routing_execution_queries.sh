@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_PATH="${1:-src}"
+FOCUS_PATH="${1:-src}"
+UPDATE_PATH="${GRAPHIFY_UPDATE_PATH:-.}"
 
 cd "$ROOT_DIR"
 
@@ -11,7 +12,7 @@ run() {
   "$@"
 }
 
-run graphify update "$TARGET_PATH"
+run graphify update "$UPDATE_PATH"
 
 # Routing and execution: highest-signal questions first.
 run graphify query "Trace the routing and execution hot path from discoverPools through normalizePoolState, buildGraph and buildHubGraph, enumerateCyclesDual, evaluatePathsParallel, scoreRoute and computeProfit, buildArbTx, recommendGasParams, and sendTx. Highlight state handoffs, rejection points, and irreversible decisions."

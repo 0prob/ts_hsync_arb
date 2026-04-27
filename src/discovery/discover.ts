@@ -68,6 +68,11 @@ function discoveryCheckpointFromNextBlock(nextBlock: number | null, fallbackFrom
   return Math.max(0, fallbackFromBlock - 1);
 }
 
+function discoverySignatures(protocol: Pick<ProtocolDefinition, "signature"> & { signatures?: string[] }) {
+  if (protocol.signatures?.length) return protocol.signatures;
+  return protocol.signature ? [protocol.signature] : [];
+}
+
 export function protocolDiscoveryStartBlock(protocol: Pick<ProtocolDefinition, "startBlock"> | null | undefined) {
   const startBlock = Number(protocol?.startBlock);
   if (Number.isSafeInteger(startBlock) && startBlock >= 0) {
@@ -178,11 +183,10 @@ export function decodeDiscoveryLogs(
 }
 
 function getDiscoveryQuerySpec(protocol: DiscoveryProtocol) {
-  const signatures = protocol.signatures?.length
-    ? protocol.signatures
-    : protocol.signature
-      ? [protocol.signature]
-      : [];
+  const signatures = discoverySignatures(protocol);
+  if (signatures.length === 0) {
+    throw new Error(`${protocol.name} has no discovery event signature or custom discover() implementation.`);
+  }
   const cacheKey = `${protocol.address.toLowerCase()}:${signatures.join("|")}`;
   const cached = discoveryQuerySpecCache.get(cacheKey);
   if (cached) return cached;
@@ -212,7 +216,7 @@ export function buildDiscoveryScanQuery(protocol: DiscoveryProtocol, fromBlock: 
   });
 }
 
-async function enrichDiscoveredPools(protocol: DiscoveryProtocol, extractedPools: DiscoveredPoolCandidate[]) {
+export async function enrichDiscoveredPools(protocol: DiscoveryProtocol, extractedPools: DiscoveredPoolCandidate[]) {
   if (!protocol.enrichTokens) return;
 
   const needsEnrichment = extractedPools.filter((p) => p.extracted.tokens.length === 0);
@@ -224,7 +228,16 @@ async function enrichDiscoveredPools(protocol: DiscoveryProtocol, extractedPools
 
   const enrichedTokens = await throttledMap(
     needsEnrichment,
-    (item) => protocol.enrichTokens!(item.extracted),
+    async (item) => {
+      try {
+        return await protocol.enrichTokens!(item.extracted);
+      } catch (error: any) {
+        console.warn(
+          `  [discover] Token enrichment failed for ${item.extracted.pool_address ?? "unknown pool"}: ${error.message}`
+        );
+        return [];
+      }
+    },
     ENRICH_CONCURRENCY
   );
 
@@ -412,9 +425,11 @@ async function discoverCurveRemovals(registry: RegistryService, context: { chain
   return { removed, checkpointBlock, rollbackGuard };
 }
 
-function protocolSupportsDiscovery(protocol: DiscoveryProtocol) {
+export function protocolSupportsDiscovery(protocol: DiscoveryProtocol) {
   if (protocol.capabilities?.discovery === false) return false;
-  return protocol.capabilities?.execution !== false;
+  if (protocol.capabilities?.execution === false) return false;
+  if (typeof protocol.discover === "function") return true;
+  return typeof protocol.decode === "function" && discoverySignatures(protocol).length > 0;
 }
 
 type DiscoverPoolsDeps = {

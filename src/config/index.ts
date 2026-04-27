@@ -129,6 +129,41 @@ export const HYPERSYNC_URL =
 
 export const ENVIO_API_TOKEN = process.env.ENVIO_API_TOKEN || "";
 
+/** Native HyperSync HTTP timeout in milliseconds. */
+export const HYPERSYNC_HTTP_REQ_TIMEOUT_MS = _num(
+  "HYPERSYNC_HTTP_REQ_TIMEOUT_MS",
+  "HYPERSYNC_HTTP_REQ_TIMEOUT_MS",
+  30_000,
+);
+
+/** Native HyperSync request retry count. */
+export const HYPERSYNC_MAX_RETRIES = _num(
+  "HYPERSYNC_MAX_RETRIES",
+  "HYPERSYNC_MAX_RETRIES",
+  12,
+);
+
+/** Native HyperSync retry backoff increment in milliseconds. */
+export const HYPERSYNC_RETRY_BACKOFF_MS = _num(
+  "HYPERSYNC_RETRY_BACKOFF_MS",
+  "HYPERSYNC_RETRY_BACKOFF_MS",
+  500,
+);
+
+/** Native HyperSync initial retry delay in milliseconds. */
+export const HYPERSYNC_RETRY_BASE_MS = _num(
+  "HYPERSYNC_RETRY_BASE_MS",
+  "HYPERSYNC_RETRY_BASE_MS",
+  200,
+);
+
+/** Native HyperSync retry delay ceiling in milliseconds. */
+export const HYPERSYNC_RETRY_CEILING_MS = _num(
+  "HYPERSYNC_RETRY_CEILING_MS",
+  "HYPERSYNC_RETRY_CEILING_MS",
+  5_000,
+);
+
 // HyperRPC JSON-RPC endpoint — used exclusively for multicall token metadata
 // hydration so batch reads don't compete with hot-path RPC scoring.
 // Hosted *.rpc.hypersync.xyz endpoints automatically inherit ENVIO_API_TOKEN.

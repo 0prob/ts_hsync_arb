@@ -29,6 +29,23 @@ assert.notEqual(signature, __tuiTest.signatureFor({ ...state, passCount: 13 }, 1
 assert.notEqual(signature, __tuiTest.signatureFor({ ...state, lastArbMs: state.lastArbMs + 1000 }, 100));
 assert.notEqual(signature, __tuiTest.signatureFor(state, 101));
 
+const longVisiblePrefix = "0x" + "a".repeat(120);
+const hiddenTailA: BotState = {
+  ...state,
+  opportunities: [{ Route: `${longVisiblePrefix}A`, Profit: "1.000000 USDC", ROI: "1.00%" }],
+  logs: [`[INFO] ${longVisiblePrefix}A`],
+};
+const hiddenTailB: BotState = {
+  ...hiddenTailA,
+  opportunities: [{ Route: `${longVisiblePrefix}B`, Profit: "1.000000 USDC", ROI: "1.00%" }],
+  logs: [`[INFO] ${longVisiblePrefix}B`],
+};
+assert.equal(
+  __tuiTest.signatureFor(hiddenTailA, 80),
+  __tuiTest.signatureFor(hiddenTailB, 80),
+  "signature should not redraw when only hidden text tails change",
+);
+
 const narrowFrame = __tuiTest.renderFrame(state, 60, "-");
 const visibleLines = narrowFrame
   .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
@@ -73,5 +90,20 @@ guard.restore();
 assert.equal(fakeStream.write("after restore"), true);
 assert.deepEqual(writes, ["tui frame", "after restore"], "restore should put the original writer back");
 assert.equal(guardedState.logs[0], "[STDOUT] partial", "restore should flush partial captured output");
+
+const longLineState: BotState = { ...state, logs: [] };
+const longLineWrites: string[] = [];
+const longLineStream = {
+  write(chunk: unknown) {
+    longLineWrites.push(String(chunk));
+    return true;
+  },
+};
+const longLineGuard = __tuiTest.installOutputGuard(longLineState, [{ label: "stderr", stream: longLineStream }]);
+longLineStream.write(`${"x".repeat(2_000)}\n`);
+longLineGuard.restore();
+assert.equal(longLineWrites.length, 0, "guard should capture long external lines");
+assert.ok(longLineState.logs[0].startsWith("[STDERR] "), "captured stderr should keep its source label");
+assert.ok(longLineState.logs[0].length < 700, "captured external lines should be bounded");
 
 console.log("TUI checks passed.");

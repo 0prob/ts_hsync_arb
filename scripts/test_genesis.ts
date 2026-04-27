@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  protocolSupportsDiscovery,
   protocolDiscoveryStartBlock,
   resolveDiscoveryFromBlock,
 } from "../src/discovery/discover.ts";
@@ -64,6 +65,29 @@ function isActiveLogDiscoveryProtocol(protocol: any) {
     resumed: false,
     shouldBackfillEmptyProtocol: false,
   });
+}
+
+{
+  assert.equal(
+    protocolSupportsDiscovery({
+      name: "Custom Listed Protocol",
+      address: "0x0000000000000000000000000000000000000001",
+      capabilities: { discovery: true, routing: true, execution: true },
+      discover: async () => ({ discovered: 0 }),
+    } as any),
+    true,
+    "custom discover() protocols should not need log signatures",
+  );
+  assert.equal(
+    protocolSupportsDiscovery({
+      name: "Malformed Log Protocol",
+      address: "0x0000000000000000000000000000000000000002",
+      capabilities: { discovery: true, routing: true, execution: true },
+      decode: () => ({ pool_address: undefined, tokens: [], metadata: {} }),
+    } as any),
+    false,
+    "log discovery protocols without signatures should be skipped before building broad event queries",
+  );
 }
 
 console.log("Genesis discovery policy checks passed.");

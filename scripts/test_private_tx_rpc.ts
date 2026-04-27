@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { keccak256 } from "viem";
 import { jsonRpc, racePublicRPCs, sendPrivateTx } from "../src/execution/private_tx.ts";
 
 type FetchHandler = (url: string, init: RequestInit) => Promise<Response>;
@@ -80,6 +81,34 @@ async function testRacePublicRpcsUsesFirstSuccess() {
   );
 }
 
+async function testRacePublicRpcsTreatsAlreadyKnownAsSubmitted() {
+  const rawTx = "0x1234";
+  await withMockFetch(
+    async () => jsonResponse({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "already known" } }),
+    async () => {
+      const hash = await racePublicRPCs(rawTx, ["https://a.example", "https://b.example"]);
+      assert.equal(hash, keccak256(rawTx));
+    },
+  );
+}
+
+async function testSendPrivateTxTreatsPublicAlreadyKnownAsSubmitted() {
+  const rawTx = "0x1234";
+  await withMockFetch(
+    async () => jsonResponse({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "already known" } }),
+    async () => {
+      const result = await sendPrivateTx(rawTx, {
+        publicRpcs: ["https://a.example", "https://b.example"],
+        requestTimeoutMs: 10,
+      });
+
+      assert.equal(result.submitted, true);
+      assert.equal(result.txHash, keccak256(rawTx));
+      assert.equal(result.method, "public_race");
+    },
+  );
+}
+
 async function testSendPrivateTxReportsAllPublicFailures() {
   await withMockFetch(
     async (url) => jsonResponse({
@@ -105,6 +134,8 @@ await testJsonRpcThrowsJsonRpcErrors();
 await testJsonRpcRejectsInvalidJson();
 await testJsonRpcTimesOut();
 await testRacePublicRpcsUsesFirstSuccess();
+await testRacePublicRpcsTreatsAlreadyKnownAsSubmitted();
+await testSendPrivateTxTreatsPublicAlreadyKnownAsSubmitted();
 await testSendPrivateTxReportsAllPublicFailures();
 
 console.log("test_private_tx_rpc: ok");

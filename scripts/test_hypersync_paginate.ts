@@ -131,4 +131,33 @@ assert.deepEqual(
   },
 );
 
+{
+  const seenFromBlocks: number[] = [];
+  const progress: any[] = [];
+  const result = await fetchAllLogsWithClient(
+    {
+      async get(query: any) {
+        seenFromBlocks.push(Number(query.fromBlock));
+        return {
+          archiveHeight: 1_000,
+          rollbackGuard: { first_block_number: 300, first_parent_hash: "0xabc" },
+          nextBlock: 450,
+          data: { logs: [{ blockNumber: 320 }] },
+        };
+      },
+    },
+    { ...baseQuery, fromBlock: 300, toBlock: 350 },
+    { onProgress: (entry) => progress.push(entry) },
+  );
+
+  assert.deepEqual(seenFromBlocks, [300]);
+  assert.equal(result.nextBlock, 350);
+  assert.equal(result.pages, 1);
+  assert.deepEqual(
+    progress.map((entry) => entry.nextBlock),
+    [350],
+    "bounded pagination progress should clamp overshooting nextBlock cursors to the exclusive toBlock target",
+  );
+}
+
 console.log("HyperSync pagination checks passed.");

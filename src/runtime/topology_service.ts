@@ -1,7 +1,7 @@
 import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 import { createTopologyCache } from "../arb/topology_cache.ts";
 import type { ArbPathLike } from "../arb/assessment.ts";
-import { getPoolTokens } from "../util/pool_record.ts";
+import { getPoolTokens, normalizeEvmAddress } from "../util/pool_record.ts";
 import type { RouteCache } from "../routing/route_cache.ts";
 import type { RoutingGraph } from "../routing/graph.ts";
 import { takeTopNBy } from "../util/bounded_priority.ts";
@@ -26,7 +26,7 @@ type SwapEdge = {
     reserve1?: bigint;
   };
 };
-type RoutingGraphLike = Pick<RoutingGraph, "hasToken" | "getEdges" | "addPool" | "removePool" | "getPoolEdge"> & {
+type RoutingGraphLike = Pick<RoutingGraph, "hasToken" | "getEdges" | "addPool" | "upsertPool" | "removePool" | "getPoolEdge"> & {
   _edgesByPool: Map<string, SwapEdge[]>;
 };
 type SerializedTopology = Record<string, Array<Record<string, unknown>>>;
@@ -143,14 +143,18 @@ export function createTopologyService(deps: TopologyServiceDeps) {
   function markPoolsDirty(poolAddresses: Iterable<string>) {
     let requiresFullRefresh = false;
     for (const rawAddr of poolAddresses) {
-      const addr = rawAddr.toLowerCase();
+      const addr = normalizeEvmAddress(rawAddr);
+      if (!addr) {
+        requiresFullRefresh = true;
+        continue;
+      }
       dirtyPoolAddresses.add(addr);
       const pool = deps.registry.getPoolMeta(addr);
       if (!pool) {
         requiresFullRefresh = true;
         continue;
       }
-      const tokens = getPoolTokens(pool);
+      const tokens = getPoolRoutingTokens(pool);
       const touchedHubTokens = tokens.filter((token) => deps.polygonHubTokens.has(token));
       if (touchedHubTokens.length === 0) {
         requiresFullRefresh = true;
@@ -184,7 +188,8 @@ export function createTopologyService(deps: TopologyServiceDeps) {
   function getRoutablePools(pools: PoolRecord[]) {
     const routable: PoolRecord[] = [];
     for (const pool of pools) {
-      const addr = pool.pool_address.toLowerCase();
+      const addr = normalizeEvmAddress(pool.pool_address);
+      if (!addr) continue;
       if (deps.validatePoolState(deps.stateCache.get(addr)).valid) {
         routable.push(pool);
       }
@@ -193,9 +198,29 @@ export function createTopologyService(deps: TopologyServiceDeps) {
   }
 
   function poolTouchesHubTokens(pool: PoolRecord, hubTokens: Set<string> = deps.hub4Tokens) {
-    const tokens = getPoolTokens(pool);
+    const tokens = getPoolRoutingTokens(pool);
     if (tokens.length < 2) return false;
     return tokens.some((token) => hubTokens.has(token));
+  }
+
+  function getPoolRoutingTokens(pool: PoolRecord): string[] {
+    const addr = normalizeEvmAddress(pool.pool_address);
+    const stateTokens = addr && Array.isArray(deps.stateCache.get(addr)?.tokens)
+      ? deps.stateCache.get(addr)!.tokens
+      : null;
+    if (stateTokens) {
+      const normalized: string[] = [
+        ...new Set<string>(
+          stateTokens
+            .map((token: unknown) => normalizeEvmAddress(token))
+            .filter((token: string | null): token is string => token != null),
+        ),
+      ];
+      if (normalized.length >= 2) return normalized;
+    }
+    return getPoolTokens(pool)
+      .map((token) => normalizeEvmAddress(token))
+      .filter((token): token is string => token != null);
   }
 
   function invalidate(reason?: string) {
@@ -213,24 +238,36 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     if (!fullGraph || !hubGraph || !poolAddresses || poolAddresses.size === 0) return 0;
 
     let admitted = 0;
-    for (const addr of poolAddresses) {
-      if (fullGraph._edgesByPool.has(addr)) continue;
+    let changed = 0;
+    const changedPools = new Set<string>();
+    for (const rawAddr of poolAddresses) {
+      const addr = normalizeEvmAddress(rawAddr);
+      if (!addr) continue;
 
       const pool = deps.registry.getPoolMeta(addr);
       if (!pool || pool.status !== "active") continue;
 
-      fullGraph.addPool(pool, deps.stateCache);
-      if (fullGraph._edgesByPool.has(addr)) {
+      const fullResult = fullGraph.upsertPool(pool, deps.stateCache);
+      const hubEligible = poolTouchesHubTokens(pool);
+      const hubResult = hubEligible
+        ? hubGraph.upsertPool(pool, deps.stateCache)
+        : hubGraph.removePool(addr) > 0
+          ? "removed"
+          : "skipped";
+
+      if (fullResult === "added") {
         admitted++;
-        if (poolTouchesHubTokens(pool)) {
-          hubGraph.addPool(pool, deps.stateCache);
-        }
+      }
+      if (fullResult === "added" || fullResult === "updated" || fullResult === "removed" ||
+          hubResult === "added" || hubResult === "updated" || hubResult === "removed") {
+        changed++;
+        changedPools.add(addr);
       }
     }
 
-    if (admitted > 0) {
-      markPoolsDirty(poolAddresses);
-      invalidate("new_pools_admitted");
+    if (changed > 0) {
+      markPoolsDirty(changedPools);
+      invalidate(admitted > 0 ? "new_pools_admitted" : "pool_topology_updated");
     }
     return admitted;
   }

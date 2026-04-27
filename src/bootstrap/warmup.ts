@@ -1,5 +1,6 @@
 import { takeTopNBy } from "../util/bounded_priority.ts";
 import { metadataWithRegistryTokenDecimals } from "../state/pool_metadata.ts";
+import { normalizeV2State, normalizeV3State } from "../state/normalizer.ts";
 import {
   BALANCER_PROTOCOLS,
   CURVE_PROTOCOLS,
@@ -23,12 +24,14 @@ type WarmupStats = {
   scheduled: number;
   fetched: number;
   normalized: number;
+  observedUnroutable: number;
   disabled: number;
   failed: number;
   protocols: Record<string, {
     scheduled: number;
     fetched: number;
     normalized: number;
+    observedUnroutable: number;
     disabled: number;
     failed: number;
   }>;
@@ -100,7 +103,7 @@ const WARMUP_DODO = DODO_PROTOCOLS;
 const WARMUP_WOOFI = WOOFI_PROTOCOLS;
 const SUPPORTED_WARMUP_PROTOCOLS = new Set([...WARMUP_V2, ...WARMUP_V3, ...WARMUP_BAL, ...WARMUP_CRV, ...WARMUP_DODO, ...WARMUP_WOOFI]);
 const WARMUP_PROGRESS_LOG_EVERY = 25;
-const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled: 0, failed: 0 };
+const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, observedUnroutable: 0, disabled: 0, failed: 0 };
 
 export function isSupportedWarmupProtocol(protocol: string | null | undefined) {
   return SUPPORTED_WARMUP_PROTOCOLS.has(normalizeProtocolKey(protocol));
@@ -145,6 +148,7 @@ export function createWarmupManager(deps: WarmupDeps) {
       scheduled: stats.scheduled,
       fetched: stats.fetched,
       normalized: stats.normalized,
+      observedUnroutable: stats.observedUnroutable,
       disabled: stats.disabled,
       failed: stats.failed,
       remaining: Math.max(0, stats.scheduled - (stats.normalized + stats.disabled + stats.failed)),
@@ -155,6 +159,7 @@ export function createWarmupManager(deps: WarmupDeps) {
             scheduled: protocol.scheduled,
             fetched: protocol.fetched,
             normalized: protocol.normalized,
+            observedUnroutable: protocol.observedUnroutable,
             disabled: protocol.disabled,
             failed: protocol.failed,
             remaining: Math.max(0, protocol.scheduled - (protocol.normalized + protocol.disabled + protocol.failed)),
@@ -198,6 +203,7 @@ export function createWarmupManager(deps: WarmupDeps) {
       scheduled: pools.length,
       fetched: 0,
       normalized: 0,
+      observedUnroutable: 0,
       disabled: 0,
       failed: 0,
       protocols: Object.fromEntries(
@@ -212,6 +218,83 @@ export function createWarmupManager(deps: WarmupDeps) {
   function persistWarmupBatch(states: Array<{ pool_address: string; block: number; data: object }>, persistBlock: number | null) {
     if (persistBlock == null || states.length === 0) return;
     deps.getRegistry()?.batchUpdateStates(states);
+  }
+
+  function hasWarmupTimestamp(state: unknown) {
+    if (!state || typeof state !== "object") return false;
+    const timestamp = Number((state as { timestamp?: unknown }).timestamp);
+    return Number.isFinite(timestamp) && timestamp > 0;
+  }
+
+  function hasBigIntLikeValue(value: unknown) {
+    if (value == null) return false;
+    try {
+      BigInt(value as any);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function hasObservedReservePair(state: any, left: string, right: string) {
+    return hasBigIntLikeValue(state?.[left]) && hasBigIntLikeValue(state?.[right]);
+  }
+
+  function hasObservedBalances(state: any) {
+    return Array.isArray(state?.balances) && Array.isArray(state?.tokens) && state.balances.length === state.tokens.length;
+  }
+
+  function isObservedUnroutableWarmupState(state: unknown, verdict?: { valid: boolean; reason?: string }) {
+    if (!hasWarmupTimestamp(state)) return false;
+    const stateObject = state as any;
+    const validation = verdict ?? deps.validatePoolState(stateObject);
+    if (validation.valid) return false;
+
+    switch (validation.reason) {
+      case "V2: zero reserves":
+        return hasObservedReservePair(stateObject, "reserve0", "reserve1");
+      case "V3: not initialized":
+        return stateObject.initialized === false && hasBigIntLikeValue(stateObject.sqrtPriceX96);
+      case "V3: zero liquidity":
+        return hasBigIntLikeValue(stateObject.sqrtPriceX96) && hasBigIntLikeValue(stateObject.liquidity);
+      case "Curve: zero balance":
+      case "Balancer: zero balance":
+        return hasObservedBalances(stateObject);
+      case "DODO: zero reserves":
+        return hasObservedReservePair(stateObject, "baseReserve", "quoteReserve");
+      case "DODO: zero targets":
+        return hasObservedReservePair(stateObject, "baseTarget", "quoteTarget");
+      case "WOOFi: zero balance":
+        return hasObservedBalances(stateObject);
+      default:
+        return false;
+    }
+  }
+
+  function normalizeFetchedWarmupState(pool: PoolRecord, raw: unknown) {
+    if (!raw) return null;
+    const addr = pool.pool_address.toLowerCase();
+    const tokens = deps.getPoolTokens(pool);
+    if (!tokens.length) return null;
+    const protocol = normalizeProtocolKey(pool.protocol);
+    const metadata = getPoolMetadataWithDecimals(pool, tokens);
+
+    if (WARMUP_V2.has(protocol) || WARMUP_V3.has(protocol)) {
+      try {
+        const snapshot = WARMUP_V2.has(protocol)
+          ? normalizeV2State(addr, protocol, tokens, raw, metadata)
+          : normalizeV3State(addr, protocol, tokens, raw, metadata);
+        const verdict = deps.validatePoolState(snapshot);
+        if (verdict.valid || isObservedUnroutableWarmupState(snapshot, verdict)) {
+          return snapshot;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }
+
+    return deps.normalizePoolState(addr, protocol, tokens, raw, metadata);
   }
 
   function disableWarmupNoDataPools(
@@ -265,6 +348,11 @@ export function createWarmupManager(deps: WarmupDeps) {
       if (persistBlock != null) {
         persisted.push({ pool_address: result.addr, block: persistBlock, data: result.normalized });
       }
+      const verdict = deps.validatePoolState(result.normalized);
+      if (!verdict.valid && isObservedUnroutableWarmupState(result.normalized, verdict)) {
+        groupStats.observedUnroutable++;
+        stats.observedUnroutable++;
+      }
       groupStats.fetched++;
       groupStats.normalized++;
       stats.fetched++;
@@ -301,6 +389,7 @@ export function createWarmupManager(deps: WarmupDeps) {
         scheduled: 0,
         fetched: 0,
         normalized: 0,
+        observedUnroutable: 0,
         disabled: 0,
         failed: 0,
         protocols: {},
@@ -325,6 +414,7 @@ export function createWarmupManager(deps: WarmupDeps) {
         scheduled: 0,
         fetched: 0,
         normalized: 0,
+        observedUnroutable: 0,
         disabled: 0,
         failed: 0,
         protocols: {},
@@ -343,11 +433,10 @@ export function createWarmupManager(deps: WarmupDeps) {
           return group.map((pool) => {
             const addr = pool.pool_address.toLowerCase();
             const raw = statesMap.get(addr);
-            const tokens = deps.getPoolTokens(pool);
             return {
               addr,
               raw,
-              normalized: raw && tokens.length ? deps.normalizePoolState(addr, normalizeProtocolKey(pool.protocol), tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
+              normalized: normalizeFetchedWarmupState(pool, raw),
               noDataFailures: statesMap?.noDataFailures,
             };
           });
@@ -378,9 +467,7 @@ export function createWarmupManager(deps: WarmupDeps) {
             const normalizedAddr = addr.toLowerCase();
             const pool = poolByAddress.get(normalizedAddr);
             if (!pool) return;
-            const tokens = deps.getPoolTokens(pool);
-            if (!tokens.length) return;
-            const normalized = deps.normalizePoolState(normalizedAddr, normalizeProtocolKey(pool.protocol), tokens, rawState, getPoolMetadataWithDecimals(pool, tokens));
+            const normalized = normalizeFetchedWarmupState(pool, rawState);
             if (!normalized) return;
             deps.stateCache.set(normalizedAddr, normalized);
             if (persistBlock != null) {
@@ -452,11 +539,10 @@ export function createWarmupManager(deps: WarmupDeps) {
           return group.map((pool) => {
             const addr = pool.pool_address.toLowerCase();
             const raw = statesMap.get(addr);
-            const tokens = deps.getPoolTokens(pool);
             return {
               addr,
               raw,
-              normalized: raw && tokens.length ? deps.normalizePoolState(addr, normalizeProtocolKey(pool.protocol), tokens, raw, getPoolMetadataWithDecimals(pool, tokens)) : null,
+              normalized: normalizeFetchedWarmupState(pool, raw),
               noDataFailures: statesMap?.noDataFailures,
             };
           });
@@ -678,7 +764,18 @@ export function createWarmupManager(deps: WarmupDeps) {
 
   async function warmupStateCache() {
     const activePools = deps.getRegistry()?.getActivePoolsMeta() ?? [];
-    const needsState = activePools.filter((p: PoolRecord) => !deps.validatePoolState(deps.stateCache.get(p.pool_address.toLowerCase())).valid);
+    const needsState: PoolRecord[] = [];
+    let observedUnroutablePools = 0;
+    for (const pool of activePools) {
+      const state = deps.stateCache.get(pool.pool_address.toLowerCase());
+      const verdict = deps.validatePoolState(state);
+      if (verdict.valid) continue;
+      if (isObservedUnroutableWarmupState(state, verdict)) {
+        observedUnroutablePools++;
+        continue;
+      }
+      needsState.push(pool);
+    }
     const supportedNeedsState = needsState.filter((pool: PoolRecord) => supportsWarmupProtocol(pool));
     const unsupportedHubAdjacentPools = needsState.filter((pool: PoolRecord) =>
       !supportsWarmupProtocol(pool) && poolTouchesAnyHub(pool, deps.polygonHubTokens)
@@ -687,7 +784,10 @@ export function createWarmupManager(deps: WarmupDeps) {
     if (needsState.length === 0) {
       deps.log("State cache already warm — skipping warmup.", "info", {
         event: "warmup_skip",
-        reason: "state_cache_already_warm",
+        reason: observedUnroutablePools > 0
+          ? "state_cache_warm_or_observed_unroutable"
+          : "state_cache_already_warm",
+        observedUnroutablePools,
       });
       return;
     }
@@ -705,6 +805,7 @@ export function createWarmupManager(deps: WarmupDeps) {
         needsState: needsState.length,
         supportedNeedsState: supportedNeedsState.length,
         unsupportedHubAdjacentPools: unsupportedHubAdjacentPools.length,
+        observedUnroutablePools,
       });
       return;
     }
@@ -759,6 +860,7 @@ export function createWarmupManager(deps: WarmupDeps) {
       needsState: needsState.length,
       supportedNeedsState: supportedNeedsState.length,
       unsupportedHubAdjacentPools: unsupportedHubAdjacentPools.length,
+      observedUnroutablePools,
       hubPairPools: hubPairPools.length,
       oneHubPools: oneHubPools.length,
       syncWarmupPools: syncWarmupPools.length,
@@ -789,6 +891,7 @@ export function createWarmupManager(deps: WarmupDeps) {
       event: "warmup_complete",
       supportedNeedsState: supportedNeedsState.length,
       unsupportedHubAdjacentPools: unsupportedHubAdjacentPools.length,
+      observedUnroutablePools,
       hubPairPools: hubPairPools.length,
       oneHubPools: oneHubPools.length,
       syncWarmupPools: syncWarmupPools.length,

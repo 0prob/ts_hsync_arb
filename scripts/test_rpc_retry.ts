@@ -9,6 +9,7 @@ function fakeEndpoint(url: string) {
     consecutiveErrors: 0,
     rateLimitedUntil: 0,
     errorCooldownUntil: 0,
+    methodUnavailableUntil: new Map<string, number>(),
     inFlight: 0,
     client: {},
     isRateLimited() {
@@ -17,8 +18,17 @@ function fakeEndpoint(url: string) {
     isCoolingDown() {
       return Date.now() < this.errorCooldownUntil;
     },
+    isMethodUnavailable(method: string) {
+      const until = this.methodUnavailableUntil.get(method) ?? 0;
+      if (Date.now() < until) return true;
+      if (until > 0) this.methodUnavailableUntil.delete(method);
+      return false;
+    },
     markRateLimited() {
       this.rateLimitedUntil = Date.now() + 86_400_000;
+    },
+    markMethodUnavailable(method: string) {
+      this.methodUnavailableUntil.set(method, Date.now() + 86_400_000);
     },
     markError() {
       this.errorCooldownUntil = Date.now() + 5_000;
@@ -185,6 +195,80 @@ async function testCapabilityFailureFailsAfterEachEndpointOnce() {
   });
 }
 
+async function testCapabilityCooldownIsScopedToMethod() {
+  await withFakeEndpoints(async () => {
+    const attemptedUnsupported: string[] = [];
+
+    await assert.rejects(
+      () => executeWithRpcRetry((_client: any, endpoint: any) => {
+        attemptedUnsupported.push(endpoint.url);
+        throw new Error("method not available");
+      }, { method: "eth_feeHistory", retries: 0 }),
+      /unsupported by all configured endpoints \(2\) for eth_feeHistory.*method not available/,
+    );
+
+    assert.deepEqual(attemptedUnsupported.sort(), ["https://a.example", "https://b.example"]);
+    for (const endpoint of rpcManager.endpoints as any[]) {
+      assert.equal(endpoint.rateLimitedUntil, 0);
+      assert.equal(endpoint.isMethodUnavailable("eth_feeHistory"), true);
+      assert.equal(endpoint.isMethodUnavailable("eth_blockNumber"), false);
+    }
+
+    const attemptedBlockNumber: string[] = [];
+    const result = await executeWithRpcRetry((_client: any, endpoint: any) => {
+      attemptedBlockNumber.push(endpoint.url);
+      return "ok";
+    }, { method: "eth_blockNumber", retries: 0 });
+
+    assert.equal(result, "ok");
+    assert.equal(attemptedBlockNumber.length, 1);
+  });
+}
+
+async function testCachedMethodUnsupportedFailsFastWithoutRpcAttempt() {
+  await withFakeEndpoints(async () => {
+    for (const endpoint of rpcManager.endpoints as any[]) {
+      endpoint.markMethodUnavailable("eth_feeHistory");
+    }
+
+    let attempted = 0;
+    const startedAt = Date.now();
+    await assert.rejects(
+      () => executeWithRpcRetry(() => {
+        attempted++;
+        return "unexpected";
+      }, { method: "eth_feeHistory", retries: 10 }),
+      /unsupported by all configured endpoints \(2\) for eth_feeHistory/,
+    );
+
+    assert.equal(attempted, 0);
+    assert.ok(Date.now() - startedAt < 250, "cached unsupported methods should fail without waiting for cooldown");
+  });
+}
+
+async function testBestEndpointSkipsMethodUnavailableEndpointOnlyForThatMethod() {
+  await withFakeEndpoints(async () => {
+    const [fast, slower] = rpcManager.endpoints as any[];
+    fast.latencyMs = 25;
+    slower.latencyMs = 400;
+    fast.markMethodUnavailable("eth_call");
+
+    const callEndpoint = rpcManager.checkoutBestEndpoint("eth_call");
+    try {
+      assert.equal(callEndpoint.url, "https://b.example");
+    } finally {
+      rpcManager.releaseEndpoint(callEndpoint.url);
+    }
+
+    const blockEndpoint = rpcManager.checkoutBestEndpoint("eth_blockNumber");
+    try {
+      assert.equal(blockEndpoint.url, "https://a.example");
+    } finally {
+      rpcManager.releaseEndpoint(blockEndpoint.url);
+    }
+  });
+}
+
 async function testWaitsForCooldownBeforeRetrying() {
   await withFakeEndpoints(async () => {
     const originalRandom = Math.random;
@@ -288,6 +372,9 @@ async function testSuccessfulRetryClearsEndpointRateLimitState() {
 
 await testCapabilityFailureFailsAfterEachEndpointOnce();
 await testCapabilityFailureTriesEveryEndpointEvenWithLowRetryBudget();
+await testCapabilityCooldownIsScopedToMethod();
+await testCachedMethodUnsupportedFailsFastWithoutRpcAttempt();
+await testBestEndpointSkipsMethodUnavailableEndpointOnlyForThatMethod();
 await testRetryableErrorsFailOverBeforeBackoffWhenEndpointHealthy();
 await testRetryBudgetAllowsRecoveryAfterEndpointSweep();
 await testEndpointSwitchingPrefersKnownFastEndpointOverUnprobedIdleEndpoint();

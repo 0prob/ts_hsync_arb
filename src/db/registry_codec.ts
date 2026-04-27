@@ -56,9 +56,15 @@ export function normalizeAddress(value: any) {
 
 function normalizeAddressList(values: any) {
   if (!Array.isArray(values)) return [];
-  return values
-    .map((value) => normalizeEvmAddress(value))
-    .filter((value): value is string => value != null);
+  const addresses: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const address = normalizeEvmAddress(value);
+    if (!address || seen.has(address)) continue;
+    seen.add(address);
+    addresses.push(address);
+  }
+  return addresses;
 }
 
 function tickEntriesFrom(value: any): Array<[unknown, any]> {

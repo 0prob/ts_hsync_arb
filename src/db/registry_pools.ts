@@ -13,7 +13,9 @@ import {
   stringifyWithBigInt,
 } from "./registry_codec.ts";
 import { normalizeEvmAddress, parsePoolMetadataValue, parsePoolTokensValue } from "../util/pool_record.ts";
-import { normalizeProtocolKey } from "../protocols/classification.ts";
+import { isBalancerProtocol, isV3Protocol, normalizeProtocolKey } from "../protocols/classification.ts";
+
+const POOL_STATUSES = new Set(["active", "disabled", "removed"]);
 
 function normalizeRequiredAddress(value: any, label: string) {
   const normalizedAddress = normalizeEvmAddress(value);
@@ -29,6 +31,24 @@ function assertPoolAddress(metadata: any) {
   normalizeRequiredAddress(metadata?.pool_address, `pool_address for protocol ${metadata?.protocol}`);
 }
 
+function normalizePoolStatus(value: any) {
+  const trimmed = value == null ? "" : String(value).trim();
+  const status = (trimmed || "active").toLowerCase();
+  if (!POOL_STATUSES.has(status)) {
+    throw new Error(`RegistryService: invalid pool status: ${value}`);
+  }
+  return status;
+}
+
+function normalizePoolBlock(value: any, label: string, fallback: number | null = null) {
+  if (value == null || value === "") return fallback;
+  const block = Number(value);
+  if (!Number.isSafeInteger(block) || block < 0) {
+    throw new Error(`RegistryService: invalid ${label}: ${value}`);
+  }
+  return block;
+}
+
 function normalizePoolUpsertRecord(pool: any) {
   assertPoolAddress(pool);
   const removedBlock = pool.removed_block ?? pool.removedBlock ?? null;
@@ -36,17 +56,20 @@ function normalizePoolUpsertRecord(pool: any) {
   if (!protocol) {
     throw new Error(`RegistryService: protocol is required for pool ${pool.pool_address}`);
   }
+  const status = normalizePoolStatus(pool.status);
+  const normalizedRemovedBlock = normalizePoolBlock(removedBlock, "removed_block", null);
   return {
     ...pool,
     pool_address: normalizeRequiredAddress(pool.pool_address, `pool_address for protocol ${protocol}`),
     protocol,
+    block: normalizePoolBlock(pool.block ?? pool.created_block ?? pool.createdBlock, "created block", 0),
     tokens: lowerCaseAddressList(
       Array.isArray(pool.tokens) ? pool.tokens : parsePoolTokensValue(pool.tokens),
     ),
     tx: pool.tx != null ? String(pool.tx) : "",
     metadata: parsePoolMetadataValue(pool.metadata),
-    status: pool.status || "active",
-    removed_block: removedBlock == null ? null : Number(removedBlock),
+    status,
+    removed_block: status === "removed" ? normalizedRemovedBlock : null,
   };
 }
 
@@ -523,6 +546,7 @@ export function detectLiquidityChange(recordLiquidityEventImpl: any, poolAddress
 export function validatePoolMetadata(pool: any) {
   const issues = [];
   const addr = pool.pool_address || pool.address;
+  const protocolKey = normalizeProtocolKey(pool.protocol);
 
   let tokens = pool.tokens;
   if (typeof tokens === "string") {
@@ -536,6 +560,7 @@ export function validatePoolMetadata(pool: any) {
     for (const t of tokens) {
       if (typeof t !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(t)) {
         issues.push(`${addr}: invalid token address: ${t}`);
+        continue;
       }
       if (seen.has(t.toLowerCase())) {
         issues.push(`${addr}: duplicate token ${t}`);
@@ -547,12 +572,13 @@ export function validatePoolMetadata(pool: any) {
   let meta = pool.metadata;
   meta = parsePoolMetadataValue(meta);
 
-  if (pool.protocol && pool.protocol.includes("V3")) {
+  const isAlgebraStyleV3 = protocolKey === "QUICKSWAP_V3" || meta.isAlgebra === true;
+  if (isV3Protocol(protocolKey) && !isAlgebraStyleV3) {
     if (meta.fee == null) issues.push(`${addr}: V3 pool missing fee`);
     if (meta.tickSpacing == null) issues.push(`${addr}: V3 pool missing tickSpacing`);
   }
 
-  if (pool.protocol && pool.protocol.includes("BALANCER")) {
+  if (isBalancerProtocol(protocolKey)) {
     if (!meta.poolId && !meta.pool_id) {
       issues.push(`${addr}: Balancer pool missing poolId`);
     }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { getV2AmountIn, getV2AmountOut } from "../src/math/uniswap_v2.ts";
-import { buildGraph } from "../src/routing/graph.ts";
+import { buildGraph, deserializeTopology, serializeTopology } from "../src/routing/graph.ts";
 import { edgeSpotLogWeight } from "../src/routing/finder.ts";
 import { simulateHop } from "../src/routing/simulator.ts";
 import { normalizePoolState, validatePoolState } from "../src/state/normalizer.ts";
@@ -114,6 +114,14 @@ const tokenB = "0x2222222222222222222222222222222222222222";
   assert.equal(edge.fee, 9970);
   assert.equal(edge.feeDenominator, 10000);
   assert.equal(edge.feeBps, 30);
+
+  const workerGraph = deserializeTopology(serializeTopology(graph));
+  const workerEdge = workerGraph.getPoolEdge(pool, tokenA, tokenB);
+  assert.equal(
+    edgeSpotLogWeight(workerEdge) !== null,
+    true,
+    "serialized worker topologies should retain enough state to rank and prune V2 routes",
+  );
 }
 
 {

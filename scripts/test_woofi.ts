@@ -16,6 +16,7 @@ const PRICE_DEC = 10n ** 8n;
 const pool = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const quote = "0x1111111111111111111111111111111111111111";
 const base = "0x2222222222222222222222222222222222222222";
+const base2 = "0x5555555555555555555555555555555555555555";
 const router = "0x4444444444444444444444444444444444444444";
 const executor = "0x3333333333333333333333333333333333333333";
 
@@ -86,6 +87,53 @@ assert.equal(normalized?.tokens[1], base);
   assert.equal(edge.protocolKind, "woofi");
   assert.equal(edge.feeBps, 3);
   assert.equal(simulateHop(edge, ONE, new Map()).amountOut, 1_999_400_000n);
+
+  const expanded = normalizePoolState(
+    pool,
+    "WOOFI",
+    [quote, base, base2],
+    {
+      quoteToken: quote,
+      quoteReserve: 1_000_000n * USDC_DEC,
+      quoteDecimals: 6,
+      quoteDec: USDC_DEC,
+      baseStates: [base, base2].map((token) => ({
+        token,
+        reserve: 1_000n * ONE,
+        feeRate: 30n,
+        maxGamma: ONE,
+        maxNotionalSwap: 10_000_000n * USDC_DEC,
+        price: 2_000n * PRICE_DEC,
+        spread: 0n,
+        coeff: 0n,
+        feasible: true,
+        baseDecimals: 18,
+        quoteDecimals: 6,
+        priceDecimals: 8,
+        baseDec: ONE,
+        quoteDec: USDC_DEC,
+        priceDec: PRICE_DEC,
+      })),
+      router,
+      fetchedAt: 2,
+    },
+    { router, quoteToken: quote },
+  );
+  assert.ok(expanded);
+
+  const upsertResult = graph.upsertPool({
+    pool_address: pool,
+    protocol: "WOOFI",
+    tokens: [quote, base],
+    metadata: { router },
+    status: "active",
+  }, new Map([[pool, expanded]]));
+
+  assert.equal(upsertResult, "updated");
+  assert.ok(
+    graph.getPoolEdge(pool, base2, quote),
+    "routing graph upsert should add new singleton protocol token edges when live state expands",
+  );
 }
 
 {

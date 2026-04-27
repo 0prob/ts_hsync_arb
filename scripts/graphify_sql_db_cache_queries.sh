@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_PATH="${1:-src}"
+FOCUS_PATH="${1:-src}"
+UPDATE_PATH="${GRAPHIFY_UPDATE_PATH:-.}"
 
 cd "$ROOT_DIR"
 
@@ -11,7 +12,7 @@ run() {
   "$@"
 }
 
-run graphify update "$TARGET_PATH"
+run graphify update "$UPDATE_PATH"
 
 # SQL / SQLite compatibility and transaction semantics.
 run graphify query "Trace the SQL and SQLite stack end to end across src/db/sqlite.ts, src/db/registry.ts, registry helper modules, and every caller that depends on transaction or prepared-statement behavior. Identify compatibility assumptions carried over from better-sqlite3, statement caching behavior, pragma choices, nested transaction semantics, savepoint correctness, and places where node:sqlite behavior could differ in subtle but production-relevant ways."

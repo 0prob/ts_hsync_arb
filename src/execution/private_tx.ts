@@ -7,7 +7,7 @@
  *   - Minimizes inclusion latency by firing to all endpoints simultaneously.
  */
 
-import { createWalletClient, http } from "viem";
+import { createWalletClient, http, keccak256 } from "viem";
 import { polygon } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -128,6 +128,19 @@ function summarizeSubmissionFailure(error: any) {
   return error?.message ?? String(error);
 }
 
+function isAlreadyKnownSubmission(error: any) {
+  const message = String(error?.shortMessage ?? error?.message ?? error ?? "").toLowerCase();
+  return (
+    message.includes("already known") ||
+    message.includes("already imported") ||
+    message.includes("known transaction")
+  );
+}
+
+function submittedRawTxHash(rawTx: any) {
+  return keccak256(String(rawTx) as `0x${string}`);
+}
+
 function polygonPrivateMempoolHeaders() {
   if (!POLYGON_PRIVATE_MEMPOOL_AUTH_HEADER || !POLYGON_PRIVATE_MEMPOOL_AUTH_TOKEN) {
     return {};
@@ -170,13 +183,19 @@ export async function sendPrivateTransaction(rawTx: any, rpcUrl: any, options: a
   const url = rpcUrl || PRIVATE_MEMPOOL_URL;
   if (!url) throw new Error("sendPrivateTransaction: no URL");
 
-  const response: any = await jsonRpc(
-    url,
-    "eth_sendPrivateTransaction",
-    [{ tx: rawTx }],
-    {},
-    { timeoutMs: options.timeoutMs },
-  );
+  let response: any;
+  try {
+    response = await jsonRpc(
+      url,
+      "eth_sendPrivateTransaction",
+      [{ tx: rawTx }],
+      {},
+      { timeoutMs: options.timeoutMs },
+    );
+  } catch (err) {
+    if (isAlreadyKnownSubmission(err)) return submittedRawTxHash(rawTx);
+    throw err;
+  }
   return response.result;
 }
 
@@ -190,13 +209,19 @@ export async function sendPolygonPrivateTransaction(rawTx: any, rpcUrl: any = PO
       ? [{ tx: rawTx }]
       : [rawTx];
 
-  const response: any = await jsonRpc(
-    url,
-    method,
-    params,
-    polygonPrivateMempoolHeaders(),
-    { timeoutMs: options.timeoutMs },
-  );
+  let response: any;
+  try {
+    response = await jsonRpc(
+      url,
+      method,
+      params,
+      polygonPrivateMempoolHeaders(),
+      { timeoutMs: options.timeoutMs },
+    );
+  } catch (err) {
+    if (isAlreadyKnownSubmission(err)) return submittedRawTxHash(rawTx);
+    throw err;
+  }
   return response.result;
 }
 
@@ -261,13 +286,19 @@ export async function racePublicRPCs(rawTx: any, rpcs: any, options: any = {}) {
   const targets = (rpcs && rpcs.length > 0) ? rpcs : FAST_PUBLIC_RPCS;
 
   const submissions = targets.map(async (url: any) => {
-    const response: any = await jsonRpc(
-      url,
-      "eth_sendRawTransaction",
-      [rawTx],
-      {},
-      { timeoutMs: options.timeoutMs },
-    );
+    let response: any;
+    try {
+      response = await jsonRpc(
+        url,
+        "eth_sendRawTransaction",
+        [rawTx],
+        {},
+        { timeoutMs: options.timeoutMs },
+      );
+    } catch (err) {
+      if (isAlreadyKnownSubmission(err)) return submittedRawTxHash(rawTx);
+      throw err;
+    }
     return response.result;
   });
 
@@ -321,6 +352,12 @@ export async function sendPrivateTx(rawTx: any, options: any = {}) {
       )
         .then((res: any) => {
           return { txHash: res.result, method: "eth_sendRawTransaction_private" };
+        })
+        .catch((err: any) => {
+          if (isAlreadyKnownSubmission(err)) {
+            return { txHash: submittedRawTxHash(rawTx), method: "eth_sendRawTransaction_private_known" };
+          }
+          throw err;
         })
     );
   }

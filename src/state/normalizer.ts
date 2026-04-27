@@ -39,7 +39,7 @@
  */
 
 import { defaultRates } from "../math/curve.ts";
-import { MIN_TICK, MAX_TICK } from "../math/tick_math.ts";
+import { MIN_TICK, MAX_TICK, MIN_SQRT_RATIO, MAX_SQRT_RATIO } from "../math/tick_math.ts";
 import {
   BALANCER_PROTOCOLS,
   CURVE_PROTOCOLS,
@@ -605,7 +605,11 @@ export function validatePoolState(state: any) {
       return { valid: false, reason: "V3: token count must be exactly 2" };
     if (!state.initialized)
       return { valid: false, reason: "V3: not initialized" };
-    if (!state.sqrtPriceX96 || state.sqrtPriceX96 === 0n)
+    if (
+      !state.sqrtPriceX96 ||
+      state.sqrtPriceX96 < MIN_SQRT_RATIO ||
+      state.sqrtPriceX96 >= MAX_SQRT_RATIO
+    )
       return { valid: false, reason: "V3: zero sqrtPrice" };
     if (!Number.isInteger(state.tick) || state.tick < MIN_TICK || state.tick > MAX_TICK)
       return { valid: false, reason: "V3: invalid tick" };
@@ -617,7 +621,7 @@ export function validatePoolState(state: any) {
     ) {
       return { valid: false, reason: "V3: invalid tickSpacing" };
     }
-    if (state.fee == null || state.fee < 0n)
+    if (state.fee == null || state.fee < 0n || state.fee >= 1_000_000n)
       return { valid: false, reason: "V3: invalid fee" };
     if (state.token0 && state.token0 !== state.tokens[0])
       return { valid: false, reason: "V3: token0 mismatch" };
@@ -661,7 +665,7 @@ export function validatePoolState(state: any) {
       return { valid: false, reason: "Curve: invalid rates" };
     if (state.rates.some((r: any) => r <= 0n))
       return { valid: false, reason: "Curve: non-positive rate" };
-    if (state.fee == null || state.fee < 0n)
+    if (state.fee == null || state.fee < 0n || state.fee >= 10n ** 10n)
       return { valid: false, reason: "Curve: invalid fee" };
   } else if (BALANCER_PROTOCOLS.has(state.protocol)) {
     if (!state.balances || state.balances.length < 2)

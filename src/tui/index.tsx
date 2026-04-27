@@ -15,6 +15,7 @@ const SPINNER_FRAMES = ['-', '\\', '|', '/'];
 const MAX_OPPORTUNITIES = 5;
 const MAX_LOGS = 8;
 const MAX_STATE_LOGS = 20;
+const MAX_CAPTURED_LOG_CHARS = 600;
 const MIN_WIDTH = 72;
 const MAX_WIDTH = 120;
 const POLL_INTERVAL_MS = 250;
@@ -51,6 +52,15 @@ function pad(value: string, width: number) {
   return `${value}${' '.repeat(width - plain.length)}`;
 }
 
+function frameWidth(columns: number) {
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, columns || MIN_WIDTH));
+}
+
+function capCapturedText(value: string) {
+  if (value.length <= MAX_CAPTURED_LOG_CHARS) return value;
+  return `${value.slice(0, MAX_CAPTURED_LOG_CHARS - 1)}…`;
+}
+
 function formatStatus(state: BotState, spinnerFrame: string) {
   if (state.status === 'running') return colorize(`${spinnerFrame} RUNNING`, GREEN);
   if (state.status === 'error') return colorize('ERROR', RED);
@@ -68,11 +78,18 @@ function formatLastPass(timestampMs: number) {
 
 function normalizeOpportunity(opportunity: BotOpportunityRow, index: number, width: number) {
   const prefix = colorize(`${String(index + 1).padStart(2, '0')}.`, CYAN);
-  const routeWidth = Math.max(18, width - 30);
-  const route = truncate(opportunity.Route || 'n/a', routeWidth);
-  const profit = truncate(opportunity.Profit || 'n/a', 14);
-  const roi = truncate(opportunity.ROI || 'n/a', 10);
+  const { routeWidth, route, profit, roi } = visibleOpportunityParts(opportunity, width);
   return `${prefix} ${pad(route, routeWidth)} ${colorize('profit', DIM)} ${pad(profit, 14)} ${colorize('roi', DIM)} ${roi}`;
+}
+
+function visibleOpportunityParts(opportunity: BotOpportunityRow, width: number) {
+  const routeWidth = Math.max(18, width - 30);
+  return {
+    routeWidth,
+    route: truncate(opportunity.Route || 'n/a', routeWidth),
+    profit: truncate(opportunity.Profit || 'n/a', 14),
+    roi: truncate(opportunity.ROI || 'n/a', 10),
+  };
 }
 
 function summarizeLogLevel(line: string) {
@@ -100,7 +117,7 @@ function formatLogs(state: BotState, width: number) {
 }
 
 function appendCapturedLog(state: BotState, label: string, line: string) {
-  const normalized = stripAnsi(line).replace(/\s+/g, ' ').trim();
+  const normalized = capCapturedText(stripAnsi(line).replace(/\s+/g, ' ').trim());
   if (!normalized) return;
 
   const prefix = label === 'stderr' ? '[STDERR]' : '[STDOUT]';
@@ -132,7 +149,7 @@ function installOutputGuard(state: BotState, streams: Array<{ label: string; str
       const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
       const combined = `${buffers.get(stream) ?? ''}${text}`;
       const lines = combined.split(/\r?\n/);
-      buffers.set(stream, lines.pop() ?? '');
+      buffers.set(stream, capCapturedText(lines.pop() ?? ''));
 
       for (const line of lines) appendCapturedLog(state, labels.get(stream) ?? 'stdout', line);
       if (callback) queueMicrotask(() => (callback as () => void)());
@@ -173,7 +190,7 @@ function section(title: string, width: number, color: string) {
 }
 
 function renderFrame(state: BotState, columns: number, spinnerFrame: string): string {
-  const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, columns || MIN_WIDTH));
+  const width = frameWidth(columns);
   const innerWidth = width - 4;
   const top = `┌${'─'.repeat(width - 2)}┐`;
   const bottom = `└${'─'.repeat(width - 2)}┘`;
@@ -223,16 +240,21 @@ function renderFrame(state: BotState, columns: number, spinnerFrame: string): st
 }
 
 function signatureFor(state: BotState, columns: number) {
+  const width = frameWidth(columns);
+  const innerWidth = width - 4;
   return JSON.stringify({
-    columns: Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, columns || MIN_WIDTH)),
+    columns: width,
     status: state.status,
     passCount: state.passCount,
     consecutiveErrors: state.consecutiveErrors,
     gasPrice: state.gasPrice,
     maticPrice: state.maticPrice,
     lastArbMs: state.lastArbMs,
-    opportunities: state.opportunities.slice(0, MAX_OPPORTUNITIES),
-    logs: state.logs.slice(0, MAX_LOGS),
+    opportunities: state.opportunities.slice(0, MAX_OPPORTUNITIES).map((opportunity) => {
+      const { route, profit, roi } = visibleOpportunityParts(opportunity, innerWidth);
+      return { route, profit, roi };
+    }),
+    logs: state.logs.slice(0, MAX_LOGS).map((line) => truncate(normalizeLogLine(line), innerWidth)),
   });
 }
 
@@ -249,6 +271,7 @@ export function startTui(state: BotState): () => void {
   let lastSignature = '';
   let lastSpinnerAt = 0;
   let alternateScreenActive = false;
+  let stdinActive = false;
   let outputGuard: OutputGuard | null = null;
 
   const draw = (force = false) => {
@@ -291,11 +314,13 @@ export function startTui(state: BotState): () => void {
     if (stopped) return;
     stopped = true;
     if (timer) clearInterval(timer);
-    stdin.off('data', onData);
+    stdout.off('error', stop);
     stdout.off('resize', onResize);
-    if (stdin.isTTY) {
+    if (stdinActive) {
+      stdin.off('data', onData);
       stdin.setRawMode(false);
       stdin.pause();
+      stdinActive = false;
     }
     outputGuard?.restore();
     outputGuard = null;
@@ -317,9 +342,10 @@ export function startTui(state: BotState): () => void {
 
   if (stdin.isTTY && typeof stdin.setRawMode === 'function') {
     stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on('data', onData);
+    stdinActive = true;
   }
-  stdin.resume();
-  stdin.on('data', onData);
   draw(true);
   timer = setInterval(() => draw(false), POLL_INTERVAL_MS);
   timer.unref?.();

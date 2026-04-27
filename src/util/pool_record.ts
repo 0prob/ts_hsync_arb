@@ -24,9 +24,15 @@ export function parsePoolTokensValue(value: unknown): string[] {
       parsed = JSON.parse(parsed || "[]");
     }
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((token) => normalizeEvmAddress(token))
-      .filter((token): token is string => token != null);
+    const tokens: string[] = [];
+    const seen = new Set<string>();
+    for (const value of parsed) {
+      const token = normalizeEvmAddress(value);
+      if (!token || seen.has(token)) continue;
+      seen.add(token);
+      tokens.push(token);
+    }
+    return tokens;
   } catch {
     return [];
   }

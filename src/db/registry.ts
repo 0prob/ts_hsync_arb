@@ -304,13 +304,36 @@ export class RegistryService {
   }
 
   _refreshTokenMetaCacheAfterWrite(address: string, decimals: number, symbol: string | null = null, name: string | null = null) {
+    const normalizedAddress = this._normalizeTokenAddress(address);
+    if (!normalizedAddress) return;
+    const normalizedDecimals = normalizeTokenDecimalsRecord(decimals);
     const normalizedSymbol = this._normalizeTokenText(symbol);
     const normalizedName = this._normalizeTokenText(name);
+    const existingMeta = this._tokenMetaCache.get(normalizedAddress) ?? null;
+
+    this._tokenDecimalsCache.set(normalizedAddress, normalizedDecimals);
+
     if (normalizedSymbol != null && normalizedName != null) {
-      this._cacheTokenMetaEntry({ address, decimals, symbol: normalizedSymbol, name: normalizedName });
+      this._cacheTokenMetaEntry({
+        address: normalizedAddress,
+        decimals: normalizedDecimals,
+        symbol: normalizedSymbol,
+        name: normalizedName,
+      });
       return;
     }
-    this._invalidateTokenAssetCacheEntry(address);
+    if (existingMeta) {
+      const cachedSymbol = this._normalizeTokenText(String(existingMeta.symbol ?? ""));
+      const cachedName = this._normalizeTokenText(String(existingMeta.name ?? ""));
+      this._cacheTokenMetaEntry({
+        address: normalizedAddress,
+        decimals: normalizedDecimals,
+        symbol: normalizedSymbol ?? cachedSymbol,
+        name: normalizedName ?? cachedName,
+      });
+      return;
+    }
+    this._tokenMetaCache.delete(normalizedAddress);
   }
 
   invalidateAssetCaches() {

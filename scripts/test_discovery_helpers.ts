@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { enrichDiscoveredPools } from "../src/discovery/discover.ts";
 import { buildDiscoveredPoolBatch } from "../src/discovery/helpers.ts";
 
 function address(index: number) {
@@ -65,6 +66,51 @@ function address(index: number) {
     metadata: { fee: 30 },
     status: "active",
   });
+}
+
+{
+  const goodPool = address(300);
+  const badPool = address(301);
+  const candidates = [
+    {
+      extracted: {
+        pool_address: badPool,
+        tokens: [],
+        metadata: { fail: true },
+      },
+      rawLog: { blockNumber: 1, transactionIndex: 0, logIndex: 0 },
+    },
+    {
+      extracted: {
+        pool_address: goodPool,
+        tokens: [],
+        metadata: {},
+      },
+      rawLog: { blockNumber: 2, transactionIndex: 0, logIndex: 0 },
+    },
+  ];
+
+  await enrichDiscoveredPools({
+    name: "Test RPC Enrichment",
+    address: address(900),
+    signature: "event Pool(address pool)",
+    decode: () => ({ pool_address: undefined, tokens: [], metadata: {} }),
+    enrichTokens: async (poolMeta: any) => {
+      if (poolMeta.metadata.fail) throw new Error("rpc token lookup failed");
+      return [address(1), address(2)];
+    },
+  } as any, candidates);
+
+  assert.deepEqual(
+    candidates[0].extracted.tokens,
+    [],
+    "a failed token enrichment should leave that candidate malformed instead of aborting discovery",
+  );
+  assert.deepEqual(
+    candidates[1].extracted.tokens,
+    [address(1), address(2)],
+    "successful token enrichments should still be applied when another pool fails",
+  );
 }
 
 console.log("Discovery helper checks passed.");

@@ -321,6 +321,94 @@ assert.deepEqual(
 
 {
   const cache = new Map();
+  const persisted: any[] = [];
+  const pool = address(60);
+  const baseToken = address(61);
+  const quoteToken = address(62);
+  const dodoState = {
+    poolId: pool,
+    protocol: "DODO_DVM",
+    token0: baseToken,
+    token1: quoteToken,
+    tokens: [baseToken, quoteToken],
+    baseToken,
+    quoteToken,
+    baseReserve: 1_000n,
+    quoteReserve: 1_000n,
+    baseTarget: 0n,
+    quoteTarget: 0n,
+    i: 1n,
+    k: 0n,
+    rState: 0,
+    lpFeeRate: 0n,
+    mtFeeRate: 0n,
+    timestamp: 0,
+  };
+
+  assert.deepEqual(
+    commitWatcherStatesBatch(
+      cache,
+      (states: any[]) => persisted.push(...states),
+      [
+        {
+          addr: pool,
+          rawLog: { blockNumber: 86088757, transactionHash: "0xtx", topic0: WATCHER_TOPIC0.DODO_SWAP },
+          state: dodoState,
+        },
+      ],
+    ),
+    [pool],
+    "watcher should advance through observed DODO states whose PMM targets are zero",
+  );
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].block, 86088757);
+  assert.equal(cache.get(pool).baseTarget, 0n);
+}
+
+{
+  const cache = new Map();
+  const pool = address(63);
+  const baseToken = address(64);
+  const quoteToken = address(65);
+  assert.throws(
+    () =>
+      commitWatcherStatesBatch(cache, () => {}, [
+        {
+          addr: pool,
+          rawLog: { blockNumber: 86088758, transactionHash: "0xtx", topic0: WATCHER_TOPIC0.DODO_SWAP },
+          state: {
+            poolId: pool,
+            protocol: "DODO_DVM",
+            token0: baseToken,
+            token1: quoteToken,
+            tokens: [baseToken, quoteToken],
+            baseToken,
+            quoteToken,
+            baseReserve: 1_000n,
+            quoteReserve: 1_000n,
+            baseTarget: -1n,
+            quoteTarget: 1_000n,
+            i: 1n,
+            k: 0n,
+            rState: 0,
+            lpFeeRate: 0n,
+            mtFeeRate: 0n,
+            timestamp: 0,
+          },
+        },
+      ]),
+    (err: any) => {
+      assert.equal(err.name, "WatcherStateIntegrityError");
+      assert.equal(err.poolAddress, pool);
+      assert.equal(err.validationReason, "DODO: zero targets");
+      return true;
+    },
+    "watcher should still reject malformed negative DODO targets",
+  );
+}
+
+{
+  const cache = new Map();
   const persistStates = () => {
     throw new Error("persist should not be called for invalid watcher state");
   };

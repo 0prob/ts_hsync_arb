@@ -34,7 +34,10 @@ const stableState = {
   assert.equal(getCurveAmountOut(1_000n, { ...stableState, rates: [precision] }, 0, 1), 0n);
   assert.equal(getCurveAmountOut(1_000n, { ...stableState, balances: [1n, 0n, 1n] }, 0, 1), 0n);
   assert.equal(getCurveAmountOut(1_000n, { ...stableState, fee: -1n }, 0, 1), 0n);
+  assert.equal(getCurveAmountOut(1_000n, { ...stableState, fee: 10n ** 10n }, 0, 1), 0n);
+  assert.equal(getCurveAmountOut(1_000n, { ...stableState, balances: [1n, 1n, 1n], rates: [1n, 1n, 1n] }, 0, 1), 0n);
   assert.equal(getCurveAmountIn(1n, { ...stableState, rates: [precision] }, 0, 1), 0n);
+  assert.equal(getCurveAmountIn(stableState.balances[1], stableState, 0, 1), 0n);
 }
 
 {
@@ -69,6 +72,23 @@ const stableState = {
 
   assert.equal(normalized.rates.length, 2);
   assert.deepEqual(validatePoolState(normalized), { valid: true });
+}
+
+{
+  const normalized = normalizeCurveState(
+    pool,
+    "CURVE_STABLE_FACTORY",
+    [tokenA, tokenB],
+    {
+      balances: [1_000_000n * precision, 2_000_000n * precision],
+      rates: [precision, precision],
+      A: 10_000n,
+      fee: 10n ** 10n,
+      fetchedAt: 1,
+    },
+  );
+
+  assert.deepEqual(validatePoolState(normalized), { valid: false, reason: "Curve: invalid fee" });
 }
 
 console.log("Curve checks passed.");

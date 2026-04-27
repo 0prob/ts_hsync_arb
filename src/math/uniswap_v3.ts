@@ -16,6 +16,8 @@ import {
   getTickAtSqrtRatioInRange,
   MIN_TICK,
   MAX_TICK,
+  MIN_SQRT_RATIO,
+  MAX_SQRT_RATIO,
 } from "./tick_math.ts";
 import { computeSwapStep } from "./swap_math.ts";
 
@@ -90,6 +92,15 @@ function getSortedTicks(state: any) {
   return sortedTicks;
 }
 
+function toBigIntOrNull(value: unknown) {
+  try {
+    if (value == null) return null;
+    return BigInt(value as any);
+  } catch {
+    return null;
+  }
+}
+
 // ─── V3 Swap Simulator ───────────────────────────────────────
 
 /**
@@ -102,16 +113,31 @@ function getSortedTicks(state: any) {
  * @returns {{ amountOut: bigint, sqrtPriceX96After: bigint, tickAfter: number, gasEstimate: number }}
  */
 export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean, feeOverride?: number) {
-  if (amountIn <= 0n || !state.initialized || state.sqrtPriceX96 === 0n) {
+  const sqrtPriceInitial = toBigIntOrNull(state?.sqrtPriceX96);
+  const liquidityInitial = toBigIntOrNull(state?.liquidity);
+  const feePips = toBigIntOrNull(feeOverride ?? state?.fee);
+  const fallbackSqrtPrice = sqrtPriceInitial ?? 0n;
+  const fallbackTick = Number.isInteger(state?.tick) ? state.tick : 0;
+
+  if (
+    amountIn <= 0n ||
+    !state?.initialized ||
+    sqrtPriceInitial == null ||
+    sqrtPriceInitial < MIN_SQRT_RATIO ||
+    sqrtPriceInitial >= MAX_SQRT_RATIO ||
+    liquidityInitial == null ||
+    liquidityInitial <= 0n ||
+    feePips == null ||
+    feePips < 0n ||
+    feePips >= 1_000_000n
+  ) {
     return {
       amountOut: 0n,
-      sqrtPriceX96After: state.sqrtPriceX96 || 0n,
-      tickAfter: state.tick || 0,
+      sqrtPriceX96After: fallbackSqrtPrice,
+      tickAfter: fallbackTick,
       gasEstimate: 0,
     };
   }
-
-  const feePips = BigInt(feeOverride ?? state.fee);
 
   // Price limit: min or max sqrt ratio depending on direction
   const sqrtPriceLimitX96 = zeroForOne
@@ -121,9 +147,9 @@ export function simulateV3Swap(state: any, amountIn: bigint, zeroForOne: boolean
   const sortedTicks = getSortedTicks(state);
 
   // Mutable swap state
-  let sqrtPriceX96 = state.sqrtPriceX96;
-  let tick = state.tick;
-  let liquidity = state.liquidity;
+  let sqrtPriceX96 = sqrtPriceInitial;
+  let tick = fallbackTick;
+  let liquidity = liquidityInitial;
   let amountRemaining = amountIn; // exactIn: positive
   let amountCalculated = 0n; // accumulated output
   let ticksCrossed = 0;

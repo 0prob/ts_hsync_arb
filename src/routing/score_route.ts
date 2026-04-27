@@ -72,7 +72,7 @@ function scaledRatioToApproxNumber(
 export function estimateGasCostWei(gasEstimate: number, gasPriceWei?: bigint) {
   const price = gasPriceWei ?? DEFAULT_GAS_PRICE_GWEI * GWEI;
   if (!Number.isFinite(gasEstimate) || gasEstimate < 0) return null;
-  if (!Number.isInteger(gasEstimate)) return null;
+  if (!Number.isSafeInteger(gasEstimate)) return null;
   if (price < 0n) return null;
   return BigInt(gasEstimate) * price;
 }
@@ -119,6 +119,8 @@ export function scoreRoute(path: RouteLike, result: RouteResultLike, options: Sc
   if (tokenToMaticRate != null && tokenToMaticRate <= 0n) return null;
   if (gasPriceWei != null && gasPriceWei < 0n) return null;
   if (minNetProfit < 0n) return null;
+  const hopCount = getPathHopCount(path);
+  if (!Number.isSafeInteger(hopCount) || hopCount < 1) return null;
 
   const gasCostWei = estimateGasCostWei(result.totalGas, gasPriceWei);
   if (gasCostWei == null) return null;
@@ -136,7 +138,7 @@ export function scoreRoute(path: RouteLike, result: RouteResultLike, options: Sc
   const roi = scaledRatioToApproxNumber(roiProfit, result.amountIn);
 
   // Hop penalty: each additional hop reduces score
-  const hopPenalty = (getPathHopCount(path) - 2) * 0.5;
+  const hopPenalty = (hopCount - 2) * 0.5;
   const gasPenalty = Math.max(0, result.totalGas - 90_000) / 100_000;
 
   // Protocol diversity bonus: cross-protocol arbs are harder to replicate

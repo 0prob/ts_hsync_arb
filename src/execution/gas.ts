@@ -27,9 +27,16 @@ export const executionClient = createPublicClient({
   }),
 });
 
-const gasEstimateCache = new Map<string, bigint>();
+type GasEstimateCacheEntry = {
+  estimate: bigint;
+  updatedAt: number;
+};
+
+const gasEstimateCache = new Map<string, GasEstimateCacheEntry>();
 const GAS_ORACLE_MAX_AGE_MS = 15_000;
 const GAS_MULTIPLIER_SCALE = 10_000n;
+const GAS_ESTIMATE_CACHE_TTL_MS = 120_000;
+const GAS_ESTIMATE_CACHE_MAX_ENTRIES = 2_048;
 
 type FeeSnapshot = {
   baseFee: bigint;
@@ -42,9 +49,22 @@ function maxBigInt(a: bigint, b: bigint) {
   return a > b ? a : b;
 }
 
+function normalizeFeeSnapshot(fees: FeeSnapshot) {
+  if (!fees) throw new Error("fee snapshot is required");
+  const baseFee = BigInt(fees.baseFee);
+  const priorityFee = BigInt(fees.priorityFee);
+  const maxFee = BigInt(fees.maxFee);
+  if (baseFee < 0n) throw new Error("baseFee must be >= 0");
+  if (priorityFee < 0n) throw new Error("priorityFee must be >= 0");
+  if (maxFee < 0n) throw new Error("maxFee must be >= 0");
+  if (maxFee < baseFee) throw new Error("maxFee must be >= baseFee");
+  return { baseFee, priorityFee, maxFee };
+}
+
 export function effectiveGasPriceWei(fees: FeeSnapshot) {
-  const effective = fees.baseFee + fees.priorityFee;
-  return effective > fees.maxFee ? fees.maxFee : effective;
+  const normalized = normalizeFeeSnapshot(fees);
+  const effective = normalized.baseFee + normalized.priorityFee;
+  return effective > normalized.maxFee ? normalized.maxFee : effective;
 }
 
 export function capGasFeesToBudget(
@@ -98,6 +118,72 @@ function bufferedGasLimit(gasEstimate: bigint, gasMultiplier: number) {
   }
   const multiplierBps = BigInt(multiplierBpsNumber);
   return (gasEstimate * multiplierBps + GAS_MULTIPLIER_SCALE - 1n) / GAS_MULTIPLIER_SCALE;
+}
+
+function normalizeGasEstimate(value: unknown) {
+  if (typeof value === "bigint") {
+    if (value <= 0n) throw new Error("gas estimate must be > 0");
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error("gas estimate must be a positive safe integer");
+    }
+    return BigInt(value);
+  }
+  try {
+    const normalized = BigInt(value as any);
+    if (normalized <= 0n) throw new Error();
+    return normalized;
+  } catch {
+    throw new Error("gas estimate must be a positive integer");
+  }
+}
+
+function normalizeCacheTtlMs(value: unknown) {
+  const ttl = Number(value);
+  if (!Number.isFinite(ttl) || ttl < 0) {
+    throw new Error("gasEstimateCacheTtlMs must be a finite non-negative number");
+  }
+  return ttl;
+}
+
+function normalizeCacheMaxEntries(value: unknown) {
+  const maxEntries = Number(value);
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) {
+    throw new Error("gasEstimateCacheMaxEntries must be a positive safe integer");
+  }
+  return maxEntries;
+}
+
+function normalizeNowMs(value: unknown) {
+  const now = Number(value);
+  if (!Number.isFinite(now) || now < 0) {
+    throw new Error("now must be a finite non-negative number");
+  }
+  return now;
+}
+
+function getCachedGasEstimate(key: string, now: number, ttlMs: number) {
+  const entry = gasEstimateCache.get(key);
+  if (!entry) return null;
+  if (now - entry.updatedAt > ttlMs) {
+    gasEstimateCache.delete(key);
+    return null;
+  }
+  gasEstimateCache.delete(key);
+  gasEstimateCache.set(key, entry);
+  return entry.estimate;
+}
+
+function rememberGasEstimate(key: string, estimate: bigint, now: number, maxEntries: number) {
+  gasEstimateCache.delete(key);
+  gasEstimateCache.set(key, { estimate, updatedAt: now });
+  while (gasEstimateCache.size > maxEntries) {
+    const oldestKey = gasEstimateCache.keys().next().value;
+    if (oldestKey == null) break;
+    gasEstimateCache.delete(oldestKey);
+  }
 }
 
 // ─── Gas Oracle ───────────────────────────────────────────────
@@ -157,7 +243,8 @@ class GasOracle {
     this._updatePromise = (async () => {
       try {
         const block = await executeWithRpcRetry((c: any) =>
-          c.getBlock({ blockTag: "latest" })
+          c.getBlock({ blockTag: "latest" }),
+          { method: "eth_getBlockByNumber" }
         );
         this.baseFee = block.baseFeePerGas ?? 30n * 10n ** 9n;
 
@@ -168,7 +255,8 @@ class GasOracle {
               blockCount: 10,
               rewardPercentiles: [25, 50, 75],
               blockTag: "latest",
-            })
+            }),
+            { method: "eth_feeHistory" }
           );
 
           // Extract p50 (index 1) priority fee rewards from the last 10 blocks
@@ -244,7 +332,7 @@ if (process.env.NODE_ENV !== 'test') {
 // ─── Gas price ────────────────────────────────────────────────
 
 export async function fetchGasPrice() {
-  return executeWithRpcRetry((c: any) => c.getGasPrice());
+  return executeWithRpcRetry((c: any) => c.getGasPrice(), { method: "eth_gasPrice" });
 }
 
 /**
@@ -264,12 +352,20 @@ export async function estimateGas(tx: any, fromAddress: any) {
       to: tx.to,
       data: tx.data,
       value: tx.value ?? 0n,
-    })
+    }),
+    { method: "eth_estimateGas" }
   );
 }
 
 export function clearGasEstimateCache() {
   gasEstimateCache.clear();
+}
+
+export function gasEstimateCacheStats() {
+  return {
+    size: gasEstimateCache.size,
+    keys: [...gasEstimateCache.keys()],
+  };
 }
 
 export function isGasOracleStale(updatedAt: number, options: any = {}) {
@@ -330,17 +426,27 @@ export function scalePriorityFeeByProfitMargin(
   profitMarginBps: bigint | number,
   options: any = {},
 ) {
+  const normalizedFees = normalizeFeeSnapshot(fees);
   const minMultiplierBps = BigInt(options.minMultiplierBps ?? 10_000n);
   const maxMultiplierBps = BigInt(options.maxMultiplierBps ?? 30_000n);
   const fullRampMarginBps = BigInt(options.fullRampMarginBps ?? 500n);
+  if (minMultiplierBps < 0n || maxMultiplierBps < 0n) {
+    throw new Error("priority fee multipliers must be >= 0");
+  }
+  if (maxMultiplierBps < minMultiplierBps) {
+    throw new Error("maxMultiplierBps must be >= minMultiplierBps");
+  }
+  if (fullRampMarginBps <= 0n) {
+    throw new Error("fullRampMarginBps must be > 0");
+  }
 
   const margin = clampBigInt(BigInt(profitMarginBps ?? 0), 0n, fullRampMarginBps);
   const multiplierBps =
     minMultiplierBps +
     ((maxMultiplierBps - minMultiplierBps) * margin) / fullRampMarginBps;
   const maxPriorityFeePerGas =
-    (fees.priorityFee * multiplierBps + 9_999n) / 10_000n;
-  const maxFeePerGas = fees.baseFee * 2n + maxPriorityFeePerGas;
+    (normalizedFees.priorityFee * multiplierBps + 9_999n) / 10_000n;
+  const maxFeePerGas = normalizedFees.baseFee * 2n + maxPriorityFeePerGas;
 
   return {
     multiplierBps,
@@ -366,29 +472,39 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
     gasOracleMaxAgeMs = GAS_ORACLE_MAX_AGE_MS,
     allowStaleFeesOnRefreshFailure = true,
     maxEstimatedCostWei,
+    gasEstimateCacheTtlMs = GAS_ESTIMATE_CACHE_TTL_MS,
+    gasEstimateCacheMaxEntries = GAS_ESTIMATE_CACHE_MAX_ENTRIES,
+    now = Date.now(),
+    estimateGasFn = estimateGas,
+    feeSnapshot = null,
   } = options;
+  const nowMs = normalizeNowMs(now);
+  const cacheTtlMs = normalizeCacheTtlMs(gasEstimateCacheTtlMs);
+  const cacheMaxEntries = normalizeCacheMaxEntries(gasEstimateCacheMaxEntries);
 
   // Only perform eth_estimateGas on the hot path when the route shape is not
   // already cached for the current topology version.
   let gasEstimate: bigint | undefined = undefined;
   if (gasEstimateCacheKey && !forceRefreshEstimate) {
-    gasEstimate = gasEstimateCache.get(gasEstimateCacheKey);
+    gasEstimate = getCachedGasEstimate(gasEstimateCacheKey, nowMs, cacheTtlMs) ?? undefined;
   }
   if (gasEstimate == null) {
-    gasEstimate = await estimateGas(tx, fromAddress);
+    gasEstimate = normalizeGasEstimate(await estimateGasFn(tx, fromAddress));
     if (gasEstimateCacheKey) {
-      gasEstimateCache.set(gasEstimateCacheKey, gasEstimate as bigint);
+      rememberGasEstimate(gasEstimateCacheKey, gasEstimate, nowMs, cacheMaxEntries);
     }
   }
   if (gasEstimate == null) {
     throw new Error("gas estimate unavailable");
   }
-  const fees = requireFreshFees
-    ? await ensureFreshGasOracle({
-        maxAgeMs: gasOracleMaxAgeMs,
-        allowStaleOnFailure: allowStaleFeesOnRefreshFailure,
-      })
-    : oracle.getFees();
+  const fees = normalizeFeeSnapshot(feeSnapshot ?? (
+    requireFreshFees
+      ? await ensureFreshGasOracle({
+          maxAgeMs: gasOracleMaxAgeMs,
+          allowStaleOnFailure: allowStaleFeesOnRefreshFailure,
+        })
+      : oracle.getFees()
+  ));
 
   const baseFee = fees.baseFee;
   let maxPriorityFeePerGas = priorityFeeOverride ?? fees.priorityFee;
@@ -433,6 +549,9 @@ export async function recommendGasParams(tx: any, fromAddress: any, options: any
 }
 
 export async function quickGasCheck(estimatedGasUnits = 400_000) {
+  if (!Number.isSafeInteger(estimatedGasUnits) || estimatedGasUnits <= 0) {
+    throw new Error("estimatedGasUnits must be a positive safe integer");
+  }
   const fees = await ensureFreshGasOracle();
   const gasPrice = effectiveGasPriceWei(fees);
   const estimatedCostWei = gasPrice * BigInt(estimatedGasUnits);

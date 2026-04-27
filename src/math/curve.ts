@@ -213,8 +213,10 @@ export function getCurveAmountOut(amountIn: bigint, poolState: any, tokenInIdx: 
   if (balances.length < 2 || rates.length !== balances.length) return 0n;
   if (!hasValidCurveIndexes(balances.length, tokenInIdx, tokenOutIdx)) return 0n;
   if (balances.some((balance) => balance <= 0n) || rates.some((rate) => rate <= 0n)) return 0n;
+  if (fee >= FEE_DENOMINATOR) return 0n;
 
   const xp = toXp(balances, rates);
+  if (xp.some((balance) => balance <= 0n)) return 0n;
   const D = getD(xp, A);
   if (D <= 0n) return 0n;
 
@@ -228,6 +230,7 @@ export function getCurveAmountOut(amountIn: bigint, poolState: any, tokenInIdx: 
   // Apply swap fee (fee is in 1e10 basis)
   const feeAmount = (dy * fee) / FEE_DENOMINATOR;
   const dyAfterFee = dy - feeAmount;
+  if (dyAfterFee <= 0n) return 0n;
 
   // Convert back from xp scaling
   return (dyAfterFee * PRECISION) / rates[tokenOutIdx];
@@ -247,6 +250,10 @@ export function getCurveAmountOut(amountIn: bigint, poolState: any, tokenInIdx: 
  */
 export function getCurveAmountIn(amountOut: bigint, poolState: any, tokenInIdx: number, tokenOutIdx: number) {
   if (amountOut <= 0n) return 0n;
+
+  const balances = toBigIntArray(poolState?.balances);
+  if (!balances || !hasValidCurveIndexes(balances.length, tokenInIdx, tokenOutIdx)) return 0n;
+  if (amountOut >= balances[tokenOutIdx]) return 0n;
 
   // Binary search: find smallest amountIn such that getCurveAmountOut >= amountOut
   let lo = 1n;
