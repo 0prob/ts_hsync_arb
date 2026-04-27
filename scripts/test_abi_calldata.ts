@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import {
   encodeBalancerHop,
   encodeCurveHop,
+  encodeRoute,
+  encodeDodoHop,
   encodeV2Hop,
   encodeV3Hop,
+  encodeWoofiHop,
 } from "../src/execution/calldata.ts";
 
 const executor = "0x3333333333333333333333333333333333333333";
@@ -68,6 +71,55 @@ const poolId = "0x" + "ab".repeat(32);
     amountIn: "1000",
     amountOut: "900",
   }, executor, { slippageBps: 100, deadline: 1_900_000_000n });
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].data, /^0x[0-9a-f]+$/i);
+}
+
+{
+  const calls = encodeRoute({
+    path: {
+      edges: [{
+        protocol: "BALANCER_V2",
+        poolAddress: pool,
+        tokenIn: tokenA,
+        tokenOut: tokenB,
+        zeroForOne: true,
+        metadata: {},
+        stateRef: { balancerPoolId: poolId },
+      }],
+    },
+    result: {
+      hopAmounts: [1000n, 900n],
+    },
+  }, executor, { slippageBps: 100, deadline: 1_900_000_000n });
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].data, /^0x[0-9a-f]+$/i);
+}
+
+{
+  const calls = encodeDodoHop({
+    poolAddress: pool,
+    tokenIn: tokenA,
+    tokenOut: tokenB,
+    zeroForOne: true,
+    amountIn: "1000",
+    amountOut: "900",
+  }, executor);
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].data, /^0x[0-9a-f]+$/i);
+}
+
+{
+  const calls = encodeWoofiHop({
+    router: pool,
+    tokenIn: tokenA,
+    tokenOut: tokenB,
+    amountIn: "1000",
+    amountOut: "900",
+  }, executor, { slippageBps: 100 });
 
   assert.equal(calls.length, 2);
   assert.match(calls[1].data, /^0x[0-9a-f]+$/i);

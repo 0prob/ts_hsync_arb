@@ -6,13 +6,18 @@
  * determine router targets and approval targets.
  */
 
+import { WOOFI_ROUTER_V2, WOOFI_WOOPP_V2 } from "../protocols/woofi.ts";
+
 export {
   BALANCER_PROTOCOLS,
   CURVE_CRYPTO_PROTOCOLS,
   CURVE_STABLE_PROTOCOLS,
+  DODO_PROTOCOLS,
   V2_PROTOCOLS as DIRECT_SWAP_PROTOCOLS,
   V3_PROTOCOLS as V3_SWAP_PROTOCOLS,
+  WOOFI_PROTOCOLS,
 } from "../protocols/classification.ts";
+export { WOOFI_ROUTER_V2, WOOFI_WOOPP_V2 };
 
 // ─── Flash Loan Providers ─────────────────────────────────────
 
@@ -74,6 +79,7 @@ export const PROTOCOL_ROUTERS = {
   UNISWAP_V3: UNISWAP_V3_ROUTER,
   QUICKSWAP_V3: QUICKSWAP_V3_ROUTER,
   SUSHISWAP_V3: SUSHISWAP_V3_ROUTER,
+  WOOFI: WOOFI_ROUTER_V2,
 };
 
 /**

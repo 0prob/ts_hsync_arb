@@ -84,6 +84,75 @@ export const V3_POOL_SWAP_ABI = [
   },
 ];
 
+/**
+ * KyberSwap Elastic pool.swap.
+ *
+ * Kyber uses `swapQty` and `isToken0` rather than the Uniswap V3
+ * `zeroForOne` argument order, but still pays through `swapCallback`.
+ */
+export const KYBER_ELASTIC_POOL_SWAP_ABI = [
+  {
+    name: "swap",
+    type: "function",
+    inputs: [
+      { name: "recipient", type: "address" },
+      { name: "swapQty", type: "int256" },
+      { name: "isToken0", type: "bool" },
+      { name: "limitSqrtP", type: "uint160" },
+      { name: "data", type: "bytes" },
+    ],
+    outputs: [
+      { name: "qty0", type: "int256" },
+      { name: "qty1", type: "int256" },
+    ],
+    stateMutability: "nonpayable",
+  },
+];
+
+// ─── DODO V2 Pools ───────────────────────────────────────────
+
+/** DODO V2 sellBase — tokens must be transferred into the pool first */
+export const DODO_SELL_BASE_ABI = [
+  {
+    name: "sellBase",
+    type: "function",
+    inputs: [{ name: "to", type: "address" }],
+    outputs: [{ name: "receiveQuoteAmount", type: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+];
+
+/** DODO V2 sellQuote — tokens must be transferred into the pool first */
+export const DODO_SELL_QUOTE_ABI = [
+  {
+    name: "sellQuote",
+    type: "function",
+    inputs: [{ name: "to", type: "address" }],
+    outputs: [{ name: "receiveBaseAmount", type: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+];
+
+// ─── WOOFi WooRouterV2 ───────────────────────────────────────
+
+/** WOOFi router exact-input swap. Router pulls tokenIn from the executor. */
+export const WOOFI_ROUTER_SWAP_ABI = [
+  {
+    name: "swap",
+    type: "function",
+    inputs: [
+      { name: "fromToken", type: "address" },
+      { name: "toToken", type: "address" },
+      { name: "fromAmount", type: "uint256" },
+      { name: "minToAmount", type: "uint256" },
+      { name: "to", type: "address" },
+      { name: "rebateTo", type: "address" },
+    ],
+    outputs: [{ name: "realToAmount", type: "uint256" }],
+    stateMutability: "payable",
+  },
+];
+
 // ─── Uniswap V3 SwapRouter02 ─────────────────────────────────
 
 /**

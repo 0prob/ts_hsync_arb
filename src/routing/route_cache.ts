@@ -26,7 +26,16 @@ import { normalizeEvmAddress } from "../util/pool_record.ts";
 type CachedEdge = { poolAddress: string };
 type CachedPath = { startToken: string; edges: CachedEdge[] };
 type CachedResult = { profit: bigint | string };
-type CachedEntry = { path: CachedPath; result: CachedResult; profit: bigint };
+type CachedAssessment = {
+  netProfitAfterGas?: bigint | string | null;
+  netProfit?: bigint | string | null;
+};
+type CachedEntry = {
+  path: CachedPath;
+  result: CachedResult;
+  assessment?: CachedAssessment;
+  profit: bigint;
+};
 
 function normalisePoolAddress(poolAddress: unknown) {
   return normalizeEvmAddress(poolAddress);
@@ -40,6 +49,16 @@ function profitFromResult(result: CachedResult | null | undefined) {
   try {
     if (result?.profit == null) return null;
     return typeof result.profit === "bigint" ? result.profit : BigInt(result.profit);
+  } catch {
+    return null;
+  }
+}
+
+function profitFromAssessment(assessment: CachedAssessment | null | undefined) {
+  try {
+    const profit = assessment?.netProfitAfterGas ?? assessment?.netProfit;
+    if (profit == null) return null;
+    return typeof profit === "bigint" ? profit : BigInt(profit);
   } catch {
     return null;
   }
@@ -64,19 +83,20 @@ export class RouteCache {
    * Merges new profitable routes with existing ones, re-ranks by profit, and
    * keeps only the top `maxSize`.  Rebuilds the pool index from scratch.
    *
-   * @param {Array<{ path: object, result: object }>} profitable
+   * @param {Array<{ path: object, result: object, assessment?: object }>} profitable
    *   Profitable routes from evaluatePaths / evaluatePathsParallel.
    */
-  update(profitable: Array<{ path: CachedPath; result: CachedResult }>) {
+  update(profitable: Array<{ path: CachedPath; result: CachedResult; assessment?: CachedAssessment }>) {
     if (!profitable || profitable.length === 0) return;
 
-    // Normalise profit to BigInt (workers deserialise as strings)
+    // Normalise profit to BigInt (workers deserialise as strings). Prefer
+    // execution-grade net profit when callers provide an assessment.
     const toAdd: CachedEntry[] = [];
-    for (const { path, result } of profitable) {
+    for (const { path, result, assessment } of profitable) {
       if (!hasValidPoolEdges(path)) continue;
-      const profit = profitFromResult(result);
+      const profit = profitFromAssessment(assessment) ?? profitFromResult(result);
       if (profit == null) continue;
-      toAdd.push({ path, result, profit });
+      toAdd.push({ path, result, assessment, profit });
     }
     if (toAdd.length === 0) return;
 

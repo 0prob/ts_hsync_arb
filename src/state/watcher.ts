@@ -21,6 +21,8 @@ import { topic0ForSignature } from "../hypersync/topics.ts";
 import { detectReorg } from "../reorg/detect.ts";
 import { fetchAndNormalizeBalancerPool } from "./poll_balancer.ts";
 import { fetchAndNormalizeCurvePool } from "./poll_curve.ts";
+import { fetchAndNormalizeDodoPool } from "./poll_dodo.ts";
+import { fetchAndNormalizeWoofiPool } from "./poll_woofi.ts";
 import { fetchV3PoolState } from "./uniswap_v3.ts";
 import { parsePoolTokens } from "./pool_record.ts";
 import { metadataWithRegistryTokenDecimals } from "./pool_metadata.ts";
@@ -62,6 +64,8 @@ const V3_BURN = "event Burn(address indexed owner, int24 indexed tickLower, int2
 const BAL_BALANCE = "event PoolBalanceChanged(bytes32 indexed poolId, address indexed liquidityProvider, address[] tokens, int256[] deltas, uint256[] protocolFeeAmounts)";
 const CURVE_EXCHANGE_STABLE = "event TokenExchange(address indexed buyer, int128 sold_id, uint256 tokens_sold, int128 bought_id, uint256 tokens_bought)";
 const CURVE_EXCHANGE_CRYPTO = "event TokenExchange(address indexed buyer, uint256 sold_id, uint256 tokens_sold, uint256 bought_id, uint256 tokens_bought)";
+const DODO_SWAP = "event DODOSwap(address fromToken, address toToken, uint256 fromAmount, uint256 toAmount, address trader, address receiver)";
+const WOOFI_SWAP = "event WooSwap(address indexed fromToken, address indexed toToken, uint256 fromAmount, uint256 toAmount, address from, address indexed to, address rebateTo, uint256 swapVol, uint256 swapFee)";
 
 const SIGNATURES = [
   V2_SYNC,
@@ -71,6 +75,8 @@ const SIGNATURES = [
   BAL_BALANCE,
   CURVE_EXCHANGE_STABLE,
   CURVE_EXCHANGE_CRYPTO,
+  DODO_SWAP,
+  WOOFI_SWAP,
 ];
 
 export const WATCHER_TOPIC0 = {
@@ -81,6 +87,8 @@ export const WATCHER_TOPIC0 = {
   BAL_BALANCE: topic0ForSignature(BAL_BALANCE),
   CURVE_EXCHANGE_STABLE: topic0ForSignature(CURVE_EXCHANGE_STABLE),
   CURVE_EXCHANGE_CRYPTO: topic0ForSignature(CURVE_EXCHANGE_CRYPTO),
+  DODO_SWAP: topic0ForSignature(DODO_SWAP),
+  WOOFI_SWAP: topic0ForSignature(WOOFI_SWAP),
 } as const;
 
 const TOPICS = Object.values(WATCHER_TOPIC0);
@@ -951,6 +959,8 @@ export class StateWatcher {
       topic0: WATCHER_TOPIC0,
       refreshBalancer: this._refreshBalancer.bind(this),
       refreshCurve: this._refreshCurve.bind(this),
+      refreshDodo: this._refreshDodo.bind(this),
+      refreshWoofi: this._refreshWoofi.bind(this),
       refreshV3: this._refreshV3.bind(this),
       enqueueEnrichment: this._enqueueEnrichment.bind(this),
       commitStates: this._commitStates.bind(this),
@@ -1048,6 +1058,24 @@ export class StateWatcher {
     const tokens = parsePoolTokens(pool?.tokens);
     const tokenDecimals = this._registry?.getTokenDecimals?.(tokens) ?? null;
     const { normalized } = await fetchAndNormalizeCurvePool(pool, { tokenDecimals });
+    if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
+    const state = this._mergeState(addr, normalized);
+    this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);
+  }
+
+  async _refreshDodo(addr: any, pool: any, expectedEpoch = this._enrichmentEpoch) {
+    const tokens = parsePoolTokens(pool?.tokens);
+    const tokenDecimals = this._registry?.getTokenDecimals?.(tokens) ?? null;
+    const { normalized } = await fetchAndNormalizeDodoPool(pool, { tokenDecimals });
+    if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
+    const state = this._mergeState(addr, normalized);
+    this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);
+  }
+
+  async _refreshWoofi(addr: any, pool: any, expectedEpoch = this._enrichmentEpoch) {
+    const tokens = parsePoolTokens(pool?.tokens);
+    const tokenDecimals = this._registry?.getTokenDecimals?.(tokens) ?? null;
+    const { normalized } = await fetchAndNormalizeWoofiPool(pool, { tokenDecimals });
     if (this._closed || expectedEpoch !== this._enrichmentEpoch) return;
     const state = this._mergeState(addr, normalized);
     this._commitState(addr, state, { blockNumber: this._lastBlock }, expectedEpoch);

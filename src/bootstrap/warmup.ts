@@ -3,9 +3,11 @@ import { metadataWithRegistryTokenDecimals } from "../state/pool_metadata.ts";
 import {
   BALANCER_PROTOCOLS,
   CURVE_PROTOCOLS,
+  DODO_PROTOCOLS,
   normalizeProtocolKey,
   V2_PROTOCOLS,
   V3_PROTOCOLS,
+  WOOFI_PROTOCOLS,
 } from "../protocols/classification.ts";
 
 export type PoolRecord = {
@@ -77,6 +79,8 @@ type WarmupDeps = {
   ) => Promise<any>;
   fetchAndNormalizeBalancerPool: (pool: PoolRecord) => Promise<{ addr: string; normalized: Record<string, unknown> }>;
   fetchAndNormalizeCurvePool: (pool: PoolRecord) => Promise<{ addr: string; normalized: Record<string, unknown> }>;
+  fetchAndNormalizeDodoPool: (pool: PoolRecord) => Promise<{ addr: string; normalized: Record<string, unknown> }>;
+  fetchAndNormalizeWoofiPool: (pool: PoolRecord) => Promise<{ addr: string; normalized: Record<string, unknown> }>;
   throttledMap: <T, R>(items: T[], mapper: (item: T) => Promise<R>, concurrency: number) => Promise<R[]>;
   polygonHubTokens: Set<string>;
   hub4Tokens: Set<string>;
@@ -92,7 +96,9 @@ const WARMUP_V2 = V2_PROTOCOLS;
 const WARMUP_V3 = V3_PROTOCOLS;
 const WARMUP_BAL = BALANCER_PROTOCOLS;
 const WARMUP_CRV = CURVE_PROTOCOLS;
-const SUPPORTED_WARMUP_PROTOCOLS = new Set([...WARMUP_V2, ...WARMUP_V3, ...WARMUP_BAL, ...WARMUP_CRV]);
+const WARMUP_DODO = DODO_PROTOCOLS;
+const WARMUP_WOOFI = WOOFI_PROTOCOLS;
+const SUPPORTED_WARMUP_PROTOCOLS = new Set([...WARMUP_V2, ...WARMUP_V3, ...WARMUP_BAL, ...WARMUP_CRV, ...WARMUP_DODO, ...WARMUP_WOOFI]);
 const WARMUP_PROGRESS_LOG_EVERY = 25;
 const EMPTY_PROTOCOL_STATS = { scheduled: 0, fetched: 0, normalized: 0, disabled: 0, failed: 0 };
 
@@ -506,6 +512,56 @@ export function createWarmupManager(deps: WarmupDeps) {
           }, deps.enrichConcurrency);
         },
       },
+      {
+        key: "dodo",
+        protocols: WARMUP_DODO,
+        progressPhase: "dodo_progress",
+        async fetch(group, stats) {
+          let completed = 0;
+          return deps.throttledMap(group, async (pool: PoolRecord) => {
+            try {
+              const { addr, normalized } = await deps.fetchAndNormalizeDodoPool(pool);
+              return { addr, raw: normalized, normalized };
+            } catch {
+              return { addr: pool.pool_address.toLowerCase(), raw: null, normalized: null };
+            } finally {
+              completed++;
+              if (completed === group.length || completed % WARMUP_PROGRESS_LOG_EVERY === 0) {
+                logWarmupProgress(stats, "dodo_progress", logContext, {
+                  protocol: "dodo",
+                  completed,
+                  total: group.length,
+                });
+              }
+            }
+          }, deps.enrichConcurrency);
+        },
+      },
+      {
+        key: "woofi",
+        protocols: WARMUP_WOOFI,
+        progressPhase: "woofi_progress",
+        async fetch(group, stats) {
+          let completed = 0;
+          return deps.throttledMap(group, async (pool: PoolRecord) => {
+            try {
+              const { addr, normalized } = await deps.fetchAndNormalizeWoofiPool(pool);
+              return { addr, raw: normalized, normalized };
+            } catch {
+              return { addr: pool.pool_address.toLowerCase(), raw: null, normalized: null };
+            } finally {
+              completed++;
+              if (completed === group.length || completed % WARMUP_PROGRESS_LOG_EVERY === 0) {
+                logWarmupProgress(stats, "woofi_progress", logContext, {
+                  protocol: "woofi",
+                  completed,
+                  total: group.length,
+                });
+              }
+            }
+          }, deps.enrichConcurrency);
+        },
+      },
     ];
 
     stats = createWarmupStats(supportedPools, groups);
@@ -552,6 +608,8 @@ export function createWarmupManager(deps: WarmupDeps) {
     if (WARMUP_V2.has(protocol)) protocolRank = 0;
     else if (WARMUP_V3.has(protocol)) protocolRank = 1;
     else if (WARMUP_BAL.has(protocol)) protocolRank = 2;
+    else if (WARMUP_DODO.has(protocol)) protocolRank = 2;
+    else if (WARMUP_WOOFI.has(protocol)) protocolRank = 2;
 
     let metadataReadiness = 0;
     if (WARMUP_V2.has(protocol)) {
@@ -564,6 +622,10 @@ export function createWarmupManager(deps: WarmupDeps) {
       if (metadata.poolId != null || metadata.pool_id != null) metadataReadiness += 2;
     } else if (WARMUP_CRV.has(protocol)) {
       if (metadata.coins != null || metadata.nCoins != null) metadataReadiness += 1;
+    } else if (WARMUP_DODO.has(protocol)) {
+      if (metadata.baseToken != null && metadata.quoteToken != null) metadataReadiness += 1;
+    } else if (WARMUP_WOOFI.has(protocol)) {
+      if (metadata.wooPP != null && metadata.quoteToken != null) metadataReadiness += 1;
     }
 
     return [
@@ -680,12 +742,16 @@ export function createWarmupManager(deps: WarmupDeps) {
     let v3Count = 0;
     let balancerCount = 0;
     let curveCount = 0;
+    let dodoCount = 0;
+    let woofiCount = 0;
     for (const pool of syncWarmupPools) {
       const protocol = normalizeProtocolKey(pool.protocol);
       if (WARMUP_V2.has(protocol)) v2Count++;
       else if (WARMUP_V3.has(protocol)) v3Count++;
       else if (WARMUP_BAL.has(protocol)) balancerCount++;
       else if (WARMUP_CRV.has(protocol)) curveCount++;
+      else if (WARMUP_DODO.has(protocol)) dodoCount++;
+      else if (WARMUP_WOOFI.has(protocol)) woofiCount++;
     }
 
     deps.log(`State warmup: fetching ${syncWarmupPools.length}/${targetedPools} hub-adjacent pools via RPC (sync)...`, "info", {
@@ -707,6 +773,8 @@ export function createWarmupManager(deps: WarmupDeps) {
         v3: v3Count,
         balancer: balancerCount,
         curve: curveCount,
+        dodo: dodoCount,
+        woofi: woofiCount,
       },
     });
 

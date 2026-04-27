@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
+import { toFunctionSelector } from "viem";
 
 import { V3_SWAP_PROTOCOLS } from "../src/execution/addresses.ts";
 import { encodeRoute } from "../src/execution/calldata.ts";
 import {
+  DODO_PROTOCOLS,
   isSwapExecutionProtocol,
   normalizeProtocolKey,
   V3_PROTOCOLS,
+  WOOFI_PROTOCOLS,
 } from "../src/protocols/classification.ts";
+import { PROTOCOLS } from "../src/protocols/index.ts";
 import { rehydrateStateData } from "../src/db/registry_codec.ts";
 import { normalizePoolState } from "../src/state/normalizer.ts";
 
@@ -19,6 +23,28 @@ assert.equal(normalizeProtocolKey(" kyberswap_elastic "), "KYBERSWAP_ELASTIC");
 assert.equal(V3_PROTOCOLS.has("KYBERSWAP_ELASTIC"), true);
 assert.equal(V3_SWAP_PROTOCOLS.has("KYBERSWAP_ELASTIC"), true);
 assert.equal(isSwapExecutionProtocol(" kyberswap_elastic "), true);
+assert.equal(DODO_PROTOCOLS.has("DODO_DVM"), true);
+assert.equal(isSwapExecutionProtocol(" dodo_dsp "), true);
+assert.equal(WOOFI_PROTOCOLS.has("WOOFI"), true);
+assert.equal(isSwapExecutionProtocol(" woofi "), true);
+assert.deepEqual(PROTOCOLS.KYBERSWAP_ELASTIC.capabilities, {
+  discovery: true,
+  routing: true,
+  execution: true,
+});
+
+{
+  const decoded = PROTOCOLS.KYBERSWAP_ELASTIC.decode!({
+    indexed: [{ val: tokenA }, { val: tokenB }, { val: 30 }],
+    body: [{ val: 60 }, { val: pool }],
+  });
+  assert.equal(decoded.pool_address, pool);
+  assert.deepEqual(decoded.tokens, [tokenA, tokenB]);
+  assert.equal(decoded.metadata.fee, "3000");
+  assert.equal(decoded.metadata.swapFeeBps, "30");
+  assert.equal(decoded.metadata.tickSpacing, "60");
+  assert.equal(decoded.metadata.isKyberElastic, true);
+}
 
 {
   const state = rehydrateStateData("KYBERSWAP_ELASTIC", {
@@ -38,6 +64,7 @@ assert.equal(isSwapExecutionProtocol(" kyberswap_elastic "), true);
     [tokenA.toUpperCase(), tokenB],
     {
       fee: 3000n,
+      swapFeeBps: 30n,
       sqrtPriceX96: 79228162514264337593543950336n,
       tick: 0,
       liquidity: 1_000_000n,
@@ -48,6 +75,8 @@ assert.equal(isSwapExecutionProtocol(" kyberswap_elastic "), true);
   );
   assert.equal(normalized?.protocol, "KYBERSWAP_ELASTIC");
   assert.equal(normalized?.isKyberElastic, true);
+  assert.equal(normalized?.fee, 3000n);
+  assert.equal(normalized?.swapFeeBps, 30n);
   assert.equal(normalized?.poolId, pool, "state normalization should canonicalize pool addresses");
   assert.deepEqual(
     normalized?.tokens,
@@ -117,6 +146,15 @@ assert.equal(
   );
   assert.equal(calls.length, 1, "Kyber Elastic should use direct V3 swap encoding");
   assert.equal(calls[0].target.toLowerCase(), pool);
+  assert.equal(
+    calls[0].data.slice(0, 10),
+    toFunctionSelector("swap(address,int256,bool,uint160,bytes)"),
+    "Kyber Elastic should use its native pool swap ABI, not the Uniswap V3 argument order",
+  );
+  assert.notEqual(
+    calls[0].data.slice(0, 10),
+    toFunctionSelector("swap(address,bool,int256,uint160,bytes)"),
+  );
 }
 
 console.log("Protocol classification checks passed.");

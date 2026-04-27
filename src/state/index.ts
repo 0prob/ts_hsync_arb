@@ -18,6 +18,18 @@ export {
   fetchMultipleV2States,
 } from "./uniswap_v2.ts";
 
+// DODO V2 state
+export {
+  fetchDodoPoolState,
+  fetchMultipleDodoStates,
+} from "./dodo.ts";
+
+// WOOFi state
+export {
+  fetchWoofiPoolState,
+  fetchMultipleWoofiStates,
+} from "./woofi.ts";
+
 // Watcher and Normalizer
 export { StateWatcher } from "./watcher.ts";
 export { normalizePoolState, validatePoolState } from "./normalizer.ts";

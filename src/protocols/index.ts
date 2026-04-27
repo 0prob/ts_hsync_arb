@@ -21,6 +21,8 @@ import CURVE_STABLE_FACTORY from "./curve_stable_factory.ts";
 import CURVE_CRYPTO_FACTORY from "./curve_crypto_factory.ts";
 import CURVE_STABLESWAP_NG from "./curve_stableswap_ng.ts";
 import CURVE_TRICRYPTO_NG from "./curve_tricrypto_ng.ts";
+import { DODO_DVM, DODO_DPP, DODO_DSP } from "./dodo_v2.ts";
+import WOOFI from "./woofi.ts";
 
 export const PROTOCOLS = {
   QUICKSWAP_V2,
@@ -37,6 +39,10 @@ export const PROTOCOLS = {
   CURVE_CRYPTO_FACTORY,
   CURVE_STABLESWAP_NG,
   CURVE_TRICRYPTO_NG,
+  DODO_DVM,
+  DODO_DPP,
+  DODO_DSP,
+  WOOFI,
 };
 
 export { CONTRACT_CATALOG, POLYGON_CHAIN_ID } from "./contract_catalog.ts";
@@ -49,5 +55,6 @@ export * from "./classification.ts";
 export const CURVE_POOL_REMOVED = {
   name: "Curve PoolRemoved",
   address: "0x094d12e5b541784701FD8d65F11fc0598FBC6332",
+  startBlock: 0,
   signature: "event PoolRemoved(address indexed pool)",
 };

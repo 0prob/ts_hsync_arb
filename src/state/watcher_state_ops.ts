@@ -5,7 +5,7 @@
 
 import { mergeStateIntoCache, reloadCacheFromRegistry } from "./cache_utils.ts";
 import { createWatcherProtocolHandlers } from "./watcher_protocol_handlers.ts";
-import { resolveV2FeeNumerator, resolveV3Fee, V3_PROTOCOLS, validatePoolState } from "./normalizer.ts";
+import { resolveV2FeeDenominator, resolveV2FeeNumerator, resolveV3Fee, V3_PROTOCOLS, validatePoolState } from "./normalizer.ts";
 import { logger } from "../utils/logger.ts";
 import { parsePoolMetadataValue } from "../util/pool_record.ts";
 import { topicArrayFromHyperSyncLog } from "../hypersync/logs.ts";
@@ -25,6 +25,8 @@ export async function handleWatcherLogs({
   topic0,
   refreshBalancer,
   refreshCurve,
+  refreshDodo,
+  refreshWoofi,
   refreshV3,
   enqueueEnrichment,
   commitStates,
@@ -84,6 +86,8 @@ export async function handleWatcherLogs({
         enqueueEnrichment,
         refreshBalancer,
         refreshCurve,
+        refreshDodo,
+        refreshWoofi,
         refreshV3,
       })) {
         pending.rawLog = log;
@@ -117,9 +121,17 @@ export function updateV2State(state: any, decoded: any, pool: any = null) {
   state.reserve1 = BigInt(decoded.body[1].val);
   const metadata = parsePoolMetadataValue(pool?.metadata);
   const currentFee = typeof state.fee === "bigint" ? state.fee : null;
-  if (currentFee == null || currentFee <= 0n || currentFee >= 1000n) {
-    state.fee = resolveV2FeeNumerator(metadata);
-    state.feeDenominator = 1000n;
+  const currentFeeDenominator = typeof state.feeDenominator === "bigint" ? state.feeDenominator : null;
+  if (
+    currentFee == null ||
+    currentFeeDenominator == null ||
+    currentFeeDenominator <= 0n ||
+    currentFee <= 0n ||
+    currentFee >= currentFeeDenominator
+  ) {
+    const feeDenominator = resolveV2FeeDenominator(metadata);
+    state.fee = resolveV2FeeNumerator(metadata, 997n, feeDenominator);
+    state.feeDenominator = feeDenominator;
     state.feeSource = metadata?.feeNumerator != null || metadata?.fee != null
       ? "metadata"
       : "default";

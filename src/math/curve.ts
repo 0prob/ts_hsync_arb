@@ -146,6 +146,51 @@ function toXp(balances: bigint[], rates: bigint[]) {
   return balances.map((b, i) => (b * rates[i]) / PRECISION);
 }
 
+function toBigIntArray(values: unknown) {
+  if (!Array.isArray(values)) return null;
+  const out: bigint[] = [];
+  for (const value of values) {
+    try {
+      const normalized = BigInt(value as any);
+      if (normalized < 0n) return null;
+      out.push(normalized);
+    } catch {
+      return null;
+    }
+  }
+  return out;
+}
+
+function toPositiveBigInt(value: unknown) {
+  try {
+    const normalized = BigInt(value as any);
+    return normalized > 0n ? normalized : null;
+  } catch {
+    return null;
+  }
+}
+
+function toNonNegativeBigInt(value: unknown) {
+  try {
+    const normalized = BigInt(value as any);
+    return normalized >= 0n ? normalized : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasValidCurveIndexes(length: number, tokenInIdx: number, tokenOutIdx: number) {
+  return (
+    Number.isInteger(tokenInIdx) &&
+    Number.isInteger(tokenOutIdx) &&
+    tokenInIdx >= 0 &&
+    tokenOutIdx >= 0 &&
+    tokenInIdx < length &&
+    tokenOutIdx < length &&
+    tokenInIdx !== tokenOutIdx
+  );
+}
+
 // ─── Public API ───────────────────────────────────────────────
 
 /**
@@ -160,11 +205,18 @@ function toXp(balances: bigint[], rates: bigint[]) {
 export function getCurveAmountOut(amountIn: bigint, poolState: any, tokenInIdx: number, tokenOutIdx: number) {
   if (amountIn <= 0n) return 0n;
 
-  const { balances, rates, fee, A } = poolState;
-  if (!balances || !A) return 0n;
+  const balances = toBigIntArray(poolState?.balances);
+  const rates = toBigIntArray(poolState?.rates);
+  const fee = toNonNegativeBigInt(poolState?.fee);
+  const A = toPositiveBigInt(poolState?.A);
+  if (!balances || !rates || fee == null || A == null) return 0n;
+  if (balances.length < 2 || rates.length !== balances.length) return 0n;
+  if (!hasValidCurveIndexes(balances.length, tokenInIdx, tokenOutIdx)) return 0n;
+  if (balances.some((balance) => balance <= 0n) || rates.some((rate) => rate <= 0n)) return 0n;
 
   const xp = toXp(balances, rates);
   const D = getD(xp, A);
+  if (D <= 0n) return 0n;
 
   const x = xp[tokenInIdx] + (amountIn * rates[tokenInIdx]) / PRECISION;
 
@@ -205,6 +257,10 @@ export function getCurveAmountIn(amountOut: bigint, poolState: any, tokenInIdx: 
     const out = getCurveAmountOut(hi, poolState, tokenInIdx, tokenOutIdx);
     if (out >= amountOut) break;
     hi *= 2n;
+  }
+
+  if (getCurveAmountOut(hi, poolState, tokenInIdx, tokenOutIdx) < amountOut) {
+    return 0n;
   }
 
   for (let i = 0; i < 64; i++) {

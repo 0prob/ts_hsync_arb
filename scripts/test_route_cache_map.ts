@@ -23,6 +23,16 @@ function route(poolAddress: string, profit: bigint | string = 10n) {
   };
 }
 
+function assessedRoute(poolAddress: string, grossProfit: bigint, netProfitAfterGas: bigint) {
+  return {
+    ...route(poolAddress, grossProfit),
+    assessment: {
+      netProfitAfterGas,
+      netProfit: netProfitAfterGas,
+    },
+  };
+}
+
 {
   const cache = new RouteCache(10);
 
@@ -58,6 +68,28 @@ function route(poolAddress: string, profit: bigint | string = 10n) {
     "RouteCache removeByPools should normalize blocked pool keys",
   );
   assert.equal(cache.size, 0);
+}
+
+{
+  const cache = new RouteCache(2);
+
+  cache.update([
+    assessedRoute(poolA, 1_000n, 10n),
+    assessedRoute(poolB, 100n, 90n),
+    assessedRoute("0xcccccccccccccccccccccccccccccccccccccccc", 50n, 50n),
+  ]);
+
+  assert.equal(cache.size, 2);
+  assert.equal(
+    cache.getByPools([poolA]).length,
+    0,
+    "RouteCache should evict high-gross routes when assessed net profit is lower",
+  );
+  assert.equal(
+    cache.getByPools([poolB]).length,
+    1,
+    "RouteCache should retain routes with stronger assessed net profit",
+  );
 }
 
 console.log("Route cache map checks passed.");

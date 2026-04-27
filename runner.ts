@@ -37,6 +37,8 @@ import { fetchMultipleV2States } from "./src/state/uniswap_v2.ts";
 import { fetchMultipleV3States } from "./src/state/uniswap_v3.ts";
 import { fetchAndNormalizeBalancerPool } from "./src/state/poll_balancer.ts";
 import { fetchAndNormalizeCurvePool } from "./src/state/poll_curve.ts";
+import { fetchAndNormalizeDodoPool } from "./src/state/poll_dodo.ts";
+import { fetchAndNormalizeWoofiPool } from "./src/state/poll_woofi.ts";
 import { throttledMap } from "./src/enrichment/rpc.ts";
 import { logger } from "./src/utils/logger.ts";
 import type { Logger as PinoLogger } from "pino";
@@ -343,6 +345,14 @@ const warmupManager = createWarmupManager({
   fetchAndNormalizeBalancerPool,
   fetchAndNormalizeCurvePool: (pool: PoolRecord) =>
     fetchAndNormalizeCurvePool(pool, {
+      tokenDecimals: registry?.getTokenDecimals(getPoolTokens(pool)) ?? null,
+    }),
+  fetchAndNormalizeDodoPool: (pool: PoolRecord) =>
+    fetchAndNormalizeDodoPool(pool, {
+      tokenDecimals: registry?.getTokenDecimals(getPoolTokens(pool)) ?? null,
+    }),
+  fetchAndNormalizeWoofiPool: (pool: PoolRecord) =>
+    fetchAndNormalizeWoofiPool(pool, {
       tokenDecimals: registry?.getTokenDecimals(getPoolTokens(pool)) ?? null,
     }),
   throttledMap,
@@ -741,5 +751,5 @@ async function main() {
 
 main().catch((err: any) => {
   rootLogger.fatal({ event: "main_fatal", err }, "Fatal error");
-  process.exit(1);
+  void shutdown(1, "fatal");
 });

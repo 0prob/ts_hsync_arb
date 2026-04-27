@@ -40,6 +40,7 @@ type PathLike = {
     tokenOutIdx?: number;
     zeroForOne: boolean;
     fee?: number | null;
+    swapFeeBps?: number | null;
   }>;
 };
 
@@ -58,6 +59,7 @@ type SerializedEvaluationPath = {
     tokenOutIdx?: number;
     zeroForOne: boolean;
     fee?: number | null;
+    swapFeeBps?: number | null;
   }>;
 };
 
@@ -254,6 +256,7 @@ function serialiseEvaluationPath(path: PathLike): SerializedEvaluationPath {
       tokenOutIdx: edge.tokenOutIdx,
       zeroForOne: edge.zeroForOne,
       fee: edge.fee ?? null,
+      swapFeeBps: edge.swapFeeBps ?? null,
     })),
   };
 }

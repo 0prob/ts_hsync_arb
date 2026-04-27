@@ -20,6 +20,8 @@
 
 import { simulateCurveSwap } from "../math/curve.ts";
 import { simulateBalancerSwap } from "../math/balancer.ts";
+import { simulateDodoSwap } from "../math/dodo.ts";
+import { simulateWoofiSwap } from "../math/woofi.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
 import { routeIdentityFromEdges } from "./route_identity.ts";
 import { resolveSwapTokenIndexes } from "./swap_indices.ts";
@@ -90,6 +92,28 @@ function quoteBasedLogWeight(edge: any, simulateFn: any) {
   return amountOutLog - probeAmountLog;
 }
 
+function dodoLogWeight(edge: any) {
+  const state = edge.stateRef;
+  if (!state) return null;
+  const balanceIn = edge.zeroForOne ? state.baseReserve : state.quoteReserve;
+  const probeAmount = probeAmountFromBalance(balanceIn);
+  if (probeAmount <= 0n) return null;
+
+  let amountOut;
+  try {
+    ({ amountOut } = simulateDodoSwap(state, probeAmount, edge.zeroForOne));
+  } catch {
+    return null;
+  }
+  if (!amountOut || amountOut <= 0n) return null;
+
+  const amountOutLog = positiveLog(amountOut);
+  const probeAmountLog = positiveLog(probeAmount);
+  if (amountOutLog == null || probeAmountLog == null) return null;
+
+  return amountOutLog - probeAmountLog;
+}
+
 /**
  * Compute log(spotOut/spotIn) for a single edge using its live stateRef.
  *
@@ -112,11 +136,12 @@ export function edgeSpotLogWeight(edge: any) {
     if (!r0 || !r1 || r0 <= 0n || r1 <= 0n) return null;
     const [rIn, rOut] = edge.zeroForOne ? [r0, r1] : [r1, r0];
     const feeNumerator = toFiniteNumber(edge.fee ?? state.fee, 997);
-    if (feeNumerator <= 0 || feeNumerator >= 1000) return null;
+    const feeDenominator = toFiniteNumber(edge.feeDenominator ?? state.feeDenominator, 1000);
+    if (feeDenominator <= 0 || feeNumerator <= 0 || feeNumerator >= feeDenominator) return null;
     const logOut = positiveLog(rOut);
     const logIn = positiveLog(rIn);
     if (logOut == null || logIn == null) return null;
-    return logOut - logIn + Math.log(feeNumerator / 1000);
+    return logOut - logIn + Math.log(feeNumerator / feeDenominator);
   }
 
   if (edge.protocolKind === "v3") {
@@ -136,6 +161,14 @@ export function edgeSpotLogWeight(edge: any) {
 
   if (edge.protocol.startsWith("BALANCER_")) {
     return quoteBasedLogWeight(edge, simulateBalancerSwap);
+  }
+
+  if (edge.protocol.startsWith("DODO_")) {
+    return dodoLogWeight(edge);
+  }
+
+  if (edge.protocol === "WOOFI") {
+    return quoteBasedLogWeight(edge, simulateWoofiSwap);
   }
 
   // Unknown protocols remain neutral so they are not over-penalized
@@ -269,6 +302,26 @@ function shouldPruneEdge(edge: any, opts: any = {}) {
     if (!Array.isArray(state.balances) || state.balances.length < 2) return false;
     if (!Array.isArray(state.weights) || state.weights.length < 2) return false;
     if (state.balances.some((b: any) => b <= 0n)) return true;
+    return false;
+  }
+
+  if (edge.protocol.startsWith("DODO_")) {
+    if (state.baseReserve == null || state.quoteReserve == null) return false;
+    if (state.baseReserve <= 0n || state.quoteReserve <= 0n) return true;
+    if (state.baseTarget == null || state.quoteTarget == null) return false;
+    if (state.baseTarget <= 0n || state.quoteTarget <= 0n) return true;
+    if (state.i == null || state.i <= 0n) return true;
+    return false;
+  }
+
+  if (edge.protocol === "WOOFI") {
+    if (!Array.isArray(state.balances) || state.balances.length < 2) return false;
+    if (state.balances.some((b: any) => b <= 0n)) return true;
+    if (!state.baseTokenStates || typeof state.baseTokenStates !== "object") return false;
+    const inState = state.baseTokenStates[String(edge.tokenIn).toLowerCase()];
+    const outState = state.baseTokenStates[String(edge.tokenOut).toLowerCase()];
+    if (edge.tokenIn !== state.quoteToken && (!inState || inState.price <= 0n || inState.feasible === false)) return true;
+    if (edge.tokenOut !== state.quoteToken && (!outState || outState.price <= 0n || outState.feasible === false)) return true;
     return false;
   }
 

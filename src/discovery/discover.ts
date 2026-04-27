@@ -24,7 +24,6 @@ import { detectReorg } from "../reorg/detect.ts";
 import { throttledMap } from "../enrichment/rpc.ts";
 import { hydrateNewTokens } from "../enrichment/token_hydrator.ts";
 import {
-  GENESIS_START_BLOCK,
   DB_PATH,
   ENVIO_API_TOKEN,
   HYPERSYNC_URL,
@@ -35,6 +34,8 @@ import { logger } from "../utils/logger.ts";
 import { buildDiscoveredPoolBatch, type DiscoveredPoolCandidate, type DiscoveryRawLog } from "./helpers.ts";
 import type { DecodeResult, ProtocolDefinition } from "../protocols/factories.ts";
 import type { HyperSyncLogQuery } from "../hypersync/query_policy.ts";
+
+const DEFAULT_DISCOVERY_START_BLOCK = 0;
 
 type DiscoveryProtocol = ProtocolDefinition & {
   signatures?: string[];
@@ -65,6 +66,44 @@ function discoveryCheckpointFromNextBlock(nextBlock: number | null, fallbackFrom
     return numericNextBlock - 1;
   }
   return Math.max(0, fallbackFromBlock - 1);
+}
+
+export function protocolDiscoveryStartBlock(protocol: Pick<ProtocolDefinition, "startBlock"> | null | undefined) {
+  const startBlock = Number(protocol?.startBlock);
+  if (Number.isSafeInteger(startBlock) && startBlock >= 0) {
+    return startBlock;
+  }
+  return DEFAULT_DISCOVERY_START_BLOCK;
+}
+
+export function resolveDiscoveryFromBlock(
+  protocol: Pick<ProtocolDefinition, "startBlock"> | null | undefined,
+  checkpointLastBlock: unknown,
+  existingPoolCount: number,
+) {
+  const startBlock = protocolDiscoveryStartBlock(protocol);
+  const existingCheckpointBlock = Number(checkpointLastBlock);
+  const hasCheckpoint =
+    checkpointLastBlock != null &&
+    Number.isSafeInteger(existingCheckpointBlock) &&
+    existingCheckpointBlock >= 0;
+  const checkpointNextBlock = hasCheckpoint
+    ? Math.max(startBlock, existingCheckpointBlock + 1)
+    : startBlock;
+  const shouldBackfillEmptyProtocol =
+    hasCheckpoint &&
+    existingPoolCount === 0 &&
+    existingCheckpointBlock >= startBlock;
+  const fromBlock = shouldBackfillEmptyProtocol
+    ? startBlock
+    : checkpointNextBlock;
+
+  return {
+    fromBlock,
+    startBlock,
+    resumed: hasCheckpoint && !shouldBackfillEmptyProtocol && fromBlock > startBlock,
+    shouldBackfillEmptyProtocol,
+  };
 }
 
 function normalizeDiscoveryDecodeResult(extracted: unknown): DecodeResult {
@@ -207,33 +246,30 @@ async function discoverProtocol(
   }
   const checkpoint = registry.getCheckpoint(key);
   const existingPoolCount = registry.getPoolCountForProtocol(key);
-  const existingCheckpointBlock = Number(checkpoint?.last_block);
-  const shouldBackfillEmptyProtocol =
-    !!checkpoint &&
-    existingPoolCount === 0 &&
-    Number.isFinite(existingCheckpointBlock) &&
-    existingCheckpointBlock >= GENESIS_START_BLOCK;
-
-  const fromBlock = shouldBackfillEmptyProtocol
-    ? GENESIS_START_BLOCK
-    : Number.isFinite(existingCheckpointBlock)
-      ? existingCheckpointBlock + 1
-      : GENESIS_START_BLOCK;
+  const {
+    fromBlock,
+    startBlock,
+    resumed,
+    shouldBackfillEmptyProtocol,
+  } = resolveDiscoveryFromBlock(protocol, checkpoint?.last_block, existingPoolCount);
 
   console.log(
     `\n[${protocol.name}] Discovering from block ${fromBlock}` +
       (shouldBackfillEmptyProtocol
-        ? ` (protocol empty at checkpoint tip — replaying from genesis)`
-        : checkpoint
+        ? ` (protocol empty at checkpoint tip — replaying from protocol start)`
+        : resumed
           ? ` (resumed from checkpoint)`
-          : ` (genesis start)`) +
+          : startBlock === DEFAULT_DISCOVERY_START_BLOCK
+            ? ` (chain start)`
+            : ` (protocol start)`) +
       `...`
   );
   discoveryLogger.info(
     {
       protocol: key,
       fromBlock,
-      resumed: Boolean(checkpoint),
+      startBlock,
+      resumed,
       backfillEmptyProtocol: shouldBackfillEmptyProtocol,
       chainHeight: context.chainHeight ?? null,
     },
@@ -293,10 +329,21 @@ async function discoverProtocol(
 async function discoverCurveRemovals(registry: RegistryService, context: { chainHeight?: number | null } = {}) {
   const checkpointKey = "CURVE_POOL_REMOVED";
   const checkpoint = registry.getCheckpoint(checkpointKey);
-  const existingCheckpointBlock = Number(checkpoint?.last_block);
-  const fromBlock = Number.isFinite(existingCheckpointBlock) ? existingCheckpointBlock + 1 : GENESIS_START_BLOCK;
+  const { fromBlock, startBlock, resumed } = resolveDiscoveryFromBlock(
+    CURVE_POOL_REMOVED,
+    checkpoint?.last_block,
+    1,
+  );
 
-  console.log(`\n[Curve PoolRemoved] Scanning from block ${fromBlock}...`);
+  console.log(
+    `\n[Curve PoolRemoved] Scanning from block ${fromBlock}` +
+      (resumed
+        ? ` (resumed from checkpoint)`
+        : startBlock === DEFAULT_DISCOVERY_START_BLOCK
+          ? ` (chain start)`
+          : ` (protocol start)`) +
+      `...`,
+  );
 
   const { topic0s, decoder } = getDiscoveryQuerySpec(CURVE_POOL_REMOVED as DiscoveryProtocol);
 

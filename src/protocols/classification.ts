@@ -40,11 +40,23 @@ export const BALANCER_PROTOCOLS = new Set([
   "BALANCER_V2",
 ]);
 
+export const DODO_PROTOCOLS = new Set([
+  "DODO_DVM",
+  "DODO_DPP",
+  "DODO_DSP",
+]);
+
+export const WOOFI_PROTOCOLS = new Set([
+  "WOOFI",
+]);
+
 export const SWAP_EXECUTION_PROTOCOLS = new Set([
   ...V2_PROTOCOLS,
   ...V3_PROTOCOLS,
   ...CURVE_PROTOCOLS,
   ...BALANCER_PROTOCOLS,
+  ...DODO_PROTOCOLS,
+  ...WOOFI_PROTOCOLS,
 ]);
 
 export function normalizeProtocolKey(protocol: unknown) {
@@ -65,6 +77,14 @@ export function isCurveProtocol(protocol: unknown) {
 
 export function isBalancerProtocol(protocol: unknown) {
   return BALANCER_PROTOCOLS.has(normalizeProtocolKey(protocol));
+}
+
+export function isDodoProtocol(protocol: unknown) {
+  return DODO_PROTOCOLS.has(normalizeProtocolKey(protocol));
+}
+
+export function isWoofiProtocol(protocol: unknown) {
+  return WOOFI_PROTOCOLS.has(normalizeProtocolKey(protocol));
 }
 
 export function isSwapExecutionProtocol(protocol: unknown) {

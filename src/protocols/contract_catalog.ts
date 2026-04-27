@@ -243,7 +243,7 @@ export const CONTRACT_CATALOG: ContractCatalogEntry[] = [
     ],
   },
   {
-    protocol: "DODO",
+    protocol: "DODO_ZOO",
     label: "DODOZoo",
     address: "0x357c5E9cfA8B834EDcef7C7aAbD8F9Db09119d11",
     role: "factory",
@@ -260,11 +260,11 @@ export const CONTRACT_CATALOG: ContractCatalogEntry[] = [
     ],
   },
   {
-    protocol: "DODO",
+    protocol: "DODO_DVM",
     label: "DODO DVMFactory",
     address: "0x79887f65f83bdf15Bcc8736b5e5BcDB48fb8fE13",
     role: "factory",
-    integration: "catalog_only",
+    integration: "active",
     expectations: [
       {
         type: "event",
@@ -276,11 +276,11 @@ export const CONTRACT_CATALOG: ContractCatalogEntry[] = [
     ],
   },
   {
-    protocol: "DODO",
+    protocol: "DODO_DPP",
     label: "DODO DPPFactory",
     address: "0xd24153244066F0afA9415563bFC7Ba248bfB7a51",
     role: "factory",
-    integration: "catalog_only",
+    integration: "active",
     expectations: [
       {
         type: "event",
@@ -292,11 +292,11 @@ export const CONTRACT_CATALOG: ContractCatalogEntry[] = [
     ],
   },
   {
-    protocol: "DODO",
+    protocol: "DODO_DSP",
     label: "DODO DSPFactory",
     address: "0x43C49f8DD240e1545F147211Ec9f917376Ac1e87",
     role: "factory",
-    integration: "catalog_only",
+    integration: "active",
     expectations: [
       {
         type: "event",
@@ -312,7 +312,7 @@ export const CONTRACT_CATALOG: ContractCatalogEntry[] = [
     label: "WOOFi WooRouterV2",
     address: "0x4c4AF8DBc524681930a27b2F1Af5bcC8062E6fB7",
     role: "router",
-    integration: "catalog_only",
+    integration: "active",
     expectations: [
       { type: "function", name: "querySwap", inputs: ["address", "address", "uint256"] },
       { type: "function", name: "swap", inputs: ["address", "address", "uint256", "uint256", "address", "address"] },
@@ -337,16 +337,32 @@ export const CONTRACT_CATALOG: ContractCatalogEntry[] = [
     label: "WOOFi WooPPv2 Proxy",
     address: "0x5520385bFcf07Ec87C4c53A7d8d65595Dff69FA4",
     role: "pool",
-    integration: "catalog_only",
-    expectations: [],
+    integration: "active",
+    expectations: [
+      { type: "function", name: "quoteToken", inputs: [] },
+      { type: "function", name: "poolSize", inputs: ["address"] },
+      { type: "function", name: "tryQuery", inputs: ["address", "address", "uint256"] },
+      { type: "function", name: "query", inputs: ["address", "address", "uint256"] },
+      { type: "function", name: "swap", inputs: ["address", "address", "uint256", "uint256", "address", "address"] },
+      {
+        type: "event",
+        name: "WooSwap",
+        inputs: ["address", "address", "uint256", "uint256", "address", "address", "address", "uint256", "uint256"],
+        indexed: [true, true, false, false, false, true, false, false, false],
+      },
+    ],
   },
   {
     protocol: "WOOFI",
     label: "WOOFi WooracleV2.2",
     address: "0x2A8Ede62D0717C8C92b88639ecf603FDF31A8428",
     role: "oracle",
-    integration: "catalog_only",
-    expectations: [],
+    integration: "active",
+    expectations: [
+      { type: "function", name: "state", inputs: ["address"] },
+      { type: "function", name: "decimals", inputs: ["address"] },
+      { type: "function", name: "quoteToken", inputs: [] },
+    ],
   },
   {
     protocol: "WOOFI",

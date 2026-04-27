@@ -1,6 +1,6 @@
 
 /**
- * src/math/balancer.js — Balancer V2 weighted pool swap math
+ * src/math/balancer.js — Balancer V2 weighted and stable pool swap math
  *
  * Implements the weighted constant-product invariant for Balancer pools:
  *
@@ -21,7 +21,10 @@
  *     protocol:  string,
  *     tokens:    string[],   // token addresses
  *     balances:  bigint[],   // raw balances (token-decimal precision)
- *     weights:   bigint[],   // normalized weights in 1e18 (must sum to 1e18)
+ *     weights?:  bigint[],   // weighted pools: normalized weights in 1e18 (must sum to 1e18)
+ *     amp?:      bigint,     // stable pools: amplification parameter
+ *     ampPrecision?: bigint, // stable pools: amplification precision, usually 1e3
+ *     scalingFactors?: bigint[], // stable pools: raw token amount -> scaled18 factor
  *     swapFee:   bigint,     // swap fee in 1e18 (e.g. 3e15 = 0.3%)
  *     timestamp: number,
  *   }
@@ -29,11 +32,15 @@
  * References:
  *   https://docs.balancer.fi/reference/math/weighted-math.html
  *   BalancerV2 WeightedMath.sol
+ *   BalancerV2 StableMath.sol
  */
 
 // ─── Constants ────────────────────────────────────────────────
 
 const ONE = 10n ** 18n;
+const DEFAULT_AMP_PRECISION = 1000n;
+const MAX_IN_RATIO = 30n * 10n ** 16n;
+const MAX_OUT_RATIO = 30n * 10n ** 16n;
 
 // Maximum number of iterations for power approximation
 const MAX_POW_ITERATIONS = 255;
@@ -46,6 +53,15 @@ function toBigInt(value: any, fallback = 0n): bigint {
   } catch {
     return fallback;
   }
+}
+
+function absDiff(a: bigint, b: bigint): bigint {
+  return a >= b ? a - b : b - a;
+}
+
+function divUp(a: bigint, b: bigint): bigint {
+  if (b <= 0n) throw new Error("Balancer: division by zero");
+  return a === 0n ? 0n : ((a - 1n) / b) + 1n;
 }
 
 // ─── Fixed-point power (x^y) via log/exp series ───────────────
@@ -177,6 +193,7 @@ export function getBalancerAmountOut(amountIn: bigint, poolState: any, inIdx: nu
   const fee = toBigInt(swapFee);
 
   if (balIn <= 0n || balOut <= 0n || wIn <= 0n || wOut <= 0n) return 0n;
+  if (amountIn > (balIn * MAX_IN_RATIO) / ONE) return 0n;
 
   // amountIn after fee: amountIn * (1 - swapFee)
   const feeComplement = ONE - fee;
@@ -233,6 +250,7 @@ export function getBalancerAmountIn(amountOut: bigint, poolState: any, inIdx: nu
 
   if (balIn <= 0n || balOut <= 0n || wIn <= 0n || wOut <= 0n) return 0n;
   if (amountOut >= balOut) return 0n; // Not enough liquidity
+  if (amountOut > (balOut * MAX_OUT_RATIO) / ONE) return 0n;
 
   // exponent = wOut / wIn
   const exponent = (wOut * ONE) / wIn;
@@ -292,8 +310,166 @@ export function getBalancerAmountIn(amountOut: bigint, poolState: any, inIdx: nu
   return high;
 }
 
+function getScaledBalances(poolState: any): bigint[] | null {
+  const balances = Array.isArray(poolState?.balances) ? poolState.balances : null;
+  const scalingFactors = Array.isArray(poolState?.scalingFactors) ? poolState.scalingFactors : null;
+  if (!balances || !scalingFactors || balances.length !== scalingFactors.length) return null;
+
+  const scaledBalances: bigint[] = balances.map((balance: any, index: number) => {
+    const rawBalance = toBigInt(balance);
+    const scalingFactor = toBigInt(scalingFactors[index]);
+    if (rawBalance <= 0n || scalingFactor <= 0n) return 0n;
+    return (rawBalance * scalingFactor) / ONE;
+  });
+
+  return scaledBalances.every((balance) => balance > 0n) ? scaledBalances : null;
+}
+
 /**
- * Simulate a Balancer weighted pool swap given a unified pool state.
+ * Compute the Balancer stable invariant using the same Newton iteration shape
+ * as Balancer V2 StableMath._calculateInvariant.
+ */
+export function calculateBalancerStableInvariant(
+  amp: bigint,
+  balances: bigint[],
+  ampPrecision = DEFAULT_AMP_PRECISION,
+): bigint {
+  amp = toBigInt(amp);
+  ampPrecision = toBigInt(ampPrecision, DEFAULT_AMP_PRECISION);
+  if (!Array.isArray(balances) || balances.length < 2 || amp <= 0n || ampPrecision <= 0n) return 0n;
+
+  const numTokens = BigInt(balances.length);
+  let sum = 0n;
+  for (const rawBalance of balances) {
+    const balance = toBigInt(rawBalance);
+    if (balance <= 0n) return 0n;
+    sum += balance;
+  }
+  if (sum === 0n) return 0n;
+
+  let invariant = sum;
+  const ampTimesTotal = amp * numTokens;
+  if (ampTimesTotal <= ampPrecision) return 0n;
+
+  for (let i = 0; i < MAX_POW_ITERATIONS; i++) {
+    let D_P = invariant;
+    for (const balance of balances) {
+      D_P = (D_P * invariant) / (balance * numTokens);
+    }
+
+    const prevInvariant = invariant;
+    const numerator = (((ampTimesTotal * sum) / ampPrecision) + D_P * numTokens) * invariant;
+    const denominator = (((ampTimesTotal - ampPrecision) * invariant) / ampPrecision) +
+      (numTokens + 1n) * D_P;
+    if (denominator <= 0n) return 0n;
+    invariant = numerator / denominator;
+
+    if (absDiff(invariant, prevInvariant) <= 1n) return invariant;
+  }
+
+  return invariant;
+}
+
+function getTokenBalanceGivenStableInvariant(
+  amp: bigint,
+  balances: bigint[],
+  invariant: bigint,
+  tokenIndex: number,
+  ampPrecision = DEFAULT_AMP_PRECISION,
+): bigint {
+  amp = toBigInt(amp);
+  ampPrecision = toBigInt(ampPrecision, DEFAULT_AMP_PRECISION);
+  if (
+    !Array.isArray(balances) ||
+    balances.length < 2 ||
+    !Number.isInteger(tokenIndex) ||
+    tokenIndex < 0 ||
+    tokenIndex >= balances.length ||
+    amp <= 0n ||
+    ampPrecision <= 0n ||
+    invariant <= 0n
+  ) {
+    return 0n;
+  }
+
+  const numTokens = BigInt(balances.length);
+  const ampTimesTotal = amp * numTokens;
+  if (ampTimesTotal <= 0n) return 0n;
+
+  let sum = toBigInt(balances[0]);
+  let P_D = toBigInt(balances[0]) * numTokens;
+  for (let j = 1; j < balances.length; j++) {
+    const balance = toBigInt(balances[j]);
+    if (balance <= 0n) return 0n;
+    P_D = (P_D * balance * numTokens) / invariant;
+    sum += balance;
+  }
+
+  const indexedBalance = toBigInt(balances[tokenIndex]);
+  if (indexedBalance <= 0n || P_D <= 0n) return 0n;
+  sum -= indexedBalance;
+
+  const inv2 = invariant * invariant;
+  const c = divUp(inv2, ampTimesTotal * P_D) * ampPrecision * indexedBalance;
+  const b = sum + (invariant / ampTimesTotal) * ampPrecision;
+
+  let tokenBalance = divUp(inv2 + c, invariant + b);
+  for (let i = 0; i < MAX_POW_ITERATIONS; i++) {
+    const prevTokenBalance = tokenBalance;
+    const denominator = 2n * tokenBalance + b - invariant;
+    if (denominator <= 0n) return 0n;
+    tokenBalance = divUp(tokenBalance * tokenBalance + c, denominator);
+    if (absDiff(tokenBalance, prevTokenBalance) <= 1n) return tokenBalance;
+  }
+
+  return tokenBalance;
+}
+
+/**
+ * Compute output amount for a Balancer stable/composable-stable exactInput swap.
+ */
+export function getBalancerStableAmountOut(amountIn: bigint, poolState: any, inIdx: number, outIdx: number): bigint {
+  amountIn = toBigInt(amountIn);
+  if (amountIn <= 0n) return 0n;
+  if (!Number.isInteger(inIdx) || !Number.isInteger(outIdx) || inIdx === outIdx) return 0n;
+
+  const scaledBalances = getScaledBalances(poolState);
+  if (!scaledBalances) return 0n;
+  if (inIdx < 0 || outIdx < 0 || inIdx >= scaledBalances.length || outIdx >= scaledBalances.length) return 0n;
+
+  const scalingFactors = poolState.scalingFactors.map((value: any) => toBigInt(value));
+  const fee = toBigInt(poolState.swapFee);
+  if (fee < 0n || fee >= ONE || scalingFactors[inIdx] <= 0n || scalingFactors[outIdx] <= 0n) return 0n;
+
+  const amountInAfterFee = (amountIn * (ONE - fee)) / ONE;
+  const scaledAmountIn = (amountInAfterFee * scalingFactors[inIdx]) / ONE;
+  if (scaledAmountIn <= 0n) return 0n;
+
+  const amp = toBigInt(poolState.amp);
+  const ampPrecision = toBigInt(poolState.ampPrecision, DEFAULT_AMP_PRECISION);
+  const invariant = calculateBalancerStableInvariant(amp, scaledBalances, ampPrecision);
+  if (invariant <= 0n) return 0n;
+
+  const balancesAfterIn = [...scaledBalances];
+  balancesAfterIn[inIdx] += scaledAmountIn;
+  const finalBalanceOut = getTokenBalanceGivenStableInvariant(
+    amp,
+    balancesAfterIn,
+    invariant,
+    outIdx,
+    ampPrecision,
+  );
+  if (finalBalanceOut <= 0n || finalBalanceOut >= scaledBalances[outIdx]) return 0n;
+
+  const scaledAmountOut = scaledBalances[outIdx] - finalBalanceOut - 1n;
+  if (scaledAmountOut <= 0n) return 0n;
+  const amountOut = (scaledAmountOut * ONE) / scalingFactors[outIdx];
+
+  return amountOut > 0n ? amountOut : 0n;
+}
+
+/**
+ * Simulate a Balancer pool swap given a unified pool state.
  *
  * Routing-compatible wrapper.
  *
@@ -314,7 +490,9 @@ export function simulateBalancerSwap(
 
   let amountOut = 0n;
   try {
-    amountOut = getBalancerAmountOut(amountIn, poolState, inIdx, outIdx);
+    amountOut = poolState?.isStable === true || poolState?.amp != null
+      ? getBalancerStableAmountOut(amountIn, poolState, inIdx, outIdx)
+      : getBalancerAmountOut(amountIn, poolState, inIdx, outIdx);
   } catch {
     amountOut = 0n;
   }

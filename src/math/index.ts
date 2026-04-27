@@ -53,3 +53,11 @@ export {
   getBalancerAmountIn,
   simulateBalancerSwap,
 } from "./balancer.ts";
+
+// WOOFi sPMM math
+export {
+  getWoofiAmountOut,
+  getWoofiFeeRate,
+  getWoofiEdgeFeeBps,
+  simulateWoofiSwap,
+} from "./woofi.ts";

@@ -21,6 +21,10 @@
 import { encodeFunctionData, getAddress, keccak256, encodeAbiParameters } from "viem";
 import {
   ERC20_TRANSFER_ABI,
+  KYBER_ELASTIC_POOL_SWAP_ABI,
+  DODO_SELL_BASE_ABI,
+  DODO_SELL_QUOTE_ABI,
+  WOOFI_ROUTER_SWAP_ABI,
   V2_PAIR_SWAP_ABI,
   V3_POOL_SWAP_ABI,
   CURVE_EXCHANGE_INT128_ABI,
@@ -35,6 +39,9 @@ import {
   CURVE_STABLE_PROTOCOLS,
   CURVE_CRYPTO_PROTOCOLS,
   BALANCER_PROTOCOLS,
+  DODO_PROTOCOLS,
+  WOOFI_PROTOCOLS,
+  WOOFI_ROUTER_V2,
   V3_SWAP_PROTOCOLS,
 } from "./addresses.ts";
 import { MIN_SQRT_RATIO, MAX_SQRT_RATIO } from "../math/tick_math.ts";
@@ -89,6 +96,13 @@ const CALLBACK_PROTOCOL_QUICKSWAP_V3 = 3;
 const CALLBACK_PROTOCOL_KYBER_ELASTIC = 4;
 const BPS_DENOMINATOR = 10_000;
 const MAX_UINT24 = 16_777_215n;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+function normalizeBytes32(value: any) {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value)
+    ? value
+    : null;
+}
 
 function callbackProtocolId(protocol: any) {
   switch (protocol) {
@@ -280,6 +294,143 @@ export function encodeV3Hop(hop: any, recipient: any) {
   ];
 }
 
+function normalizeKyberSwapFeeBps(hop: any) {
+  const normalizeBps = (fee: bigint) => {
+    if (fee > MAX_UINT24) {
+      throw new Error("encodeKyberElasticHop swapFeeBps must fit uint24");
+    }
+    if (fee > 10_000n) {
+      throw new Error("encodeKyberElasticHop swapFeeBps must be <= 10000");
+    }
+    return Number(fee);
+  };
+
+  const explicitFee = hop.swapFeeBps ?? hop.kyberSwapFeeBps ?? hop.metadata?.swapFeeBps;
+  if (explicitFee != null) {
+    const fee = normalizeUint(explicitFee, "encodeKyberElasticHop swapFeeBps");
+    return normalizeBps(fee);
+  }
+
+  const rawFee = hop.fee;
+  const fee = normalizeUint(rawFee ?? 0, "encodeKyberElasticHop swapFeeBps");
+  if (fee > MAX_UINT24) {
+    throw new Error("encodeKyberElasticHop swapFeeBps must fit uint24");
+  }
+  if (fee > 0n && fee % 100n === 0n) {
+    return normalizeBps(fee / 100n);
+  }
+  return normalizeBps(fee);
+}
+
+/**
+ * Encode a KyberSwap Elastic direct pool swap.
+ */
+export function encodeKyberElasticHop(hop: any, recipient: any) {
+  const pool = getAddress(hop.poolAddress);
+  const { token0, token1 } = poolTokensFromHop(hop);
+  const amountSpecified = normalizeUint(hop.amountIn, "encodeKyberElasticHop amountIn");
+  const isToken0 = Boolean(hop.zeroForOne);
+  const sqrtPriceLimitX96 = isToken0
+    ? MIN_SQRT_RATIO + 1n
+    : MAX_SQRT_RATIO - 1n;
+
+  const callbackData = encodeAbiParameters(
+    [{
+      type: "tuple",
+      components: [
+        { name: "protocolId", type: "uint8" },
+        { name: "token0", type: "address" },
+        { name: "token1", type: "address" },
+        { name: "fee", type: "uint24" },
+      ],
+    }],
+    [{
+      protocolId: callbackProtocolId("KYBERSWAP_ELASTIC"),
+      token0,
+      token1,
+      fee: normalizeKyberSwapFeeBps(hop),
+    }],
+  );
+
+  const swapData = encodeFunctionData({
+    abi: KYBER_ELASTIC_POOL_SWAP_ABI,
+    functionName: "swap",
+    args: [
+      getAddress(recipient),
+      amountSpecified,
+      isToken0,
+      sqrtPriceLimitX96,
+      callbackData,
+    ],
+  });
+
+  return [
+    {
+      target: pool,
+      value: 0n,
+      data: swapData,
+    },
+  ];
+}
+
+/**
+ * Encode a DODO V2 direct pool swap (transfer-first pattern).
+ */
+export function encodeDodoHop(hop: any, recipient: any) {
+  const pool = getAddress(hop.poolAddress);
+  const tokenIn = getAddress(hop.tokenIn);
+  const amountIn = normalizeUint(hop.amountIn, "encodeDodoHop amountIn");
+  const calls = [];
+
+  calls.push({
+    target: tokenIn,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: ERC20_TRANSFER_ABI,
+      functionName: "transfer",
+      args: [pool, amountIn],
+    }),
+  });
+
+  calls.push({
+    target: pool,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: hop.zeroForOne ? DODO_SELL_BASE_ABI : DODO_SELL_QUOTE_ABI,
+      functionName: hop.zeroForOne ? "sellBase" : "sellQuote",
+      args: [getAddress(recipient)],
+    }),
+  });
+
+  return calls;
+}
+
+/**
+ * Encode a WOOFi WooRouterV2 swap.
+ */
+export function encodeWoofiHop(hop: any, executor: any, options: any = {}) {
+  const { slippageBps = 50 } = options;
+  const router = getAddress(hop.router ?? hop.metadata?.router ?? WOOFI_ROUTER_V2);
+  const tokenIn = getAddress(hop.tokenIn);
+  const tokenOut = getAddress(hop.tokenOut);
+  const exec = getAddress(executor);
+  const amountIn = normalizeUint(hop.amountIn, "encodeWoofiHop amountIn");
+  const minToAmount = slippageAdjustedAmountOut(hop.amountOut, slippageBps, "encodeWoofiHop");
+
+  return [
+    encodeDynamicApprovalCall(exec, tokenIn, router, amountIn),
+    {
+      target: router,
+      value: 0n,
+      data: encodeFunctionData({
+        abi: WOOFI_ROUTER_SWAP_ABI,
+        functionName: "swap",
+        args: [tokenIn, tokenOut, amountIn, minToAmount, exec, ZERO_ADDRESS],
+      }),
+    },
+  ];
+}
+
 /**
  * Encode a Curve pool swap via exchange().
  */
@@ -332,8 +483,9 @@ export function encodeCurveHop(hop: any, executor: any, options: any = {}) {
  */
 export function encodeBalancerHop(hop: any, executor: any, options: any = {}) {
   const { slippageBps = 50, deadline } = options;
+  const poolId = normalizeBytes32(hop.poolId);
 
-  if (!hop.poolId) {
+  if (!poolId) {
     throw new Error(`encodeBalancerHop: poolId required for pool ${hop.poolAddress}`);
   }
   if (deadline == null) {
@@ -364,7 +516,7 @@ export function encodeBalancerHop(hop: any, executor: any, options: any = {}) {
       args: [
         // SingleSwap
         {
-          poolId:   hop.poolId,
+          poolId,
           kind:     0,          // GIVEN_IN
           assetIn:  tokenIn,
           assetOut: tokenOut,
@@ -414,14 +566,29 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
       amountIn,
       amountOut,
       fee:          edge.fee ?? meta.fee ?? 0,
+      swapFeeBps:   edge.swapFeeBps ?? meta.swapFeeBps,
+      router:       meta.router,
+      metadata:     meta,
       tokenInIdx:   edge.tokenInIdx ?? meta.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
       tokenOutIdx:  edge.tokenOutIdx ?? meta.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0),
       isCrypto:     CURVE_CRYPTO_PROTOCOLS.has(edge.protocol),
-      poolId:       meta.poolId || meta.pool_id || null,
+      poolId:       normalizeBytes32(
+        meta.poolId ??
+        meta.pool_id ??
+        edge.poolId ??
+        edge.stateRef?.balancerPoolId ??
+        edge.stateRef?.poolId
+      ),
     };
 
     if (DIRECT_SWAP_PROTOCOLS.has(proto)) {
       calls.push(...encodeV2Hop(hop, executor));
+    } else if (proto === "KYBERSWAP_ELASTIC") {
+      calls.push(...encodeKyberElasticHop(hop, executor));
+    } else if (DODO_PROTOCOLS.has(proto)) {
+      calls.push(...encodeDodoHop(hop, executor));
+    } else if (WOOFI_PROTOCOLS.has(proto)) {
+      calls.push(...encodeWoofiHop(hop, executor, options));
     } else if (V3_SWAP_PROTOCOLS.has(proto)) {
       calls.push(...encodeV3Hop(hop, executor));
     } else if (CURVE_STABLE_PROTOCOLS.has(proto) || CURVE_CRYPTO_PROTOCOLS.has(proto)) {

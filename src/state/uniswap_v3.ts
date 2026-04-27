@@ -108,12 +108,74 @@ const GLOBAL_STATE_ABI = [
   },
 ];
 
+const KYBER_POOL_STATE_ABI = [
+  {
+    name: "getPoolState",
+    type: "function",
+    inputs: [],
+    outputs: [
+      { name: "sqrtP", type: "uint160" },
+      { name: "currentTick", type: "int24" },
+      { name: "nearestCurrentTick", type: "int24" },
+      { name: "locked", type: "bool" },
+    ],
+    stateMutability: "view",
+  },
+];
+
+const KYBER_LIQUIDITY_STATE_ABI = [
+  {
+    name: "getLiquidityState",
+    type: "function",
+    inputs: [],
+    outputs: [
+      { name: "baseL", type: "uint128" },
+      { name: "reinvestL", type: "uint128" },
+      { name: "reinvestLLast", type: "uint128" },
+    ],
+    stateMutability: "view",
+  },
+];
+
+const KYBER_SWAP_FEE_BPS_ABI = [
+  {
+    name: "swapFeeBps",
+    type: "function",
+    inputs: [],
+    outputs: [{ name: "", type: "uint16" }],
+    stateMutability: "view",
+  },
+];
+
+const KYBER_TICK_DISTANCE_ABI = [
+  {
+    name: "tickDistance",
+    type: "function",
+    inputs: [],
+    outputs: [{ name: "", type: "int24" }],
+    stateMutability: "view",
+  },
+];
+
 const TICK_BITMAP_ABI = [
   {
     name: "tickBitmap",
     type: "function",
     inputs: [{ name: "wordPosition", type: "int16" }],
     outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+];
+
+const KYBER_INITIALIZED_TICKS_ABI = [
+  {
+    name: "initializedTicks",
+    type: "function",
+    inputs: [{ name: "tick", type: "int24" }],
+    outputs: [
+      { name: "previous", type: "int24" },
+      { name: "next", type: "int24" },
+    ],
     stateMutability: "view",
   },
 ];
@@ -137,6 +199,21 @@ const TICKS_ABI = [
   },
 ];
 
+const KYBER_TICKS_ABI = [
+  {
+    name: "ticks",
+    type: "function",
+    inputs: [{ name: "tick", type: "int24" }],
+    outputs: [
+      { name: "liquidityGross", type: "uint128" },
+      { name: "liquidityNet", type: "int128" },
+      { name: "feeGrowthOutside", type: "uint256" },
+      { name: "secondsPerLiquidityOutside", type: "uint128" },
+    ],
+    stateMutability: "view",
+  },
+];
+
 // ─── Constants ────────────────────────────────────────────────
 
 const MIN_TICK = -887272;
@@ -150,6 +227,8 @@ type PoolCoreState = {
   liquidity: bigint;
   fee: number;
   tickSpacing: number;
+  swapFeeBps?: number;
+  nearestCurrentTick?: number;
 };
 
 type TickLiquidity = {
@@ -248,8 +327,48 @@ function chunk<T>(items: T[], size: number): T[][] {
  */
 export async function fetchPoolCore(
   poolAddress: string,
-  { isAlgebra = false }: V3PoolMeta = {}
+  { isAlgebra = false, isKyberElastic = false }: V3PoolMeta = {}
 ): Promise<PoolCoreState> {
+  if (isKyberElastic) {
+    const [poolStateResult, liquidityStateResult, swapFeeBpsResult, tickDistanceResult] =
+      await Promise.all([
+        readContractWithRetry({
+          address: poolAddress,
+          abi: KYBER_POOL_STATE_ABI,
+          functionName: "getPoolState",
+        }),
+        readContractWithRetry({
+          address: poolAddress,
+          abi: KYBER_LIQUIDITY_STATE_ABI,
+          functionName: "getLiquidityState",
+        }),
+        readContractWithRetry({
+          address: poolAddress,
+          abi: KYBER_SWAP_FEE_BPS_ABI,
+          functionName: "swapFeeBps",
+        }),
+        readContractWithRetry({
+          address: poolAddress,
+          abi: KYBER_TICK_DISTANCE_ABI,
+          functionName: "tickDistance",
+        }),
+      ]);
+
+    const baseLiquidity = BigInt(liquidityStateResult[0]);
+    const reinvestLiquidity = BigInt(liquidityStateResult[1]);
+    const swapFeeBps = Number(swapFeeBpsResult);
+
+    return {
+      sqrtPriceX96: BigInt(poolStateResult[0]),
+      tick: Number(poolStateResult[1]),
+      liquidity: baseLiquidity + reinvestLiquidity,
+      fee: swapFeeBps * 100,
+      swapFeeBps,
+      tickSpacing: Number(tickDistanceResult),
+      nearestCurrentTick: Number(poolStateResult[2]),
+    };
+  }
+
   if (isAlgebra) {
     // Algebra: globalState() returns (sqrtPriceX96, tick, fee, ...) in one call
     const [globalStateResult, liquidityResult, tickSpacingResult] =
@@ -485,6 +604,93 @@ export async function fetchTickData(
   return tickMap;
 }
 
+async function fetchKyberTickData(poolAddress: string, tickIndices: number[]) {
+  const uniqueTicks = [...new Set(tickIndices)]
+    .filter((tick) => Number.isSafeInteger(tick))
+    .sort((a, b) => a - b);
+  const tickMap = new Map<number, TickLiquidity>();
+  if (uniqueTicks.length === 0) return tickMap;
+
+  await throttledMap(
+    uniqueTicks,
+    async (tick) => {
+      try {
+        const decoded = await readContractWithRetry({
+          address: poolAddress,
+          abi: KYBER_TICKS_ABI,
+          functionName: "ticks",
+          args: [tick],
+        });
+        const liquidityGross = BigInt(decoded[0]);
+        if (liquidityGross <= 0n) return;
+        tickMap.set(tick, {
+          liquidityGross,
+          liquidityNet: BigInt(decoded[1]),
+        });
+      } catch {
+        // A sparse or removed Kyber tick should not poison the whole pool.
+      }
+    },
+    ENRICH_CONCURRENCY,
+  );
+
+  return tickMap;
+}
+
+async function fetchKyberInitializedTickWindow(
+  poolAddress: string,
+  centerTick: number,
+  tickRadius: number,
+) {
+  const radius = Math.max(0, Math.min(Math.trunc(Number(tickRadius) || 0), 64));
+  const tickSet = new Set<number>();
+  if (Number.isSafeInteger(centerTick)) tickSet.add(centerTick);
+
+  async function neighborTicks(tick: number) {
+    const decoded = await readContractWithRetry({
+      address: poolAddress,
+      abi: KYBER_INITIALIZED_TICKS_ABI,
+      functionName: "initializedTicks",
+      args: [tick],
+    });
+    return {
+      previous: Number(decoded[0]),
+      next: Number(decoded[1]),
+    };
+  }
+
+  let left = centerTick;
+  for (let i = 0; i < radius && Number.isSafeInteger(left); i++) {
+    try {
+      const { previous } = await neighborTicks(left);
+      if (!Number.isSafeInteger(previous) || previous === left || tickSet.has(previous)) break;
+      tickSet.add(previous);
+      left = previous;
+    } catch {
+      break;
+    }
+  }
+
+  let right = centerTick;
+  for (let i = 0; i < radius && Number.isSafeInteger(right); i++) {
+    try {
+      const { next } = await neighborTicks(right);
+      if (!Number.isSafeInteger(next) || next === right || tickSet.has(next)) break;
+      tickSet.add(next);
+      right = next;
+    } catch {
+      break;
+    }
+  }
+
+  const tickIndices = [...tickSet].sort((a, b) => a - b);
+  return {
+    bitmaps: new Map<number, bigint>(),
+    tickIndices,
+    ticks: await fetchKyberTickData(poolAddress, tickIndices),
+  };
+}
+
 function shouldFallbackToIndividualV3Reads(error: unknown): boolean {
   return isEndpointCapabilityError(error);
 }
@@ -510,8 +716,8 @@ export async function fetchV3PoolState(
   }: V3PoolMeta & V3FetchOptions = {}
 ): Promise<V3PoolState> {
   // Step 1: Core state (dispatches to Algebra or Uniswap V3 interface)
-  const useAlgebraInterface = isAlgebra || isKyberElastic;
-  const core = await fetchPoolCore(poolAddress, { isAlgebra: useAlgebraInterface });
+  const useAlgebraInterface = isAlgebra === true;
+  const core = await fetchPoolCore(poolAddress, { isAlgebra: useAlgebraInterface, isKyberElastic });
 
   // Skip pools that are uninitialized (sqrtPriceX96 == 0)
   if (core.sqrtPriceX96 === 0n) {
@@ -530,21 +736,32 @@ export async function fetchV3PoolState(
 
   let bitmaps = new Map<number, bigint>();
   let tickIndices: number[] = [];
-  if (hydrationMode === "full") {
-    ({ bitmaps, tickIndices } = await fetchTickBitmap(poolAddress, core.tickSpacing));
-  } else if (hydrationMode === "nearby") {
-    ({ bitmaps, tickIndices } = await fetchTickBitmapWindow(
+  let ticks = new Map<number, TickLiquidity>();
+  if (isKyberElastic && hydrationMode !== "none") {
+    const tickWindow = await fetchKyberInitializedTickWindow(
       poolAddress,
-      core.tickSpacing,
-      core.tick,
+      core.nearestCurrentTick ?? core.tick,
       nearWordRadius,
-    ));
-  }
+    );
+    bitmaps = tickWindow.bitmaps;
+    tickIndices = tickWindow.tickIndices;
+    ticks = tickWindow.ticks;
+  } else {
+    if (hydrationMode === "full") {
+      ({ bitmaps, tickIndices } = await fetchTickBitmap(poolAddress, core.tickSpacing));
+    } else if (hydrationMode === "nearby") {
+      ({ bitmaps, tickIndices } = await fetchTickBitmapWindow(
+        poolAddress,
+        core.tickSpacing,
+        core.tick,
+        nearWordRadius,
+      ));
+    }
 
-  // Step 3: Fetch liquidityNet for each initialized tick.
-  // Algebra ticks() returns the same types as Uniswap V3 (uint128, int128, ..., bool)
-  // so TICKS_ABI is compatible with both.
-  const ticks = await fetchTickData(poolAddress, tickIndices);
+    // Algebra ticks() returns the same types as Uniswap V3, so TICKS_ABI is
+    // compatible with both.
+    ticks = await fetchTickData(poolAddress, tickIndices);
+  }
 
   return {
     address: poolAddress,

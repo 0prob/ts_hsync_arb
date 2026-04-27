@@ -17,6 +17,7 @@ export type ProtocolCapabilities = {
 export type ProtocolDefinition = {
   name: string;
   address: string;
+  startBlock?: number;
   signature?: string;
   decode?: (decoded: any, rawLog?: any) => DecodeResult;
   enrichTokens?: (poolMeta: any) => Promise<string[]>;
@@ -34,10 +35,14 @@ export function createPairCreatedProtocol(
   name: string,
   address: string,
   metadata: Record<string, unknown> = EMPTY_METADATA,
+  options: { startBlock?: number } = {},
 ): ProtocolDefinition {
   return {
     name,
     address,
+    ...(Number.isSafeInteger(options.startBlock) && options.startBlock! >= 0
+      ? { startBlock: options.startBlock }
+      : {}),
     capabilities: FULLY_SUPPORTED_CAPABILITIES,
     signature: "event PairCreated(address indexed token0, address indexed token1, address pair, uint256)",
     decode(decoded: any) {
@@ -58,10 +63,14 @@ export function createUniV3PoolProtocol(
   address: string,
   metadata: Record<string, unknown> = EMPTY_METADATA,
   capabilities: ProtocolCapabilities = FULLY_SUPPORTED_CAPABILITIES,
+  options: { startBlock?: number } = {},
 ): ProtocolDefinition {
   return {
     name,
     address,
+    ...(Number.isSafeInteger(options.startBlock) && options.startBlock! >= 0
+      ? { startBlock: options.startBlock }
+      : {}),
     capabilities,
     signature:
       "event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)",
@@ -85,14 +94,24 @@ export function createUniV3PoolProtocol(
 export function createRpcTokenProtocol({
   name,
   address,
+  startBlock,
   signature,
   decode,
   enrichTokens,
   capabilities = FULLY_SUPPORTED_CAPABILITIES,
 }: Required<Pick<ProtocolDefinition, "name" | "address" | "signature" | "decode" | "enrichTokens">> & {
   capabilities?: ProtocolCapabilities;
+  startBlock?: number;
 }): ProtocolDefinition {
-  return { name, address, signature, decode, enrichTokens, capabilities };
+  return {
+    name,
+    address,
+    ...(Number.isSafeInteger(startBlock) && startBlock! >= 0 ? { startBlock } : {}),
+    signature,
+    decode,
+    enrichTokens,
+    capabilities,
+  };
 }
 
 type CurveListedFactoryOptions = {

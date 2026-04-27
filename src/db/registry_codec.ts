@@ -7,6 +7,8 @@ import { normalizeEvmAddress } from "../util/pool_record.ts";
 import {
   isBalancerProtocol,
   isCurveProtocol,
+  isDodoProtocol,
+  isWoofiProtocol,
   isV2Protocol,
   isV3Protocol,
   normalizeProtocolKey,
@@ -16,12 +18,15 @@ const BIGINT_SCALAR_FIELDS: Record<string, string[]> = {
   V2:      ["fee", "reserve0", "reserve1"],
   V3:      ["fee", "sqrtPriceX96", "liquidity"],
   CURVE:   ["fee", "A", "swapFee"],
-  BALANCER:["swapFee"],
+  BALANCER:["swapFee", "amp", "ampPrecision"],
+  DODO:    ["fee", "baseReserve", "quoteReserve", "baseTarget", "quoteTarget", "i", "k", "lpFeeRate", "mtFeeRate"],
+  WOOFI:   ["fee", "feeDenominator", "quoteReserve", "quoteFeeRate", "quoteDec"],
 };
 
 const BIGINT_ARRAY_FIELDS: Record<string, string[]> = {
   CURVE:   ["balances", "rates"],
-  BALANCER:["balances", "weights"],
+  BALANCER:["balances", "weights", "scalingFactors"],
+  WOOFI:   ["balances"],
 };
 
 function protocolClass(protocol: string): string {
@@ -30,6 +35,8 @@ function protocolClass(protocol: string): string {
   if (isV3Protocol(protocolKey)) return "V3";
   if (isCurveProtocol(protocolKey)) return "CURVE";
   if (isBalancerProtocol(protocolKey)) return "BALANCER";
+  if (isDodoProtocol(protocolKey)) return "DODO";
+  if (isWoofiProtocol(protocolKey)) return "WOOFI";
   return "";
 }
 
@@ -91,6 +98,26 @@ function rehydrateV3State(data: any) {
   data.ticks = rehydrateV3Ticks(data.ticks);
 }
 
+function rehydrateWoofiState(data: any) {
+  if (!data?.baseTokenStates || typeof data.baseTokenStates !== "object") return;
+  for (const state of Object.values(data.baseTokenStates) as any[]) {
+    for (const field of [
+      "reserve",
+      "feeRate",
+      "maxGamma",
+      "maxNotionalSwap",
+      "price",
+      "spread",
+      "coeff",
+      "baseDec",
+      "quoteDec",
+      "priceDec",
+    ]) {
+      if (state?.[field] != null) state[field] = toBigIntSafe(state[field]);
+    }
+  }
+}
+
 export function rehydrateStateData(protocol: string, data: any): any {
   if (!data) return data;
   const cls = protocolClass(protocol);
@@ -104,6 +131,8 @@ export function rehydrateStateData(protocol: string, data: any): any {
   }
   if (cls === "V3") {
     rehydrateV3State(data);
+  } else if (cls === "WOOFI") {
+    rehydrateWoofiState(data);
   }
   return data;
 }

@@ -53,6 +53,50 @@ const GET_SWAP_FEE_ABI = [
   },
 ];
 
+const GET_AMPLIFICATION_PARAMETER_ABI = [
+  {
+    name: "getAmplificationParameter",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "value", type: "uint256" },
+      { name: "isUpdating", type: "bool" },
+      { name: "precision", type: "uint256" },
+    ],
+  },
+];
+
+const GET_SCALING_FACTORS_ABI = [
+  {
+    name: "getScalingFactors",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
+];
+
+const GET_BPT_INDEX_ABI = [
+  {
+    name: "getBptIndex",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+];
+
+const VERSION_ABI = [
+  {
+    name: "version",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
+];
+
 const GET_POOL_ID_ABI = [
   {
     name: "getPoolId",
@@ -78,6 +122,106 @@ function withTimeout(promise: any, label: any, ms = BALANCER_READ_TIMEOUT_MS) {
 
 async function readContractWithTimeout(params: any, label: any) {
   return withTimeout(readContractWithRetry(params), label, BALANCER_READ_TIMEOUT_MS);
+}
+
+function removeArrayIndex<T>(values: T[], index: number | null) {
+  if (index == null || !Number.isInteger(index) || index < 0 || index >= values.length) return values;
+  return values.filter((_value, valueIndex) => valueIndex !== index);
+}
+
+function parsePoolVersion(value: unknown) {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed?.name === "string" ? parsed.name : value;
+  } catch {
+    return value || null;
+  }
+}
+
+async function fetchBalancerStableState(poolAddress: string, tokens: string[], balances: bigint[]) {
+  const [ampResult, scalingResult, bptIndexResult, versionResult, feeResult] = await Promise.allSettled([
+    readContractWithTimeout(
+      {
+        address: poolAddress,
+        abi: GET_AMPLIFICATION_PARAMETER_ABI,
+        functionName: "getAmplificationParameter",
+      },
+      `Balancer getAmplificationParameter ${poolAddress}`
+    ),
+    readContractWithTimeout(
+      {
+        address: poolAddress,
+        abi: GET_SCALING_FACTORS_ABI,
+        functionName: "getScalingFactors",
+      },
+      `Balancer getScalingFactors ${poolAddress}`
+    ),
+    readContractWithTimeout(
+      {
+        address: poolAddress,
+        abi: GET_BPT_INDEX_ABI,
+        functionName: "getBptIndex",
+      },
+      `Balancer getBptIndex ${poolAddress}`
+    ),
+    readContractWithTimeout(
+      {
+        address: poolAddress,
+        abi: VERSION_ABI,
+        functionName: "version",
+      },
+      `Balancer version ${poolAddress}`
+    ),
+    readContractWithTimeout(
+      {
+        address: poolAddress,
+        abi: GET_SWAP_FEE_ABI,
+        functionName: "getSwapFeePercentage",
+      },
+      `Balancer getSwapFeePercentage ${poolAddress}`
+    ),
+  ]);
+
+  if (ampResult.status === "rejected") {
+    throw new Error(
+      `getAmplificationParameter failed: unsupported Balancer pool math (${ampResult.reason?.message ?? "unknown error"})`
+    );
+  }
+  if (scalingResult.status === "rejected") {
+    throw new Error(
+      `getScalingFactors failed: unsupported Balancer pool math (${scalingResult.reason?.message ?? "unknown error"})`
+    );
+  }
+
+  const ampTuple: any = ampResult.value;
+  const scalingFactors = Array.from(scalingResult.value as any).map((v) => BigInt(v as any));
+  const rawBptIndex = bptIndexResult.status === "fulfilled" ? Number(bptIndexResult.value) : null;
+  const bptIndex = Number.isInteger(rawBptIndex) && rawBptIndex! >= 0 && rawBptIndex! < tokens.length
+    ? rawBptIndex
+    : null;
+  const compactTokens = removeArrayIndex(tokens, bptIndex);
+  const compactBalances = removeArrayIndex(balances, bptIndex);
+  const compactScalingFactors = removeArrayIndex(scalingFactors, bptIndex);
+  const version = versionResult.status === "fulfilled" ? parsePoolVersion(versionResult.value) : null;
+
+  return {
+    tokens: compactTokens,
+    balances: compactBalances,
+    scalingFactors: compactScalingFactors.length === compactBalances.length
+      ? compactScalingFactors
+      : compactBalances.map(() => 10n ** 18n),
+    amp: BigInt(ampTuple?.value ?? ampTuple?.[0] ?? 0),
+    ampIsUpdating: Boolean(ampTuple?.isUpdating ?? ampTuple?.[1] ?? false),
+    ampPrecision: BigInt(ampTuple?.precision ?? ampTuple?.[2] ?? 1000),
+    swapFee:
+      feeResult.status === "fulfilled"
+        ? BigInt(feeResult.value)
+        : 3_000_000_000_000_000n,
+    bptIndex,
+    poolType: version ?? (bptIndex == null ? "StablePool" : "ComposableStablePool"),
+    isStable: true,
+  };
 }
 
 export async function fetchBalancerPoolState(poolAddress: string, poolId: string | null | undefined) {
@@ -132,10 +276,19 @@ export async function fetchBalancerPoolState(poolAddress: string, poolId: string
   const [vaultTokens, vaultBalances, lastChangeBlock] = vaultResult.value;
   const balances = Array.from(vaultBalances).map((v) => BigInt(v as any));
 
+  const swapFee =
+    feeResult.status === "fulfilled"
+      ? BigInt(feeResult.value)
+      : 3_000_000_000_000_000n;
+
   if (weightsResult.status === "rejected") {
-    throw new Error(
-      `getNormalizedWeights failed: unsupported Balancer pool math or unreadable weights (${weightsResult.reason?.message ?? "unknown error"})`
-    );
+    const stableState = await fetchBalancerStableState(poolAddress, Array.from(vaultTokens).map((t: any) => t.toLowerCase()), balances);
+    return {
+      poolId: resolvedPoolId,
+      lastChangeBlock: Number(lastChangeBlock),
+      fetchedAt: Date.now(),
+      ...stableState,
+    };
   }
 
   const weights = Array.from(weightsResult.value).map((v) => BigInt(v as any));
@@ -145,17 +298,14 @@ export async function fetchBalancerPoolState(poolAddress: string, poolId: string
     );
   }
 
-  const swapFee =
-    feeResult.status === "fulfilled"
-      ? BigInt(feeResult.value)
-      : 3_000_000_000_000_000n;
-
   return {
     poolId: resolvedPoolId,
     tokens: Array.from(vaultTokens).map((t: any) => t.toLowerCase()),
     balances,
     weights,
     swapFee,
+    poolType: "WeightedPool",
+    isStable: false,
     lastChangeBlock: Number(lastChangeBlock),
     fetchedAt: Date.now(),
   };

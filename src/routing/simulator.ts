@@ -18,6 +18,8 @@ import { simulateV2Swap } from "../math/uniswap_v2.ts";
 import { simulateV3Swap } from "../math/uniswap_v3.ts";
 import { simulateCurveSwap } from "../math/curve.ts";
 import { simulateBalancerSwap } from "../math/balancer.ts";
+import { simulateDodoSwap } from "../math/dodo.ts";
+import { simulateWoofiSwap } from "../math/woofi.ts";
 import { workerPool } from "./worker_pool.ts";
 import { EVAL_WORKER_THRESHOLD, WORKER_COUNT } from "../config/index.ts";
 import { getPathHopCount } from "./path_hops.ts";
@@ -25,9 +27,11 @@ import { resolveSwapTokenIndexes } from "./swap_indices.ts";
 import {
   BALANCER_PROTOCOLS,
   CURVE_PROTOCOLS,
+  DODO_PROTOCOLS,
   normalizeProtocolKey,
   V2_PROTOCOLS,
   V3_PROTOCOLS,
+  WOOFI_PROTOCOLS,
 } from "../protocols/classification.ts";
 
 // ─── Single-hop simulation ────────────────────────────────────
@@ -59,7 +63,8 @@ export function simulateHop(edge: any, amountIn: any, stateCache: any) {
 
   if (V2_PROTOCOLS.has(protocol)) {
     const feeNum = state.fee != null ? BigInt(state.fee) : 997n;
-    return simulateV2Swap(state, amountIn, edge.zeroForOne, feeNum);
+    const feeDen = state.feeDenominator != null ? BigInt(state.feeDenominator) : 1000n;
+    return simulateV2Swap(state, amountIn, edge.zeroForOne, feeNum, feeDen);
   }
 
   if (V3_PROTOCOLS.has(protocol)) {
@@ -85,6 +90,23 @@ export function simulateHop(edge: any, amountIn: any, stateCache: any) {
       return { amountOut: 0n, gasEstimate: 0 };
     }
     return simulateBalancerSwap(
+      amountIn,
+      state,
+      indexes.tokenInIdx,
+      indexes.tokenOutIdx,
+    );
+  }
+
+  if (DODO_PROTOCOLS.has(protocol)) {
+    return simulateDodoSwap(state, amountIn, edge.zeroForOne);
+  }
+
+  if (WOOFI_PROTOCOLS.has(protocol)) {
+    const indexes = resolveSwapTokenIndexes(edge, state);
+    if (!indexes) {
+      return { amountOut: 0n, gasEstimate: 0 };
+    }
+    return simulateWoofiSwap(
       amountIn,
       state,
       indexes.tokenInIdx,

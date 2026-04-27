@@ -19,11 +19,12 @@
  */
 
 import { simulateV3Swap } from "../math/uniswap_v3.ts";
+import { getWoofiEdgeFeeBps, getWoofiFeeRate } from "../math/woofi.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
 import { getPoolMetadata, getPoolTokens, hasZeroAddressToken } from "../util/pool_record.ts";
 import { PROTOCOLS } from "../protocols/index.ts";
 import { EXTRA_HUB_4_TOKENS, EXTRA_POLYGON_HUB_TOKENS } from "../config/index.ts";
-import { normalizeProtocolKey, V2_PROTOCOLS, V3_PROTOCOLS } from "../protocols/classification.ts";
+import { DODO_PROTOCOLS, normalizeProtocolKey, V2_PROTOCOLS, V3_PROTOCOLS, WOOFI_PROTOCOLS } from "../protocols/classification.ts";
 
 // ─── Protocol sets ────────────────────────────────────────────
 
@@ -41,15 +42,25 @@ function getProtocolKind(protocol: any) {
   const protocolKey = normalizeProtocolKey(protocol);
   if (V2_PROTOCOLS.has(protocolKey)) return "v2";
   if (V3_PROTOCOLS.has(protocolKey)) return "v3";
+  if (DODO_PROTOCOLS.has(protocolKey)) return "dodo";
+  if (WOOFI_PROTOCOLS.has(protocolKey)) return "woofi";
   return "other";
 }
 
-function getFeeBps(protocolKind: any, fee: any) {
+function getFeeBps(protocolKind: any, fee: any, feeDenominator?: any) {
   if (protocolKind === "v2") {
     const numerator = toFiniteNumber(fee, 997);
-    return Math.max(0, Math.round((1000 - numerator) * 10));
+    const denominator = toFiniteNumber(feeDenominator, 1000);
+    if (denominator <= 0 || numerator <= 0 || numerator >= denominator) return 0;
+    return Math.max(0, Math.round(((denominator - numerator) / denominator) * 10_000));
   }
   if (protocolKind === "v3") return Math.round(toFiniteNumber(fee, 3000) / 100);
+  if (protocolKind === "dodo") {
+    return Math.max(0, Math.round(toFiniteNumber(fee, 0) / 1e18 * 10_000));
+  }
+  if (protocolKind === "woofi") {
+    return Math.max(0, Math.round(toFiniteNumber(fee, 0) / 10));
+  }
   return 0;
 }
 
@@ -62,12 +73,14 @@ function createSwapEdge({
   tokenOutIdx,
   zeroForOne,
   fee,
+  swapFeeBps,
+  feeDenominator,
   swapFn,
   stateRef,
   metadata,
 }: {
   protocol: any; poolAddress: any; tokenIn: any; tokenOut: any;
-  tokenInIdx?: any; tokenOutIdx?: any; zeroForOne: any; fee: any; swapFn: any; stateRef: any; metadata: any;
+  tokenInIdx?: any; tokenOutIdx?: any; zeroForOne: any; fee: any; swapFeeBps?: any; feeDenominator?: any; swapFn: any; stateRef: any; metadata: any;
 }) {
   const protocolKind = getProtocolKind(protocol);
   return {
@@ -80,7 +93,9 @@ function createSwapEdge({
     tokenOutIdx,
     zeroForOne,
     fee,
-    feeBps: getFeeBps(protocolKind, fee),
+    swapFeeBps,
+    feeDenominator,
+    feeBps: getFeeBps(protocolKind, fee, feeDenominator),
     swapFn,
     stateRef,
     metadata,
@@ -92,17 +107,25 @@ function getRoutablePoolContext(pool: any, stateMap: any) {
   const protocol = normalizeProtocolKey(pool.protocol);
   if (!protocolSupportsRouting(protocol)) return null;
 
-  const tokens = getPoolTokens(pool);
+  const poolAddress = pool.pool_address.toLowerCase();
+  const stateRef = getLiveStateRef(stateMap, poolAddress);
+  const stateTokens = Array.isArray(stateRef?.tokens) && stateRef.tokens.length >= 2
+    ? stateRef.tokens
+    : null;
+  const tokens = stateTokens ?? getPoolTokens(pool);
   if (!tokens || tokens.length < 2 || hasZeroAddressToken(tokens)) return null;
 
-  const poolAddress = pool.pool_address.toLowerCase();
   const metadata = getPoolMetadata(pool);
   const isV3 = V3_PROTOCOLS.has(protocol);
-  const stateRef = getLiveStateRef(stateMap, poolAddress);
+  const isDodo = DODO_PROTOCOLS.has(protocol);
   const fee = isV3
-    ? metadata?.fee !== undefined
-      ? Number(metadata.fee)
-      : stateRef?.fee != null
+    ? stateRef?.fee != null
+      ? Number(stateRef.fee)
+      : metadata?.fee !== undefined
+        ? Number(metadata.fee)
+        : undefined
+    : isDodo
+      ? stateRef?.fee != null
         ? Number(stateRef.fee)
         : undefined
     : stateRef?.fee != null
@@ -110,6 +133,22 @@ function getRoutablePoolContext(pool: any, stateMap: any) {
       : metadata?.feeNumerator !== undefined
         ? Number(metadata.feeNumerator)
         : undefined;
+  const swapFeeBps = isV3 && protocol === "KYBERSWAP_ELASTIC"
+    ? stateRef?.swapFeeBps != null
+      ? Number(stateRef.swapFeeBps)
+      : metadata?.swapFeeBps != null
+        ? Number(metadata.swapFeeBps)
+        : undefined
+    : undefined;
+  const feeDenominator = !isV3
+    ? stateRef?.feeDenominator != null
+      ? Number(stateRef.feeDenominator)
+      : metadata?.feeDenominator !== undefined
+        ? Number(metadata.feeDenominator)
+        : metadata?.fee_denominator !== undefined
+          ? Number(metadata.fee_denominator)
+          : undefined
+    : undefined;
 
   return {
     tokens: tokens.map((token: string) => token.toLowerCase()),
@@ -117,6 +156,8 @@ function getRoutablePoolContext(pool: any, stateMap: any) {
     poolAddress,
     metadata,
     fee,
+    swapFeeBps,
+    feeDenominator,
     stateRef,
     swapFn: isV3 && stateRef ? simulateV3Swap : null,
   };
@@ -131,10 +172,14 @@ function addPoolEdges(
   const context = getRoutablePoolContext(pool, stateMap);
   if (!context || !shouldInclude(context)) return false;
 
-  const { tokens, protocol, poolAddress, metadata, fee, stateRef, swapFn } = context;
+  const { tokens, protocol, poolAddress, metadata, fee, swapFeeBps, feeDenominator, stateRef, swapFn } = context;
+  const isWoofi = WOOFI_PROTOCOLS.has(protocol);
   for (let tokenInIdx = 0; tokenInIdx < tokens.length; tokenInIdx++) {
     for (let tokenOutIdx = 0; tokenOutIdx < tokens.length; tokenOutIdx++) {
       if (tokenInIdx === tokenOutIdx) continue;
+      const edgeFee = isWoofi && stateRef
+        ? getWoofiFeeRate(stateRef, tokens[tokenInIdx], tokens[tokenOutIdx])
+        : fee;
       graph.addEdge(createSwapEdge({
         protocol,
         poolAddress,
@@ -143,10 +188,19 @@ function addPoolEdges(
         tokenInIdx,
         tokenOutIdx,
         zeroForOne: tokenInIdx < tokenOutIdx,
-        fee,
+        fee: edgeFee,
+        swapFeeBps,
+        feeDenominator,
         swapFn,
         stateRef,
-        metadata: { ...metadata, tokenInIdx, tokenOutIdx },
+        metadata: {
+          ...metadata,
+          tokenInIdx,
+          tokenOutIdx,
+          ...(isWoofi && stateRef
+            ? { feeBps: getWoofiEdgeFeeBps(stateRef, tokens[tokenInIdx], tokens[tokenOutIdx]) }
+            : {}),
+        },
       }));
     }
   }
@@ -512,8 +566,8 @@ export const HUB_4_TOKENS = new Set([
 export function serializeTopology(graph: any) {
   const adjacency: Record<string, any[]> = {};
   for (const [token, edges] of graph.adjacency) {
-    adjacency[token] = edges.map(({ protocol, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee }: any) => ({
-      protocol, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee: fee ?? null,
+    adjacency[token] = edges.map(({ protocol, protocolKind, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee, swapFeeBps, feeDenominator, feeBps }: any) => ({
+      protocol, protocolKind, poolAddress, tokenIn, tokenOut, tokenInIdx, tokenOutIdx, zeroForOne, fee: fee ?? null, swapFeeBps: swapFeeBps ?? null, feeDenominator: feeDenominator ?? null, feeBps: feeBps ?? null,
     }));
   }
   return adjacency;
@@ -530,7 +584,7 @@ export function deserializeTopology(adjacency: any) {
   const graph = new RoutingGraph();
   for (const edges of Object.values(adjacency) as any[]) {
     for (const e of edges) {
-      graph.addEdge({ ...e, fee: e.fee ?? undefined, swapFn: null, stateRef: null, metadata: null });
+      graph.addEdge({ ...e, fee: e.fee ?? undefined, feeDenominator: e.feeDenominator ?? undefined, feeBps: e.feeBps ?? undefined, swapFn: null, stateRef: null, metadata: null });
     }
   }
   return graph;

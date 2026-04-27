@@ -11,6 +11,7 @@ const REGISTRY_ADDRESS = "0x094d12e5b541784701FD8d65F11fc0598FBC6332";
 export default createRpcTokenProtocol({
   name: "Curve Main Registry",
   address: REGISTRY_ADDRESS,
+  startBlock: 0,
   signature: "event PoolAdded(address indexed pool, bytes rate_method_id)",
   decode(decoded: any) {
     // indexed: [pool]; body: [rate_method_id]

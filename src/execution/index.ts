@@ -15,6 +15,9 @@ export {
   CURVE_STABLE_PROTOCOLS,
   CURVE_CRYPTO_PROTOCOLS,
   BALANCER_PROTOCOLS,
+  WOOFI_PROTOCOLS,
+  WOOFI_ROUTER_V2,
+  WOOFI_WOOPP_V2,
 } from "./addresses.ts";
 
 // ABI fragments
@@ -29,6 +32,7 @@ export {
   CURVE_EXCHANGE_INT128_ABI,
   CURVE_EXCHANGE_UINT256_ABI,
   BALANCER_VAULT_SWAP_ABI,
+  WOOFI_ROUTER_SWAP_ABI,
 } from "./abi_fragments.ts";
 
 // Calldata encoding
@@ -37,6 +41,7 @@ export {
   encodeV3Hop,
   encodeCurveHop,
   encodeBalancerHop,
+  encodeWoofiHop,
   encodeRoute,
   computeRouteHash,
   buildFlashParams,

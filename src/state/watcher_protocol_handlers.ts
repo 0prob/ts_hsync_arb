@@ -56,5 +56,13 @@ export function createWatcherProtocolHandlers({
       enqueueEnrichment(addr, () => refreshCurve(addr, pool));
       return true;
     }],
+    [topic0.DODO_SWAP, ({ addr, pool, enqueueEnrichment, refreshDodo }: any) => {
+      enqueueEnrichment(addr, () => refreshDodo(addr, pool));
+      return true;
+    }],
+    [topic0.WOOFI_SWAP, ({ addr, pool, enqueueEnrichment, refreshWoofi }: any) => {
+      enqueueEnrichment(addr, () => refreshWoofi(addr, pool));
+      return true;
+    }],
   ]);
 }

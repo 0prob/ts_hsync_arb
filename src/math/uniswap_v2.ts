@@ -31,14 +31,16 @@ export function getV2AmountOut(
   amountIn: bigint,
   reserveIn: bigint,
   reserveOut: bigint,
-  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR
+  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR,
+  feeDenominator: bigint = FEE_DENOMINATOR
 ): bigint {
   if (amountIn <= 0n) return 0n;
   if (reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  if (feeNumerator <= 0n || feeDenominator <= 0n || feeNumerator >= feeDenominator) return 0n;
 
   const amountInWithFee = amountIn * feeNumerator;
   const numerator = amountInWithFee * reserveOut;
-  const denominator = reserveIn * FEE_DENOMINATOR + amountInWithFee;
+  const denominator = reserveIn * feeDenominator + amountInWithFee;
 
   return numerator / denominator;
 }
@@ -58,15 +60,17 @@ export function getV2AmountIn(
   amountOut: bigint,
   reserveIn: bigint,
   reserveOut: bigint,
-  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR
+  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR,
+  feeDenominator: bigint = FEE_DENOMINATOR
 ): bigint {
   if (amountOut <= 0n) return 0n;
   if (reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  if (feeNumerator <= 0n || feeDenominator <= 0n || feeNumerator >= feeDenominator) return 0n;
   if (amountOut >= reserveOut) {
     throw new Error("V2Math: insufficient liquidity for desired output");
   }
 
-  const numerator = reserveIn * amountOut * FEE_DENOMINATOR;
+  const numerator = reserveIn * amountOut * feeDenominator;
   const denominator = (reserveOut - amountOut) * feeNumerator;
 
   return numerator / denominator + 1n;
@@ -87,7 +91,8 @@ export function simulateV2Swap(
   poolState: any,
   amountIn: bigint,
   zeroForOne: boolean,
-  feeNumerator: bigint = DEFAULT_FEE_NUMERATOR
+  feeNumerator?: bigint,
+  feeDenominator?: bigint
 ): { amountOut: bigint; gasEstimate: number } {
   if (amountIn <= 0n) {
     return { amountOut: 0n, gasEstimate: 0 };
@@ -100,7 +105,15 @@ export function simulateV2Swap(
     return { amountOut: 0n, gasEstimate: 0 };
   }
 
-  const amountOut = getV2AmountOut(amountIn, reserveIn, reserveOut, feeNumerator);
+  const resolvedFeeNumerator = feeNumerator ?? (poolState.fee != null ? BigInt(poolState.fee) : DEFAULT_FEE_NUMERATOR);
+  const resolvedFeeDenominator = feeDenominator ?? (poolState.feeDenominator != null ? BigInt(poolState.feeDenominator) : FEE_DENOMINATOR);
+  const amountOut = getV2AmountOut(
+    amountIn,
+    reserveIn,
+    reserveOut,
+    resolvedFeeNumerator,
+    resolvedFeeDenominator,
+  );
 
   // V2 swaps are ~60k gas
   return { amountOut, gasEstimate: 60000 };

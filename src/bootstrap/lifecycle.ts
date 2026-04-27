@@ -22,6 +22,8 @@ type StoppableOracle = {
   stop: () => void;
 };
 
+type ShutdownReason = "signal" | "fatal" | "complete";
+
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
 }
@@ -138,24 +140,44 @@ export function createShutdownHandler(deps: {
 }) {
   let shutdownPromise: Promise<void> | null = null;
 
-  return async function shutdown() {
+  return async function shutdown(exitCodeOrSignal: number | string = 0, reason: ShutdownReason = "signal") {
     if (shutdownPromise) return shutdownPromise;
+    const exitCode = typeof exitCodeOrSignal === "number" ? exitCodeOrSignal : 0;
+    const signal = typeof exitCodeOrSignal === "string" ? exitCodeOrSignal : undefined;
+    async function cleanupStep(step: string, cleanup: () => Promise<void> | void) {
+      try {
+        await cleanup();
+      } catch (err) {
+        deps.log(`Shutdown cleanup failed during ${step}: ${errorMessage(err)}`, "warn", {
+          event: "shutdown_cleanup_error",
+          step,
+          err,
+        });
+      }
+    }
+
     shutdownPromise = (async () => {
-      deps.log("Shutdown signal received...");
-      deps.setRunning(false);
-      deps.stopHeartbeat?.();
-      deps.cancelScheduledArb?.();
-      const watcher = deps.getWatcher();
-      if (watcher) await watcher.stop();
-      await deps.waitForArbIdle?.();
-      await deps.waitForBackgroundTasks?.();
-      deps.stopTui();
-      if (deps.gasOracle) deps.gasOracle.stop();
-      await deps.workerPool.terminate();
-      const registry = deps.getRegistry();
-      if (registry) registry.close();
-      deps.stopMetricsServer();
-      deps.exit(0);
+      deps.log(reason === "fatal" ? "Fatal error received; shutting down..." : "Shutdown signal received...", "info", {
+        event: "shutdown_start",
+        reason,
+        exitCode,
+        ...(signal ? { signal } : {}),
+      });
+      await cleanupStep("runtime", () => deps.setRunning(false));
+      await cleanupStep("heartbeat", () => deps.stopHeartbeat?.());
+      await cleanupStep("arb_scheduler", () => deps.cancelScheduledArb?.());
+      await cleanupStep("watcher", async () => {
+        const watcher = deps.getWatcher();
+        if (watcher) await watcher.stop();
+      });
+      await cleanupStep("arb_idle", () => deps.waitForArbIdle?.());
+      await cleanupStep("background_tasks", () => deps.waitForBackgroundTasks?.());
+      await cleanupStep("tui", () => deps.stopTui());
+      await cleanupStep("gas_oracle", () => deps.gasOracle?.stop());
+      await cleanupStep("worker_pool", () => deps.workerPool.terminate());
+      await cleanupStep("registry", () => deps.getRegistry()?.close());
+      await cleanupStep("metrics", () => deps.stopMetricsServer());
+      deps.exit(exitCode);
     })();
     return shutdownPromise;
   };

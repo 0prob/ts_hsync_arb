@@ -174,9 +174,6 @@ export const HYPERSYNC_MAX_FILTERS_PER_REQUEST = _num(
 
 // ─── Discovery ─────────────────────────────────────────────────
 
-/** Block number to start discovery from if no checkpoint exists */
-export const GENESIS_START_BLOCK = _num("GENESIS_START_BLOCK", "GENESIS_START_BLOCK", 44_000_000);
-
 /** Interval between background pool discovery runs (ms) */
 export const DISCOVERY_INTERVAL_MS = _num("DISCOVERY_INTERVAL_MS", "DISCOVERY_INTERVAL_MS", 30 * 60 * 1000);
 
