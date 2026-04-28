@@ -244,6 +244,7 @@ export async function throttledMap<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   concurrency = 3,
 ): Promise<R[]> {
+  if (items.length === 0) return [];
   const results = new Array<R>(items.length);
   let nextIndex = 0;
 
@@ -254,8 +255,12 @@ export async function throttledMap<T, R>(
     }
   }
 
+  const workerCount = Math.max(
+    1,
+    Math.min(Math.floor(Number(concurrency) || 1), items.length),
+  );
   const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
+    { length: workerCount },
     () => worker()
   );
   await Promise.all(workers);

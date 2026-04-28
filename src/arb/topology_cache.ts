@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { toFiniteNumber as normaliseLogWeight } from "../util/bigint.ts";
 import { routeIdentityFromSerializedPath } from "../routing/route_identity.ts";
 
@@ -24,6 +27,13 @@ export type ArbPathLike = {
   hopCount: number;
   logWeight: unknown;
   cumulativeFeesBps?: number;
+};
+
+type PersistentRouteCycleCache = {
+  version: 1;
+  cacheKey: string;
+  writtenAt: number;
+  paths: SerializedPathLike[];
 };
 
 function normalizeSerializedPath(serialised: SerializedPathLike | null | undefined) {
@@ -163,9 +173,59 @@ export function createTopologyCache(maxTotalPaths: number) {
     return paths.length > maxTotalPaths ? paths.slice(0, maxTotalPaths) : paths;
   }
 
+  function serializePaths(paths: ArbPathLike[]): SerializedPathLike[] {
+    return paths.map((path) => ({
+      startToken: path.startToken,
+      poolAddresses: path.edges.map((edge) => edge.poolAddress),
+      tokenIns: path.edges.map((edge) => edge.tokenIn),
+      tokenOuts: path.edges.map((edge) => edge.tokenOut),
+      zeroForOnes: path.edges.map((edge) => edge.zeroForOne),
+      hopCount: path.hopCount,
+      logWeight: typeof path.logWeight === "bigint" ? path.logWeight.toString() : path.logWeight,
+      cumulativeFeesBps: path.cumulativeFeesBps,
+    }));
+  }
+
+  function readPersistentRouteCycles(cacheFile: string | null | undefined, cacheKey: string) {
+    if (!cacheFile) return { hit: false, paths: [] as SerializedPathLike[] };
+    try {
+      const parsed = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as PersistentRouteCycleCache;
+      if (parsed?.version !== 1 || parsed.cacheKey !== cacheKey || !Array.isArray(parsed.paths)) {
+        return { hit: false, paths: [] as SerializedPathLike[] };
+      }
+      return { hit: true, paths: parsed.paths };
+    } catch {
+      return { hit: false, paths: [] as SerializedPathLike[] };
+    }
+  }
+
+  function writePersistentRouteCycles(
+    cacheFile: string | null | undefined,
+    cacheKey: string,
+    paths: ArbPathLike[],
+  ) {
+    if (!cacheFile) return false;
+    if (paths.length === 0) return false;
+    try {
+      fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+      const payload: PersistentRouteCycleCache = {
+        version: 1,
+        cacheKey,
+        writtenAt: Date.now(),
+        paths: serializePaths(paths),
+      };
+      fs.writeFileSync(cacheFile, `${JSON.stringify(payload)}\n`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return {
     getSerializedTopologyCached,
     hydratePaths,
     invalidateSerializedTopologies,
+    readPersistentRouteCycles,
+    writePersistentRouteCycles,
   };
 }

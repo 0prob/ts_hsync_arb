@@ -3,6 +3,7 @@ import { createTopologyCache } from "../arb/topology_cache.ts";
 import type { ArbPathLike } from "../arb/assessment.ts";
 import { getPoolTokens, normalizeEvmAddress } from "../util/pool_record.ts";
 import { poolLiquidityWmatic } from "../routing/liquidity.ts";
+import { routeIdentityFromEdges } from "../routing/route_identity.ts";
 import type { RouteCache } from "../routing/route_cache.ts";
 import type { RoutingGraph } from "../routing/graph.ts";
 import { takeTopNBy } from "../util/bounded_priority.ts";
@@ -50,6 +51,8 @@ type TopologyServiceDeps = {
   polygonHubTokens: Set<string>;
   hub4Tokens: Set<string>;
   selective4HopTokenLimit: number;
+  dynamicPivotTokenLimit?: number;
+  routeCycleCacheFile?: string | null;
   workerCount: number;
   workerPool: WorkerEnumerator;
   isWorkerPoolInitialized: () => boolean;
@@ -100,7 +103,14 @@ export function createTopologyService(deps: TopologyServiceDeps) {
     };
   }
 
-  function selectHighLiquidityHubTokens(graph: RoutingGraphLike, getRateWei: ((token: string) => bigint) | null) {
+  function selectHighLiquidityHubTokens(
+    graph: RoutingGraphLike,
+    getRateWei: ((token: string) => bigint) | null,
+    limit = deps.selective4HopTokenLimit,
+  ) {
+    const normalizedLimit = Math.max(0, Math.floor(Number(limit)));
+    if (normalizedLimit <= 0) return [];
+
     const ranked = [...deps.polygonHubTokens]
       .filter((token) => graph?.hasToken?.(token))
       .map((token) => {
@@ -126,7 +136,101 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         return a.liquidityScore > b.liquidityScore ? -1 : 1;
       });
 
-    return ranked.slice(0, deps.selective4HopTokenLimit).map((entry) => entry.token);
+    return ranked.slice(0, normalizedLimit).map((entry) => entry.token);
+  }
+
+  function selectFullGraphPivotTokens(graph: RoutingGraphLike, getRateWei: ((token: string) => bigint) | null) {
+    const limit = Math.max(
+      1,
+      Math.floor(Number(deps.dynamicPivotTokenLimit ?? deps.polygonHubTokens.size)),
+    );
+    return selectHighLiquidityHubTokens(graph, getRateWei, limit);
+  }
+
+  function quantizeLiquidityValue(value: unknown) {
+    try {
+      const raw = BigInt(value as any);
+      if (raw <= 0n) return "0";
+      const digits = raw.toString();
+      return `${digits.length}:${digits.slice(0, 2)}`;
+    } catch {
+      return "x";
+    }
+  }
+
+  function stateLiquiditySignature(state: PoolState | undefined) {
+    if (!state) return "missing";
+    const parts: string[] = [];
+    for (const key of ["reserve0", "reserve1", "liquidity", "baseReserve", "quoteReserve"]) {
+      if (state[key] != null) parts.push(`${key}=${quantizeLiquidityValue(state[key])}`);
+    }
+    if (Array.isArray(state.balances)) {
+      parts.push(`balances=${state.balances.map((balance: unknown) => quantizeLiquidityValue(balance)).join(",")}`);
+    }
+    return parts.length > 0 ? parts.join(";") : "none";
+  }
+
+  function hashString32(value: string, seed = 0x811c9dc5) {
+    let hash = seed >>> 0;
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash >>> 0;
+  }
+
+  function poolSignatureDigest(pools: PoolRecord[]) {
+    let xor = 0;
+    let sum = 0;
+    let sum2 = 0;
+    let count = 0;
+    for (const pool of pools) {
+      const addr = normalizeEvmAddress(pool.pool_address);
+      if (!addr) continue;
+      const tokens = getPoolRoutingTokens(pool).join(",");
+      const signature = [
+        addr,
+        pool.protocol,
+        tokens,
+        stateLiquiditySignature(deps.stateCache.get(addr)),
+      ].join(":");
+      const hash = hashString32(signature);
+      xor = (xor ^ hash) >>> 0;
+      sum = (sum + hash) >>> 0;
+      sum2 = (sum2 + hashString32(signature, 0x9e3779b9)) >>> 0;
+      count++;
+    }
+
+    return {
+      count,
+      xor: xor.toString(16).padStart(8, "0"),
+      sum: sum.toString(16).padStart(8, "0"),
+      sum2: sum2.toString(16).padStart(8, "0"),
+    };
+  }
+
+  function buildRouteCycleCacheKey(
+    pools: PoolRecord[],
+    options: {
+      minLiquidityWmatic: bigint;
+      selective4HopPathBudget: number;
+      selective4HopMaxPathsPerToken: number;
+    },
+    fullPivotTokens: string[],
+    selective4HopTokens: string[],
+  ) {
+    return JSON.stringify({
+      version: 1,
+      routingCycleMode: deps.routingCycleMode,
+      routingMaxHops: deps.routingMaxHops,
+      maxTotalPaths: deps.maxTotalPaths,
+      minLiquidityWmatic: options.minLiquidityWmatic.toString(),
+      selective4HopPathBudget: options.selective4HopPathBudget,
+      selective4HopMaxPathsPerToken: options.selective4HopMaxPathsPerToken,
+      fullPivotTokens,
+      selective4HopTokens,
+      pools: poolSignatureDigest(pools),
+    });
   }
 
   function markPoolsDirty(poolAddresses: Iterable<string>) {
@@ -160,7 +264,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
 
     for (const group of groups) {
       for (const path of group) {
-        const key = `${path.startToken.toLowerCase()}::${path.edges.map((edge) => edge.poolAddress.toLowerCase()).join("::")}`;
+        const key = routeIdentityFromEdges(path.startToken, path.edges);
         if (seen.has(key)) continue;
         seen.add(key);
         merged.push(path);
@@ -351,6 +455,7 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       const selective4HopTokens = deps.routingCycleMode === "triangular"
         ? []
         : selectHighLiquidityHubTokens(activeFullGraph, options.getRateWei);
+      const fullPivotTokens = selectFullGraphPivotTokens(activeFullGraph, options.getRateWei);
       const dirtyStartTokens = [...dirtyHubStartTokens].filter((token) => activeFullGraph.hasToken(token));
       const canUseIncrementalRefresh =
         !rebuildGraphs &&
@@ -359,11 +464,28 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         dirtyStartTokens.length > 0 &&
         dirtyStartTokens.length <= Math.max(8, deps.selective4HopTokenLimit * 2);
 
-      if (deps.workerCount >= 2 && deps.isWorkerPoolInitialized() && !canUseIncrementalRefresh) {
+      const routeCycleCacheKey = buildRouteCycleCacheKey(pools, options, fullPivotTokens, selective4HopTokens);
+      let loadedPersistentCycleCache = false;
+      if (!canUseIncrementalRefresh) {
+        const cached = topologyCache.readPersistentRouteCycles(deps.routeCycleCacheFile, routeCycleCacheKey);
+        if (cached.hit) {
+          cachedCycles = topologyCache.hydratePaths(cached.paths, activeHubGraph, activeFullGraph);
+          loadedPersistentCycleCache = true;
+          deps.log("[runner] Loaded precomputed route cycle cache", "info", {
+            event: "route_cycle_cache_hit",
+            cachedPaths: cachedCycles.length,
+            fullPivotTokens: fullPivotTokens.length,
+            selective4HopTokens: selective4HopTokens.length,
+          });
+        }
+      }
+
+      if (loadedPersistentCycleCache) {
+        // Hydration already filtered paths whose edges no longer exist in the active graphs.
+      } else if (deps.workerCount >= 2 && deps.isWorkerPoolInitialized() && !canUseIncrementalRefresh) {
         const hubTopo = topologyCache.getSerializedTopologyCached("hub", activeHubGraph, deps.serializeTopology);
         const fullTopo = topologyCache.getSerializedTopologyCached("full", activeFullGraph, deps.serializeTopology);
         const hubTokens = [...deps.hub4Tokens].filter((t) => activeHubGraph.hasToken(t));
-        const fullTokens = [...deps.polygonHubTokens].filter((t) => activeFullGraph.hasToken(t));
 
         const [hubSer, fullSer, selective4HopSer] = await Promise.all([
           deps.workerPool.enumerate(hubTopo, hubTokens, {
@@ -372,9 +494,9 @@ export function createTopologyService(deps: TopologyServiceDeps) {
             max4HopPathsPerToken: 2_000,
             topologyKey: `${topologyKeyBase}:hub`,
           }),
-          deps.workerPool.enumerate(fullTopo, fullTokens, {
+          deps.workerPool.enumerate(fullTopo, fullPivotTokens, {
             ...cycleModeOptions(false),
-            maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.35 / Math.max(fullTokens.length, 1)),
+            maxPathsPerToken: Math.ceil(deps.maxTotalPaths * 0.35 / Math.max(fullPivotTokens.length, 1)),
             topologyKey: `${topologyKeyBase}:full`,
           }),
           selective4HopTokens.length > 0
@@ -442,6 +564,8 @@ export function createTopologyService(deps: TopologyServiceDeps) {
       } else {
         const baseCycles = deps.enumerateCyclesDual(activeHubGraph, activeFullGraph, {
           ...cycleModeOptions(false),
+          hubStartTokens: deps.hub4Tokens,
+          fullStartTokens: fullPivotTokens,
           maxPathsPerToken: Math.ceil(deps.maxTotalPaths / 7),
           max4HopPathsPerToken: 2_000,
           maxTotalPaths: deps.maxTotalPaths,
@@ -467,6 +591,22 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         cachedCycles = mergeArbPaths(baseCycles, selective4HopCycles);
       }
 
+      if (!loadedPersistentCycleCache) {
+        const wroteCache = topologyCache.writePersistentRouteCycles(
+          deps.routeCycleCacheFile,
+          routeCycleCacheKey,
+          cachedCycles,
+        );
+        if (wroteCache) {
+          deps.log("[runner] Stored precomputed route cycle cache", "debug", {
+            event: "route_cycle_cache_store",
+            cachedPaths: cachedCycles.length,
+            fullPivotTokens: fullPivotTokens.length,
+            selective4HopTokens: selective4HopTokens.length,
+          });
+        }
+      }
+
       deps.routeCache.prune(deps.stateCache);
       topologyDirty = false;
       dirtyPoolAddresses.clear();
@@ -480,6 +620,8 @@ export function createTopologyService(deps: TopologyServiceDeps) {
         maxTotalPaths: deps.maxTotalPaths,
         routingCycleMode: deps.routingCycleMode,
         selective4HopTokens: selective4HopTokens.length,
+        fullPivotTokens: fullPivotTokens.length,
+        routeCycleCacheHit: loadedPersistentCycleCache,
         routeCacheSize: deps.routeCache.routes.length,
       });
       return cachedCycles;

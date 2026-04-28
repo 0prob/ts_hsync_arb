@@ -24,6 +24,7 @@ import { workerPool } from "./worker_pool.ts";
 import { EVAL_WORKER_THRESHOLD, WORKER_COUNT } from "../config/index.ts";
 import { getPathHopCount } from "./path_hops.ts";
 import { resolveSwapTokenIndexes } from "./swap_indices.ts";
+import { normalizeEvmAddress } from "../util/pool_record.ts";
 import {
   BALANCER_PROTOCOLS,
   CURVE_PROTOCOLS,
@@ -36,6 +37,46 @@ import {
 
 // ─── Single-hop simulation ────────────────────────────────────
 
+function lookupPoolState(edge: any, stateCache: any) {
+  if (edge?.stateRef) return edge.stateRef;
+  if (typeof stateCache?.get !== "function") return null;
+
+  const normalizedPool = normalizeEvmAddress(edge?.poolAddress);
+  if (normalizedPool && stateCache.has(normalizedPool)) {
+    return stateCache.get(normalizedPool);
+  }
+  return stateCache.get(edge?.poolAddress) ?? null;
+}
+
+function isFastEvmAddress(value: string) {
+  if (value.length !== 42) return false;
+  if (value.charCodeAt(0) !== 48) return false;
+  const prefix = value.charCodeAt(1);
+  if (prefix !== 120 && prefix !== 88) return false;
+  for (let i = 2; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    const digit = code >= 48 && code <= 57;
+    const upper = code >= 65 && code <= 70;
+    const lower = code >= 97 && code <= 102;
+    if (!digit && !upper && !lower) return false;
+  }
+  return true;
+}
+
+function sameRouteToken(a: unknown, b: unknown) {
+  if (typeof a === "string" && typeof b === "string") {
+    const fastA = isFastEvmAddress(a);
+    if (fastA && a === b) return true;
+    if (fastA && isFastEvmAddress(b)) {
+      return a.toLowerCase() === b.toLowerCase();
+    }
+  }
+
+  const tokenA = normalizeEvmAddress(a);
+  const tokenB = normalizeEvmAddress(b);
+  return tokenA != null && tokenA === tokenB;
+}
+
 /**
  * Simulate a single hop in a route.
  *
@@ -47,8 +88,9 @@ import {
 export function simulateHop(edge: any, amountIn: any, stateCache: any) {
   if (amountIn <= 0n) return { amountOut: 0n, gasEstimate: 0 };
 
-  // Prefer pre-attached state from graph edge (V3 edges built with stateMap)
-  const state = edge.stateRef || stateCache.get(edge.poolAddress);
+  // Prefer pre-attached state from graph edges, but normalize fallback lookups
+  // for worker/serialized paths that do not carry stateRef.
+  const state = lookupPoolState(edge, stateCache);
 
   if (!state) {
     return { amountOut: 0n, gasEstimate: 0 };
@@ -150,8 +192,18 @@ export function simulateRoute(path: any, amountIn: any, stateCache: any) {
   const protocols = [];
   let totalGas = 0;
   let current = amountIn;
+  let expectedTokenIn = path.startToken;
 
-  for (const edge of path.edges) {
+  if (!Array.isArray(path?.edges) || path.edges.length === 0 || hopCount !== path.edges.length) {
+    current = 0n;
+  }
+
+  for (const edge of current > 0n ? path.edges : []) {
+    if (!sameRouteToken(edge.tokenIn, expectedTokenIn)) {
+      current = 0n;
+      break;
+    }
+
     const { amountOut, gasEstimate } = simulateHop(edge, current, stateCache);
 
     current = amountOut;
@@ -160,8 +212,13 @@ export function simulateRoute(path: any, amountIn: any, stateCache: any) {
     tokenPath.push(edge.tokenOut);
     protocols.push(edge.protocol);
     totalGas += gasEstimate;
+    expectedTokenIn = edge.tokenOut;
 
     if (amountOut === 0n) break; // No point continuing
+  }
+
+  if (current > 0n && !sameRouteToken(expectedTokenIn, path.startToken)) {
+    current = 0n;
   }
 
   const profit = current - amountIn;

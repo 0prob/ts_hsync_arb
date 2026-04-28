@@ -74,4 +74,91 @@ function baseV3State() {
   assert.equal(validatePoolState(state).valid, true);
 }
 
+{
+  const state = baseV3State();
+  updateV3LiquidityState(
+    state,
+    {
+      indexed: [
+        { val: "0x3333333333333333333333333333333333333333" },
+        { val: "-60" },
+        { val: "60" },
+      ],
+      body: [
+        { val: "0x4444444444444444444444444444444444444444" },
+        { val: "1000" },
+        { val: "0" },
+        { val: "0" },
+      ],
+    },
+    true,
+    { metadata: { fee: "3000" } },
+  );
+
+  assert.deepEqual(
+    state.ticks.get(-60),
+    { liquidityGross: 1000n, liquidityNet: 1000n },
+    "V3 mint should increase lower tick gross and net liquidity",
+  );
+  assert.deepEqual(
+    state.ticks.get(60),
+    { liquidityGross: 1000n, liquidityNet: -1000n },
+    "V3 mint should increase upper tick gross and decrease net liquidity",
+  );
+  assert.equal(state.liquidity, 1_001_000n);
+
+  updateV3LiquidityState(
+    state,
+    {
+      indexed: [
+        { val: "0x3333333333333333333333333333333333333333" },
+        { val: "-60" },
+        { val: "60" },
+      ],
+      body: [
+        { val: "400" },
+        { val: "0" },
+        { val: "0" },
+      ],
+    },
+    false,
+    { metadata: { fee: "3000" } },
+  );
+
+  assert.deepEqual(
+    state.ticks.get(-60),
+    { liquidityGross: 600n, liquidityNet: 600n },
+    "V3 burn should decrease lower tick gross and net liquidity",
+  );
+  assert.deepEqual(
+    state.ticks.get(60),
+    { liquidityGross: 600n, liquidityNet: -600n },
+    "V3 burn should decrease upper tick gross and increase net liquidity toward zero",
+  );
+  assert.equal(state.liquidity, 1_000_600n);
+
+  updateV3LiquidityState(
+    state,
+    {
+      indexed: [
+        { val: "0x3333333333333333333333333333333333333333" },
+        { val: "-60" },
+        { val: "60" },
+      ],
+      body: [
+        { val: "600" },
+        { val: "0" },
+        { val: "0" },
+      ],
+    },
+    false,
+    { metadata: { fee: "3000" } },
+  );
+
+  assert.equal(state.ticks.has(-60), false, "fully burned lower tick should be removed");
+  assert.equal(state.ticks.has(60), false, "fully burned upper tick should be removed");
+  assert.equal(state.liquidity, 1_000_000n);
+  assert.equal(validatePoolState(state).valid, true);
+}
+
 console.log("Watcher V3 fee hydration checks passed.");

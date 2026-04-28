@@ -105,6 +105,9 @@ import {
   ROUTE_STATE_MAX_SKEW_MS,
   CYCLE_REFRESH_INTERVAL_MS,
   SELECTIVE_4HOP_TOKEN_LIMIT,
+  DYNAMIC_PIVOT_TOKEN_LIMIT,
+  ROUTE_CYCLE_CACHE_FILE,
+  METRICS_PORT,
   SELECTIVE_4HOP_PATH_BUDGET,
   SELECTIVE_4HOP_MAX_PATHS_PER_TOKEN,
   ROUTING_MAX_HOPS,
@@ -508,6 +511,8 @@ topologyService = createTopologyService({
   polygonHubTokens: POLYGON_HUB_TOKENS,
   hub4Tokens: HUB_4_TOKENS,
   selective4HopTokenLimit: SELECTIVE_4HOP_TOKEN_LIMIT,
+  dynamicPivotTokenLimit: DYNAMIC_PIVOT_TOKEN_LIMIT,
+  routeCycleCacheFile: ROUTE_CYCLE_CACHE_FILE,
   workerCount: WORKER_COUNT,
   workerPool,
   isWorkerPoolInitialized: () => workerPool.initialized,
@@ -734,7 +739,7 @@ const bootModeCoordinator = createBootModeCoordinator({
     return startTui(nextBotState);
   },
   startMetricsServer: () => {
-    startMetricsServer(9090);
+    startMetricsServer(METRICS_PORT);
   },
   printBanner: () => {
     console.log("╔══════════════════════════════════════════════╗");

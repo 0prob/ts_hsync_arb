@@ -99,6 +99,37 @@ const poolId = "0x" + "ab".repeat(32);
 }
 
 {
+  const routed = encodeRoute({
+    path: {
+      edges: [{
+        protocol: "curve_crypto",
+        poolAddress: pool,
+        tokenIn: tokenA,
+        tokenOut: tokenB,
+        zeroForOne: true,
+        tokenInIdx: 0,
+        tokenOutIdx: 1,
+      }],
+    },
+    result: {
+      hopAmounts: [1000n, 900n],
+    },
+  }, executor, { slippageBps: 100 });
+  const direct = encodeCurveHop({
+    poolAddress: pool,
+    tokenIn: tokenA,
+    tokenOut: tokenB,
+    tokenInIdx: 0,
+    tokenOutIdx: 1,
+    amountIn: 1000n,
+    amountOut: 900n,
+    isCrypto: true,
+  }, executor, { slippageBps: 100 });
+
+  assert.equal(routed[1].data.slice(0, 10), direct[1].data.slice(0, 10));
+}
+
+{
   const calls = encodeDodoHop({
     poolAddress: pool,
     tokenIn: tokenA,

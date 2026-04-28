@@ -15,7 +15,10 @@
  *   // tx: { to, data, value, maxFeePerGas, maxPriorityFeePerGas, gasLimit, ... }
  */
 
+import { encodeFunctionData, getAddress } from "viem";
+
 import { encodeRoute, encodeExecuteArb, buildFlashParams } from "./calldata.ts";
+import { ERC20_TRANSFER_ABI } from "./abi_fragments.ts";
 import { recommendGasParams } from "./gas.ts";
 import { routeExecutionCacheKey } from "../routing/route_identity.ts";
 import { getPathHopCount } from "../routing/path_hops.ts";
@@ -321,20 +324,27 @@ export async function buildArbTx(route: any, config: any, options: any = {}) {
  * @returns {Promise<BuiltTx>}
  */
 export async function buildTransferTx(token: any, to: any, amount: any, fromAddress: any) {
-  // ERC-20 transfer(address,uint256) = 0xa9059cbb
-  const data =
-    "0xa9059cbb" +
-    to.replace("0x", "").padStart(64, "0") +
-    amount.toString(16).padStart(64, "0");
+  const tokenAddress = getAddress(token);
+  const recipientAddress = getAddress(to);
+  const transferAmount = BigInt(amount);
+  if (transferAmount < 0n) {
+    throw new Error("buildTransferTx: amount must be >= 0");
+  }
 
-  const skelTx = { to: token, data, value: 0n };
+  const data = encodeFunctionData({
+    abi: ERC20_TRANSFER_ABI,
+    functionName: "transfer",
+    args: [recipientAddress, transferAmount],
+  });
+
+  const skelTx = { to: tokenAddress, data, value: 0n };
   const gasParams = await recommendGasParams(skelTx, fromAddress);
 
   return {
-    to: token,
+    to: tokenAddress,
     data,
     value: 0n,
     ...gasParams,
-    meta: { type: "erc20_transfer", token, to, amount: amount.toString() },
+    meta: { type: "erc20_transfer", token: tokenAddress, to: recipientAddress, amount: transferAmount.toString() },
   };
 }

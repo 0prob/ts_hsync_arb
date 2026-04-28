@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { executeWithRpcRetry } from "../src/enrichment/rpc.ts";
+import { executeWithRpcRetry, throttledMap } from "../src/enrichment/rpc.ts";
 import { rpcManager } from "../src/utils/rpc_manager.ts";
 
 function fakeEndpoint(url: string) {
@@ -52,6 +52,21 @@ async function withFakeEndpoints<T>(fn: () => Promise<T>, urls = ["https://a.exa
     rpcManager.endpoints = originalEndpoints;
     rpcManager._probeInterval = originalProbeInterval;
   }
+}
+
+async function testThrottledMapClampsZeroConcurrency() {
+  const visited: number[] = [];
+  const result = await throttledMap(
+    [1, 2, 3],
+    async (value) => {
+      visited.push(value);
+      return value * 2;
+    },
+    0,
+  );
+
+  assert.deepEqual(visited, [1, 2, 3]);
+  assert.deepEqual(result, [2, 4, 6]);
 }
 
 async function testCapabilityFailureTriesEveryEndpointEvenWithLowRetryBudget() {
@@ -383,5 +398,6 @@ await testWaitsForCooldownBeforeRetrying();
 await testProbeDoesNotExtendActiveErrorCooldown();
 await testManagerProbeIsSingleFlight();
 await testSuccessfulRetryClearsEndpointRateLimitState();
+await testThrottledMapClampsZeroConcurrency();
 
 console.log("test_rpc_retry: ok");

@@ -145,7 +145,8 @@ export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any 
   // Phase 1: hub graph — all depths including 4-hop bidirectional
   let hubPaths = [];
   if (hubBudget > 0) {
-    const hubStart = new Set([...HUB_4_TOKENS].filter((t) => hubGraph.hasToken(t)));
+    const rawHubStart = opts.hubStartTokens ?? HUB_4_TOKENS;
+    const hubStart = new Set([...rawHubStart].filter((t) => hubGraph.hasToken(t)));
     if (hubStart.size === 0) {
       hubPaths = [];
     } else {
@@ -164,7 +165,8 @@ export function enumerateCyclesDual(hubGraph: any, fullGraph: any, options: any 
   const fullBudget = Math.max(0, maxTotal - hubPaths.length);
   let fullPaths = [];
   if (fullBudget > 0) {
-    const fullStart = new Set([...POLYGON_HUB_TOKENS].filter((t) => fullGraph.hasToken(t)));
+    const rawFullStart = opts.fullStartTokens ?? POLYGON_HUB_TOKENS;
+    const fullStart = new Set([...rawFullStart].filter((t) => fullGraph.hasToken(t)));
     if (fullStart.size > 0) {
       fullPaths = findArbPaths(fullGraph, fullStart, {
         include2Hop: opts.include2Hop, include3Hop: opts.include3Hop, include4Hop: false,

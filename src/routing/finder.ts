@@ -23,6 +23,7 @@ import { simulateBalancerSwap } from "../math/balancer.ts";
 import { simulateDodoSwap } from "../math/dodo.ts";
 import { simulateWoofiSwap } from "../math/woofi.ts";
 import { toFiniteNumber } from "../util/bigint.ts";
+import { takeTopNBy } from "../util/bounded_priority.ts";
 import { routeIdentityFromEdges } from "./route_identity.ts";
 import { resolveSwapTokenIndexes } from "./swap_indices.ts";
 
@@ -361,8 +362,23 @@ function compareByPathLogWeight(a: any, b: any) {
 
 function selectTopPathsByLogWeight(paths: any[], limit: number) {
   if (!Number.isFinite(limit) || limit <= 0) return [];
-  if (paths.length <= limit) return paths;
-  return [...paths].sort(compareByPathLogWeight).slice(0, Math.floor(limit));
+  return takeTopNBy(paths, Math.floor(limit), compareByPathLogWeight);
+}
+
+function pushTopPath(paths: any[], path: any, limit: number) {
+  const normalizedLimit = normalizePathLimit(limit, 0);
+  if (normalizedLimit <= 0) return;
+  annotatePath(path);
+  paths.push(path);
+  if (paths.length > normalizedLimit * 2) {
+    const selected = selectTopPathsByLogWeight(paths, normalizedLimit);
+    paths.length = 0;
+    paths.push(...selected);
+  }
+}
+
+function finalizeTopPaths(paths: any[], limit: number) {
+  return selectTopPathsByLogWeight(paths, normalizePathLimit(limit, 0));
 }
 
 // ─── 2-hop paths ──────────────────────────────────────────────
@@ -389,7 +405,7 @@ function selectTopPathsByLogWeight(paths: any[], limit: number) {
  */
 export function find2HopPaths(graph: any, startToken: any, opts: any = {}) {
   const maxPaths = normalizePathLimit(opts.maxPaths, 10_000);
-  const paths = [];
+  const paths: any[] = [];
   const edgesOut = graph.getEdges(startToken);
 
   // Group forward edges by destination
@@ -407,15 +423,12 @@ export function find2HopPaths(graph: any, startToken: any, opts: any = {}) {
       for (const ret of retEdges) {
         if (ret.poolAddress === fwd.poolAddress) continue;
         if (shouldPruneEdge(ret, opts)) continue;
-        annotatePath(
-          paths[paths.push({ startToken, edges: [fwd, ret], hopCount: 2 }) - 1]
-        );
-        if (paths.length >= maxPaths) return paths;
+        pushTopPath(paths, { startToken, edges: [fwd, ret], hopCount: 2 }, maxPaths);
       }
     }
   }
 
-  return paths;
+  return finalizeTopPaths(paths, maxPaths);
 }
 
 // ─── 3-hop paths ──────────────────────────────────────────────
@@ -433,7 +446,7 @@ export function find2HopPaths(graph: any, startToken: any, opts: any = {}) {
  */
 export function find3HopPaths(graph: any, startToken: any, opts: any = {}) {
   const maxPaths = normalizePathLimit(opts.maxPaths, 10_000);
-  const paths = [];
+  const paths: any[] = [];
 
   for (const e1 of graph.getEdges(startToken)) {
     if (shouldPruneEdge(e1, opts)) continue;
@@ -451,16 +464,12 @@ export function find3HopPaths(graph: any, startToken: any, opts: any = {}) {
         const p1 = e1.poolAddress, p2 = e2.poolAddress, p3 = e3.poolAddress;
         if (p3 === p1 || p3 === p2) continue;
 
-        annotatePath(
-          paths[paths.push({ startToken, edges: [e1, e2, e3], hopCount: 3 }) - 1]
-        );
-
-        if (paths.length >= maxPaths) return paths;
+        pushTopPath(paths, { startToken, edges: [e1, e2, e3], hopCount: 3 }, maxPaths);
       }
     }
   }
 
-  return paths;
+  return finalizeTopPaths(paths, maxPaths);
 }
 
 // ─── 4-hop bidirectional ──────────────────────────────────────
@@ -544,16 +553,12 @@ export function find4HopPathsBidirectional(graph: any, startToken: any, opts: an
                          p2 === p3 || p2 === p4 ||
                                       p3 === p4) continue;
 
-        annotatePath(
-          paths[paths.push({ startToken, edges: [e1, e2, e3, e4], hopCount: 4 }) - 1]
-        );
-
-        if (paths.length >= maxPaths) return paths;
+        pushTopPath(paths, { startToken, edges: [e1, e2, e3, e4], hopCount: 4 }, maxPaths);
       }
     }
   }
 
-  return paths;
+  return finalizeTopPaths(paths, maxPaths);
 }
 
 // Backward-compat alias (old name → new bidirectional impl)
@@ -561,17 +566,26 @@ export const find4HopPaths = find4HopPathsBidirectional;
 
 function findNHopPaths(graph: any, startToken: any, exactHops: number, opts: any = {}) {
   const maxPaths = normalizePathLimit(opts.maxPaths, 2_000);
+  // 5+ hop DFS can explode on dense hub graphs; cap edge expansions so startup
+  // cannot stall forever after warmup completes.
+  const maxExpansions = normalizePathLimit(
+    opts.maxExpansions,
+    Math.max(25_000, maxPaths * 50),
+  );
   if (!Number.isFinite(exactHops) || exactHops < 2) return [];
 
   const paths: any[] = [];
   const edges: any[] = [];
   const usedPools = new Set<string>();
   const visitedTokens = new Set<string>();
+  let expansions = 0;
 
   function dfs(currentToken: string, depth: number) {
-    if (paths.length >= maxPaths) return;
+    if (expansions >= maxExpansions) return;
 
     for (const edge of graph.getEdges(currentToken)) {
+      if (expansions >= maxExpansions) return;
+      expansions++;
       if (shouldPruneEdge(edge, opts)) continue;
       if (usedPools.has(edge.poolAddress)) continue;
 
@@ -589,9 +603,7 @@ function findNHopPaths(graph: any, startToken: any, exactHops: number, opts: any
       usedPools.add(edge.poolAddress);
 
       if (isFinalHop) {
-        annotatePath(
-          paths[paths.push({ startToken, edges: [...edges], hopCount: exactHops }) - 1]
-        );
+        pushTopPath(paths, { startToken, edges: [...edges], hopCount: exactHops }, maxPaths);
       } else {
         visitedTokens.add(nextToken);
         dfs(nextToken, depth + 1);
@@ -600,13 +612,11 @@ function findNHopPaths(graph: any, startToken: any, exactHops: number, opts: any
 
       usedPools.delete(edge.poolAddress);
       edges.pop();
-
-      if (paths.length >= maxPaths) return;
     }
   }
 
   dfs(startToken, 0);
-  return paths;
+  return finalizeTopPaths(paths, maxPaths);
 }
 
 // ─── Aggregated search ────────────────────────────────────────
@@ -625,6 +635,7 @@ function findNHopPaths(graph: any, startToken: any, exactHops: number, opts: any
  * @param {boolean} [opts.include4Hop=false]
  * @param {number}  [opts.maxPathsPerToken=5000]    cap for 2+3-hop per token
  * @param {number}  [opts.max4HopPathsPerToken=2000] cap for 4-hop per token
+ * @param {number}  [opts.maxNHopExpansionsPerToken] cap for 5+ hop DFS expansions per token
  * @param {bigint}  [opts.minV2Reserve=0n]   V2 per-token reserve floor
  * @param {bigint}  [opts.probeWei=0n]       probe trade size for 0.3 % impact
  * @returns {ArbPath[]}
@@ -637,6 +648,7 @@ export function findArbPaths(graph: any, startTokens: any, opts: any = {}) {
     maxHops = 4,
     maxPathsPerToken     = 5_000,
     max4HopPathsPerToken = 2_000,
+    maxNHopExpansionsPerToken,
     minV2Reserve = 0n,
     probeWei     = 0n,
   } = opts;
@@ -678,6 +690,7 @@ export function findArbPaths(graph: any, startTokens: any, opts: any = {}) {
         const nhopPaths = findNHopPaths(graph, token, hopCount, {
           ...pruneOpts,
           maxPaths: remainingComplexBudget,
+          maxExpansions: maxNHopExpansionsPerToken,
         });
         allPaths.push(...nhopPaths);
         remainingComplexBudget -= nhopPaths.length;

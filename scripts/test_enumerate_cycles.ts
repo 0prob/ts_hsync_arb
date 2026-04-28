@@ -116,6 +116,30 @@ function addTwoHopCycle(graph: TestGraph, poolPrefix: string, startToken: string
 }
 
 {
+  const graph = new TestGraph();
+  addTwoHopCycle(graph, "0x1", "a", "weak", 1_000_000n);
+  addTwoHopCycle(graph, "0x2", "a", "strong", 100_000n);
+
+  const paths = enumerateCycles(graph, {
+    startTokens: new Set(["a"]),
+    hubTokensOnly: false,
+    include2Hop: true,
+    include3Hop: false,
+    include4Hop: false,
+    maxPathsPerToken: 1,
+    maxTotalPaths: 1,
+    dedup: false,
+  });
+
+  assert.equal(paths.length, 1);
+  assert.equal(
+    paths[0].edges[0].tokenOut,
+    "strong",
+    "bounded 2-hop enumeration should retain the strongest log-weight route, not the first discovered route",
+  );
+}
+
+{
   const hubToken = [...HUB_4_TOKENS][0];
   const fullOnlyHubToken = [...POLYGON_HUB_TOKENS].find((token) => !HUB_4_TOKENS.has(token));
   assert(fullOnlyHubToken, "test expects at least one full-only hub token");

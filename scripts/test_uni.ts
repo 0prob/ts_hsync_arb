@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { getV2AmountIn, getV2AmountOut } from "../src/math/uniswap_v2.ts";
 import { buildGraph, deserializeTopology, serializeTopology } from "../src/routing/graph.ts";
 import { edgeSpotLogWeight } from "../src/routing/finder.ts";
-import { simulateHop } from "../src/routing/simulator.ts";
+import { simulateHop, simulateRoute } from "../src/routing/simulator.ts";
 import { normalizePoolState, validatePoolState } from "../src/state/normalizer.ts";
 import { fetchMultipleV2StatesWithDeps } from "../src/state/uniswap_v2.ts";
 import { updateV2State } from "../src/state/watcher_state_ops.ts";
@@ -81,12 +81,71 @@ const tokenB = "0x2222222222222222222222222222222222222222";
     "V2 simulator should pass the canonical fee denominator into swap math",
   );
 
+  assert.equal(
+    simulateHop({ ...edge, poolAddress: ` ${pool.toUpperCase()} `, stateRef: undefined }, 10_000n, new Map([[pool, state]])).amountOut,
+    getV2AmountOut(10_000n, state.reserve0, state.reserve1, state.fee, state.feeDenominator),
+    "V2 simulator should normalize pool addresses when falling back to stateCache",
+  );
+
+  const mixedCaseRoute = simulateRoute(
+    {
+      startToken: tokenA.toUpperCase(),
+      edges: [
+        { ...edge, tokenIn: tokenA, tokenOut: tokenB.toUpperCase() },
+        {
+          ...edge,
+          tokenIn: tokenB,
+          tokenOut: tokenA.toUpperCase(),
+          zeroForOne: false,
+        },
+      ],
+      hopCount: 2,
+    },
+    10_000n,
+    new Map([[pool, state]]),
+  );
+  assert.equal(
+    mixedCaseRoute.tokenPath.length,
+    3,
+    "route simulation should accept mixed-case EVM tokens without falling out of the fast validation path",
+  );
+
+  const invalidTokenRoute = simulateRoute(
+    {
+      startToken: "not-a-token",
+      edges: [{ ...edge, tokenIn: "not-a-token", tokenOut: "not-a-token" }],
+      hopCount: 1,
+    },
+    10_000n,
+    new Map([[pool, state]]),
+  );
+  assert.equal(
+    invalidTokenRoute.amountOut,
+    0n,
+    "route simulation should not fast-accept invalid token identifiers",
+  );
+
   const spotWeight = edgeSpotLogWeight(edge);
   assert.equal(typeof spotWeight, "number");
   assert.equal(
     Math.abs(spotWeight! - (Math.log(2) + Math.log(0.997))) < 1e-12,
     true,
     "V2 route spot weights should use feeNumerator / feeDenominator",
+  );
+
+  const openRoute = simulateRoute(
+    {
+      startToken: tokenA,
+      edges: [edge],
+      hopCount: 1,
+    },
+    10_000n,
+    new Map([[pool, state]]),
+  );
+  assert.equal(
+    openRoute.profitable,
+    false,
+    "route simulation should fail closed for paths that do not return to startToken",
   );
 }
 

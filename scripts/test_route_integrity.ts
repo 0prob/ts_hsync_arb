@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { buildArbTx, gasEstimateCacheKeyForRoute } from "../src/execution/build_tx.ts";
+import { buildArbTx, buildTransferTx, gasEstimateCacheKeyForRoute } from "../src/execution/build_tx.ts";
 import {
   routeExecutionCacheKey,
   routeIdentityFromEdges,
@@ -181,6 +181,18 @@ await assert.rejects(
     ),
   /invalid route address/i,
   "execution validation should reject malformed route edge addresses",
+);
+
+await assert.rejects(
+  () => buildTransferTx(tokenA, "not-a-recipient", 1n, sender),
+  /address/i,
+  "ERC20 transfer builder should reject malformed recipients before gas estimation",
+);
+
+await assert.rejects(
+  () => buildTransferTx(tokenA, tokenB, -1n, sender),
+  /amount must be >= 0/i,
+  "ERC20 transfer builder should reject negative amounts before gas estimation",
 );
 
 console.log("Route integrity checks passed.");

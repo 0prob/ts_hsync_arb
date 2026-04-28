@@ -115,6 +115,36 @@ function v2Edge(poolAddress: string, tokenIn: string, tokenOut: string, reserveI
 }
 
 {
+  const graph = new TestGraph();
+  graph.addEdge(v2Edge("0xab", "a", "b"));
+  graph.addEdge(v2Edge("0xbc", "b", "c"));
+  graph.addEdge(v2Edge("0xcd", "c", "d"));
+  graph.addEdge(v2Edge("0xde", "d", "e"));
+  graph.addEdge(v2Edge("0xea", "e", "a"));
+
+  const capped = findArbPaths(graph, "a", {
+    include2Hop: false,
+    include3Hop: false,
+    include4Hop: true,
+    maxHops: 5,
+    max4HopPathsPerToken: 10,
+    maxNHopExpansionsPerToken: 1,
+  });
+  assert.equal(capped.length, 0, "extended hop search should honor the DFS expansion budget");
+
+  const uncapped = findArbPaths(graph, "a", {
+    include2Hop: false,
+    include3Hop: false,
+    include4Hop: true,
+    maxHops: 5,
+    max4HopPathsPerToken: 10,
+    maxNHopExpansionsPerToken: 100,
+  });
+  assert.equal(uncapped.length, 1, "extended hop search should still find routes within budget");
+  assert.equal(uncapped[0].hopCount, 5);
+}
+
+{
   const hugeReserve = 10n ** 400n;
   const weight = edgeSpotLogWeight({
     protocol: "QUICKSWAP_V2",

@@ -571,7 +571,7 @@ export function encodeRoute(route: any, executorAddress: any, options: any = {})
       metadata:     meta,
       tokenInIdx:   edge.tokenInIdx ?? meta.tokenInIdx ?? (edge.zeroForOne ? 0 : 1),
       tokenOutIdx:  edge.tokenOutIdx ?? meta.tokenOutIdx ?? (edge.zeroForOne ? 1 : 0),
-      isCrypto:     CURVE_CRYPTO_PROTOCOLS.has(edge.protocol),
+      isCrypto:     CURVE_CRYPTO_PROTOCOLS.has(proto),
       poolId:       normalizeBytes32(
         meta.poolId ??
         meta.pool_id ??

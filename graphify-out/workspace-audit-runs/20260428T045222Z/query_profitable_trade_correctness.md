@@ -1,0 +1,38 @@
+```bash
+graphify query Audit\ the\ end-to-end\ profitable\ trade\ path\ from\ discovery\ and\ state\ normalization\ through\ route\ search\,\ simulation\,\ scoring\,\ computeProfit\,\ revalidation\,\ gas\ policy\,\ transaction\ building\,\ private/public\ submission\,\ and\ receipt\ handling.\ Identify\ credible\ places\ where\ a\ route\ could\ be\ ranked\ profitable\ but\ be\ stale\,\ unit-mismatched\,\ unexecutable\,\ or\ unsafe. --budget 800
+```
+
+NODE .get() [src=src/db/registry_meta_cache.ts loc=L46 community=2]
+NODE get() [src=scripts/test_hypersync_paginate.ts loc=L50 community=2]
+NODE .get() [src=src/db/sqlite.ts loc=L27 community=2]
+NODE watcher.ts [src=src/state/watcher.ts loc=L1 community=4]
+NODE normalizer.ts [src=src/state/normalizer.ts loc=L1 community=3]
+NODE pool_record.ts [src=src/util/pool_record.ts loc=L1 community=6]
+NODE normalizeEvmAddress() [src=src/util/pool_record.ts loc=L8 community=2]
+NODE finder.ts [src=src/routing/finder.ts loc=L1 community=8]
+NODE watcher_state_ops.ts [src=src/state/watcher_state_ops.ts loc=L1 community=3]
+NODE worker_pool.ts [src=src/routing/worker_pool.ts loc=L1 community=12]
+NODE build_tx.ts [src=src/execution/build_tx.ts loc=L1 community=11]
+NODE logger.ts [src=src/utils/logger.ts loc=L1 community=0]
+NODE route_identity.ts [src=src/routing/route_identity.ts loc=L1 community=12]
+NODE topology_service.ts [src=src/runtime/topology_service.ts loc=L1 community=12]
+NODE logs.ts [src=src/hypersync/logs.ts loc=L1 community=4]
+NODE handleWatcherLogs() [src=src/state/watcher_state_ops.ts loc=L26 community=3]
+NODE validateWatcherStateOrThrow() [src=src/state/watcher_state_ops.ts loc=L285 community=3]
+NODE test_uni.ts [src=scripts/test_uni.ts loc=L1 community=10]
+NODE .enumerate() [src=src/routing/worker_pool.ts loc=L447 community=12]
+NODE test_watcher_poll.ts [src=scripts/test_watcher_poll.ts loc=L1 community=3]
+NODE cache_utils.ts [src=src/state/cache_utils.ts loc=L1 community=2]
+NODE .update() [src=src/routing/route_cache.ts loc=L89 community=18]
+NODE routeKeyFromEdges() [src=src/routing/finder.ts loc=L233 community=8]
+NODE .getPoolMeta() [src=src/db/registry.ts loc=L386 community=2]
+NODE commitWatcherStatesBatch() [src=src/state/watcher_state_ops.ts loc=L363 community=3]
+NODE topology_cache.ts [src=src/arb/topology_cache.ts loc=L1 community=12]
+NODE requireRouteAddress() [src=src/routing/route_identity.ts loc=L9 community=12]
+NODE selectFreshUniqueScanPaths() [src=src/arb/search.ts loc=L93 community=0]
+NODE routeIdentityFromEdges() [src=src/routing/route_identity.ts loc=L23 community=12]
+NODE execution_coordinator.ts [src=src/arb/execution_coordinator.ts loc=L1 community=0]
+NODE ensureV3Fee() [src=src/state/watcher_state_ops.ts loc=L206 community=3]
+NODE mergeCandidateBatch() [src=src/arb/search.ts loc=L166 community=2]
+NODE updateTickState() [src=src/state/watc
+... (truncated to ~800 token budget)

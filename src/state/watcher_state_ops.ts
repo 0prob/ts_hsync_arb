@@ -233,17 +233,17 @@ export function updateV3LiquidityState(state: any, decoded: any, isMint: any, po
     else state.liquidity = (state.liquidity ?? 0n) - amount;
   }
 
-  updateTickState(state, tickLower, amount, isMint);
-  updateTickState(state, tickUpper, amount, !isMint);
+  const liquidityGrossDelta = isMint ? amount : -amount;
+  updateTickState(state, tickLower, liquidityGrossDelta, isMint ? amount : -amount);
+  updateTickState(state, tickUpper, liquidityGrossDelta, isMint ? -amount : amount);
 }
 
-export function updateTickState(state: any, tick: any, amount: any, isNetPositive: any) {
+export function updateTickState(state: any, tick: any, liquidityGrossDelta: any, liquidityNetDelta: any) {
   if (!state.ticks) state.ticks = new Map();
   const data = state.ticks.get(tick) || { liquidityGross: 0n, liquidityNet: 0n };
 
-  data.liquidityGross += amount;
-  if (isNetPositive) data.liquidityNet += amount;
-  else data.liquidityNet -= amount;
+  data.liquidityGross += BigInt(liquidityGrossDelta);
+  data.liquidityNet += BigInt(liquidityNetDelta);
 
   if (data.liquidityGross === 0n) state.ticks.delete(tick);
   else state.ticks.set(tick, data);

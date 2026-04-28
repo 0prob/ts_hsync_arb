@@ -106,6 +106,7 @@ function buildChunkStateObject(paths: PathLike[], stateCache: WorkerStateMap) {
 function collectChunkPoolState(paths: PathLike[], stateCache: WorkerStateMap) {
   const stateObj: Record<string, Record<string, any>> = {};
   const poolAddresses: string[] = [];
+  const statePoolAddresses: string[] = [];
   const seenPools = new Set<string>();
   for (const path of paths) {
     for (const edge of path.edges) {
@@ -118,11 +119,12 @@ function collectChunkPoolState(paths: PathLike[], stateCache: WorkerStateMap) {
       const state = stateCache.get(poolAddress);
       if (state) {
         stateObj[poolAddress] = state;
+        statePoolAddresses.push(poolAddress);
       }
     }
   }
 
-  return { stateObj, poolAddresses };
+  return { stateObj, poolAddresses, statePoolAddresses };
 }
 
 function collectChunkPoolAddresses(paths: PathLike[]) {
@@ -572,12 +574,12 @@ export class WorkerPool {
     amountStr: string,
     options: Record<string, any>
   ) {
-    const { delta: stateDeltaObj, count, poolAddresses } = this._buildStateDelta(
+    const { delta: stateDeltaObj, count, poolAddresses, retainPools } = this._buildStateDelta(
       chunk,
       stateCache,
       slot.syncedStateVersions
     );
-    const poolMembershipChanged = !samePoolAddressSet(slot.syncedPoolAddresses, poolAddresses);
+    const poolMembershipChanged = !samePoolAddressSet(slot.syncedPoolAddresses, retainPools);
 
     if (workerLogger.isLevelEnabled("debug")) {
       workerLogger.debug(
@@ -586,7 +588,8 @@ export class WorkerPool {
           slotIndex: this._slots.indexOf(slot),
           chunkPaths: chunk.length,
           deltaPools: count,
-          retainedPools: poolAddresses.length,
+          retainedPools: retainPools.length,
+          pathPools: poolAddresses.length,
           poolMembershipChanged,
         },
         "[worker_pool] Evaluation slot delta"
@@ -597,12 +600,12 @@ export class WorkerPool {
       await this._submitToSlot(slot, {
         type: "SYNC_STATE",
         stateObj: stateDeltaObj,
-        retainPools: poolAddresses,
+        retainPools,
       });
       for (const [poolAddress, state] of Object.entries(stateDeltaObj)) {
         slot.syncedStateVersions.set(poolAddress, getStateVersion(state));
       }
-      const retainedPools = new Set(poolAddresses);
+      const retainedPools = new Set(retainPools);
       for (const poolAddress of [...slot.syncedStateVersions.keys()]) {
         if (!retainedPools.has(poolAddress)) {
           slot.syncedStateVersions.delete(poolAddress);
@@ -645,9 +648,9 @@ export class WorkerPool {
   _buildStateDelta(paths: PathLike[], stateCache: WorkerStateMap, syncedStateVersions: Map<string, number>) {
     const delta: Record<string, Record<string, any>> = {};
     let count = 0;
-    const { stateObj, poolAddresses } = collectChunkPoolState(paths, stateCache);
+    const { stateObj, poolAddresses, statePoolAddresses } = collectChunkPoolState(paths, stateCache);
 
-    for (const poolAddress of poolAddresses) {
+    for (const poolAddress of statePoolAddresses) {
       const state = stateObj[poolAddress];
       if (!state) continue;
 
@@ -659,7 +662,7 @@ export class WorkerPool {
       }
     }
 
-    return { delta, count, poolAddresses };
+    return { delta, count, poolAddresses, retainPools: statePoolAddresses };
   }
 
   /**

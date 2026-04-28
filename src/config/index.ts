@@ -7,11 +7,11 @@
  *
  * Parameter resolution order (highest wins):
  *   1. Environment variables (UPPERCASE names)
- *   2. data/perf.json  (written by scripts/tune_performance.js)
+ *   2. data/perf.json  (written by scripts/tune_performance.ts)
  *   3. Built-in defaults  (safe conservative values)
  *
- * Run `node scripts/tune_performance.js` once after deployment to
- * generate data/perf.json with machine-optimal values.
+ * Run `pnpm tune:performance` once after deployment to generate
+ * data/perf.json with machine-optimal values.
  */
 
 import os from "os";
@@ -39,7 +39,7 @@ export const ABI_DIR = path.join(PROJECT_ROOT, "abi");
 // ─── Auto-tuned parameter loader ──────────────────────────────
 //
 // Reads data/perf.json if it exists.  The file is produced by
-// `node scripts/tune_performance.js` and contains optimal values
+// `pnpm tune:performance` and contains optimal values
 // for the current machine.  Env vars always override these values.
 
 function _loadPerfJson() {
@@ -79,6 +79,13 @@ function _num(envKey: string, perfKey: string, def: number): number {
     if (n != null) return n;
     console.warn(`[config] Invalid numeric perf.json value for ${perfKey}=${_perf[perfKey]} — using fallback`);
   }
+  return def;
+}
+
+function _port(envKey: string, perfKey: string, def: number): number {
+  const value = _num(envKey, perfKey, def);
+  if (value <= 65_535) return value;
+  console.warn(`[config] Invalid port ${envKey}=${value} — using fallback ${def}`);
   return def;
 }
 
@@ -128,6 +135,9 @@ export const HYPERSYNC_URL =
   process.env.HYPERSYNC_URL || "https://polygon.hypersync.xyz";
 
 export const ENVIO_API_TOKEN = process.env.ENVIO_API_TOKEN || "";
+
+/** Prometheus metrics server port. Use 0 for an ephemeral local port. */
+export const METRICS_PORT = _port("METRICS_PORT", "METRICS_PORT", 9090);
 
 /** Native HyperSync HTTP timeout in milliseconds. */
 export const HYPERSYNC_HTTP_REQ_TIMEOUT_MS = _num(
@@ -514,6 +524,16 @@ export const SELECTIVE_4HOP_TOKEN_LIMIT = _num(
   "SELECTIVE_4HOP_TOKEN_LIMIT",
   6
 );
+
+/** Number of liquidity-ranked pivot tokens to use for full-graph route generation. */
+export const DYNAMIC_PIVOT_TOKEN_LIMIT = _num(
+  "DYNAMIC_PIVOT_TOKEN_LIMIT",
+  "DYNAMIC_PIVOT_TOKEN_LIMIT",
+  Math.max(8, SELECTIVE_4HOP_TOKEN_LIMIT * 2)
+);
+
+/** Optional persistent cache file for precomputed route cycles. */
+export const ROUTE_CYCLE_CACHE_FILE = process.env.ROUTE_CYCLE_CACHE_FILE || "graphify-out/cache/route_cycles.json";
 
 /** Path budget reserved for selective 4-hop exploration beyond the core hub graph. */
 export const SELECTIVE_4HOP_PATH_BUDGET = _num(

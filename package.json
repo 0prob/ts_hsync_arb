@@ -9,7 +9,11 @@
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env --import=tsx runner.ts --loop --live",
+    "start:i5-9500": "NODE_OPTIONS=--max-old-space-size=4096 node --env-file-if-exists=.env --import=tsx runner.ts --loop --live",
     "start:tui": "node --env-file-if-exists=.env --import=tsx runner.ts --loop --live --tui",
+    "start:tui:i5-9500": "NODE_OPTIONS=--max-old-space-size=4096 node --env-file-if-exists=.env --import=tsx runner.ts --loop --live --tui",
+    "tune:performance": "node --import=tsx scripts/tune_performance.ts",
+    "tune:i5-9500": "node --import=tsx scripts/tune_performance.ts --profile=i5-9500-8gb",
     "test": "node --import=tsx scripts/run_ts_test.mjs scripts/run_all_tests.ts",
     "test:e2e": "node --import=tsx scripts/run_ts_test.mjs scripts/test_engine_e2e.ts",
     "typecheck": "tsc --noEmit"

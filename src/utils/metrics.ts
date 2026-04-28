@@ -197,7 +197,7 @@ let server: http.Server | null = null;
 export function startMetricsServer(port = 9090) {
   if (server) return;
 
-  server = http.createServer(async (req, res) => {
+  const candidateServer = http.createServer(async (req, res) => {
     if (req.url === "/metrics") {
       try {
         res.setHeader("Content-Type", register.contentType);
@@ -211,8 +211,19 @@ export function startMetricsServer(port = 9090) {
       res.end("Not Found");
     }
   });
+  server = candidateServer;
 
-  server.listen(port, () => {
+  candidateServer.once("error", (err: NodeJS.ErrnoException) => {
+    if (server === candidateServer) server = null;
+    logger.warn({
+      event: "metrics_server_start_failed",
+      port,
+      code: err.code,
+      err,
+    }, `[metrics] Failed to start Prometheus metrics server on port ${port}; continuing without metrics HTTP endpoint`);
+  });
+
+  candidateServer.listen(port, () => {
     logger.info(`[metrics] Prometheus metrics server listening on port ${port}`);
   });
 }

@@ -64,7 +64,7 @@ export function createExecutionCoordinator(deps: ExecutionCoordinatorDeps) {
   ): Promise<R[]> {
     if (candidates.length === 0) return [];
 
-    const concurrency = Math.max(1, Math.min(deps.maxExecutionBatch, candidates.length));
+    const concurrency = Math.max(1, Math.min(Math.floor(Number(deps.maxExecutionBatch) || 1), candidates.length));
     const results = new Array<R>(candidates.length);
     let nextIndex = 0;
 

@@ -183,7 +183,7 @@ async function mapWithConcurrency<T, R>(
   if (items.length === 0) return [];
 
   const results = new Array<R>(items.length);
-  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  const workerCount = Math.max(1, Math.min(Math.floor(Number(concurrency) || 1), items.length));
   let nextIndex = 0;
 
   async function runWorker() {
